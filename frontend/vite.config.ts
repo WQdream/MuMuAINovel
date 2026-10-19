@@ -8,6 +8,9 @@ const packageJson = JSON.parse(
   readFileSync(resolve(__dirname, 'package.json'), 'utf-8')
 )
 
+// 开发代理目标：本机默认 8000；容器内通过 VITE_API_TARGET 指向后端服务
+const API_TARGET = process.env.VITE_API_TARGET || 'http://localhost:8000'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -42,11 +45,11 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: API_TARGET,
         changeOrigin: true,
       },
       '/generated-assets': {
-        target: 'http://localhost:8000',
+        target: API_TARGET,
         changeOrigin: true,
       }
     }

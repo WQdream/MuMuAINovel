@@ -1,0 +1,46 @@
+# 本地开发覆盖配置（docker compose 自动加载）
+# 作用：
+#   1. 清空容器内从宿主机继承的 127.0.0.1 代理（容器内指向自己，必然失败）
+#   2. 后端挂载源码 + uvicorn --reload，改 .py 立即生效
+#   3. 前端用 vite 开发服务器，改 .tsx 立即热更新
+#   4. 持久化 Chroma 向量库，重建镜像不丢记忆数据
+
+services:
+  mumuainovel:
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - NO_PROXY=localhost,127.0.0.1,postgres,mumuainovel
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+      - ./storage/chroma_db:/app/data/chroma_db
+    entrypoint:
+      - /bin/bash
+      - -lc
+      - "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app"
+
+  frontend:
+    image: node:22-alpine
+    container_name: mumuainovel-frontend
+    working_dir: /app
+    depends_on:
+      - mumuainovel
+    environment:
+      - VITE_API_TARGET=http://mumuainovel:8000
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    networks:
+      - ai-story-network
+    restart: unless-stopped
+
+volumes:
+  frontend_node_modules:

@@ -527,7 +527,7 @@ export default function ProjectDetail() {
                 }}>
                   <BookOutlined />
                 </div>
-                <span style={{ fontWeight: 600, fontSize: 16 }}>MuMuAINovel</span>
+                <span style={{ fontWeight: 600, fontSize: 16 }}>小新工坊</span>
               </div>
             }
             placement="left"
@@ -623,7 +623,7 @@ export default function ProjectDetail() {
                         overflow: 'hidden',
                         textOverflow: 'ellipsis'
                       }}>
-                        MuMuAINovel
+                        小新工坊
                       </span>
                     </div>
                     <Button
