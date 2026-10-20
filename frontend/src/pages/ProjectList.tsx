@@ -1,12 +1,11 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme, Badge } from 'antd';
-import { EditOutlined, BookOutlined, CalendarOutlined, FileTextOutlined, TrophyOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined, MailOutlined, BellOutlined } from '@ant-design/icons';
+import { BookOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined, MailOutlined, BellOutlined } from '@ant-design/icons';
 import { authApi, projectApi } from '../services/api';
 import { useStore } from '../store';
 import { useProjectSync } from '../store/hooks';
 import { eventBus, EventNames } from '../store/eventBus';
-import type { ReactNode } from 'react';
 import type { Project, User } from '../types';
 import UserMenu from '../components/UserMenu';
 import ChangelogFloatingButton from '../components/ChangelogFloatingButton';
@@ -203,17 +202,33 @@ export default function ProjectList() {
   };
 
   const getStatusTag = (status: string) => {
-    const statusConfig: Record<string, { color: string; text: string; icon: ReactNode }> = {
-      planning: { color: 'blue', text: '规划', icon: <CalendarOutlined /> },
-      writing: { color: 'green', text: '创作', icon: <EditOutlined /> },
-      revising: { color: 'orange', text: '修订', icon: <FileTextOutlined /> },
-      completed: { color: 'purple', text: '已完结', icon: <TrophyOutlined /> },
+    const statusConfig: Record<string, { dot: string; text: string }> = {
+      planning: { dot: token.colorTextTertiary, text: '规划' },
+      writing: { dot: token.colorPrimary, text: '创作' },
+      revising: { dot: token.colorWarning, text: '修订' },
+      completed: { dot: token.colorSuccess, text: '已完结' },
     };
     const config = statusConfig[status] || statusConfig.planning;
     return (
-      <Tag color={config.color} icon={config.icon} style={{ margin: 0, borderRadius: 4, flexShrink: 0 }}>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 5,
+          flexShrink: 0,
+          padding: '1px 8px',
+          borderRadius: 999,
+          fontSize: 11,
+          lineHeight: '18px',
+          color: token.colorTextSecondary,
+          background: alphaColor(token.colorBgContainer, 0.92),
+          border: `1px solid ${token.colorBorderSecondary}`,
+          backdropFilter: 'blur(6px)',
+        }}
+      >
+        <span style={{ width: 5, height: 5, borderRadius: '50%', background: config.dot }} />
         {config.text}
-      </Tag>
+      </span>
     );
   };
 
@@ -234,7 +249,7 @@ export default function ProjectList() {
     if (progress >= 80) return token.colorSuccess;
     if (progress >= 50) return token.colorPrimary;
     if (progress >= 20) return token.colorWarning;
-    return token.colorError;
+    return token.colorTextTertiary;
   };
 
   const formatDate = (dateString: string) => {
@@ -248,14 +263,6 @@ export default function ProjectList() {
     if (days < 7) return `${days}天前`;
     return date.toLocaleDateString('zh-CN');
   };
-
-  const totalWords = projects.reduce((sum, p) => sum + (p.current_words || 0), 0);
-  const activeProjects = projects.filter(p => p.status === 'writing').length;
-  // 计算已完结项目数（进度>=100%或状态为completed）
-  const completedProjects = projects.filter(p => {
-    const progress = getProgress(p.current_words || 0, p.target_words || 0);
-    return progress >= 100 || p.status === 'completed';
-  }).length;
 
   const handleFileSelect = async (file: File) => {
     setSelectedFile(file);
@@ -521,7 +528,8 @@ export default function ProjectList() {
             display: 'flex',
             alignItems: 'center',
             padding: collapsed ? 0 : '0 12px',
-            background: token.colorPrimary,
+            background: token.colorBgContainer,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
             flexShrink: 0,
             justifyContent: collapsed ? 'center' : 'space-between',
             gap: 8
@@ -532,7 +540,7 @@ export default function ProjectList() {
                 icon={<MenuUnfoldOutlined />}
                 onClick={() => setCollapsed(false)}
                 style={{
-                  color: token.colorWhite,
+                  color: token.colorTextSecondary,
                   width: '100%',
                   height: '100%',
                   padding: 0,
@@ -548,19 +556,18 @@ export default function ProjectList() {
                   <div style={{
                     width: 30,
                     height: 30,
-                    background: alphaColor(token.colorWhite, 0.2),
+                    background: alphaColor(token.colorPrimary, 0.08),
                     borderRadius: 8,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: token.colorWhite,
+                    color: token.colorPrimary,
                     fontSize: 16,
-                    backdropFilter: 'blur(4px)'
                   }}>
                     <BookOutlined />
                   </div>
                   <span style={{
-                    color: token.colorWhite,
+                    color: token.colorText,
                     fontWeight: 600,
                     fontSize: 15,
                     fontFamily: token.fontFamily,
@@ -575,7 +582,7 @@ export default function ProjectList() {
                   icon={<MenuFoldOutlined />}
                   onClick={() => setCollapsed(true)}
                   style={{
-                    color: token.colorWhite,
+                    color: token.colorTextSecondary,
                     width: 32,
                     height: 32,
                     padding: 0,
@@ -637,7 +644,8 @@ export default function ProjectList() {
       )}
 
       <div style={{
-        background: token.colorPrimary,
+        background: token.colorBgContainer,
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
         padding: isMobile ? '0 12px' : '0 24px',
         display: 'flex',
         alignItems: 'center',
@@ -647,7 +655,6 @@ export default function ProjectList() {
         left: isMobile ? 0 : desktopSiderWidth,
         right: 0,
         zIndex: 1000,
-        boxShadow: `0 2px 10px ${alphaColor(token.colorText, 0.16)}`,
         height: headerHeight,
         flexShrink: 0,
         transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -655,26 +662,23 @@ export default function ProjectList() {
       }}>
         {isMobile ? (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Button
-                type="text"
-                icon={<MenuUnfoldOutlined />}
-                onClick={() => setDrawerVisible(true)}
-                style={{
-                  fontSize: 18,
-                  color: token.colorWhite,
-                  width: 36,
-                  height: 36
-                }}
-              />
-            </div>
+            <Button
+              type="text"
+              icon={<MenuUnfoldOutlined />}
+              onClick={() => setDrawerVisible(true)}
+              style={{
+                fontSize: 18,
+                color: token.colorText,
+                width: 36,
+                height: 36
+              }}
+            />
 
             <h2 style={{
               margin: 0,
-              color: token.colorWhite,
+              color: token.colorText,
               fontSize: 16,
               fontWeight: 600,
-              textShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}`,
               flex: 1,
               textAlign: 'center',
               whiteSpace: 'nowrap',
@@ -692,7 +696,7 @@ export default function ProjectList() {
                 onClick={() => setAnnouncementVisible(true)}
                 style={{
                   fontSize: 18,
-                  color: token.colorWhite,
+                  color: token.colorTextSecondary,
                   width: 36,
                   height: 36
                 }}
@@ -701,90 +705,34 @@ export default function ProjectList() {
           </>
         ) : (
           <>
-            <div style={{ width: 40, zIndex: 1 }} />
-
             <h2 style={{
               margin: 0,
-              color: token.colorWhite,
-              fontSize: '24px',
+              color: token.colorText,
+              fontSize: '18px',
               fontWeight: 600,
-              textShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}`,
-              position: 'absolute',
-              left: '50%',
-              transform: 'translateX(-50%)',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
-              maxWidth: '45%'
             }}>
               {currentViewTitle}
             </h2>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, zIndex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <ChangelogFloatingButton />
               <Badge dot={hasUnreadAnnouncements} offset={[-4, 4]}>
                 <Button
                   type="text"
                   icon={<BellOutlined />}
                   onClick={() => setAnnouncementVisible(true)}
                   style={{
-                    color: token.colorWhite,
-                    width: 40,
-                    height: 40,
-                    borderRadius: 20,
-                    background: alphaColor(token.colorWhite, 0.12),
-                    border: `1px solid ${alphaColor(token.colorWhite, 0.18)}`,
+                    color: token.colorTextSecondary,
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
                   }}
                   title="系统公告"
                 />
               </Badge>
-              {activeView === 'projects' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
-                  {projects.length > 0 && (
-                    <div style={{ display: 'flex', gap: '16px' }}>
-                      {[
-                        { label: '创作中', value: activeProjects, unit: '本' },
-                        { label: '已完结', value: completedProjects, unit: '本' },
-                        { label: '总字数', value: totalWords, unit: '字' },
-                      ].map((item, index) => (
-                        <div
-                          key={index}
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            backdropFilter: 'blur(4px)',
-                            borderRadius: '28px',
-                            minWidth: '56px',
-                            height: '56px',
-                            padding: '0 12px',
-                            boxShadow: `inset 0 0 15px ${alphaColor(token.colorWhite, 0.15)}, 0 4px 10px ${alphaColor(token.colorText, 0.1)}`,
-                            cursor: 'default',
-                            transition: 'transform 0.3s ease, box-shadow 0.3s ease',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.transform = 'translateY(-3px) scale(1.02)';
-                            e.currentTarget.style.boxShadow = `inset 0 0 20px ${alphaColor(token.colorWhite, 0.25)}, 0 8px 16px ${alphaColor(token.colorText, 0.15)}`;
-                            e.currentTarget.style.border = `1px solid ${alphaColor(token.colorWhite, 0.1)}`;
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                            e.currentTarget.style.boxShadow = `inset 0 0 15px ${alphaColor(token.colorWhite, 0.15)}, 0 4px 10px ${alphaColor(token.colorText, 0.1)}`;
-                          }}
-                        >
-                          <span style={{ fontSize: '11px', color: alphaColor(token.colorWhite, 0.9), marginBottom: '2px', lineHeight: 1 }}>
-                            {item.label}
-                          </span>
-                          <span style={{ fontSize: '15px', fontWeight: '600', color: token.colorWhite, lineHeight: 1, fontFamily: 'Monaco, monospace' }}>
-                            {item.label === '总字数' ? formatWordCount(item.value) : item.value}
-                            {item.unit && <span style={{ fontSize: '10px', marginLeft: '2px', opacity: 0.8 }}>{item.unit}</span>}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </>
         )}
@@ -863,9 +811,7 @@ export default function ProjectList() {
             padding: activeView === 'projects'
               ? (isMobile ? '20px 16px 70px' : '24px 24px 70px')
               : 0,
-            background: activeView === 'projects'
-              ? `linear-gradient(180deg, ${alphaColor(token.colorPrimary, 0.04)} 0%, ${token.colorBgLayout} 26%)`
-              : token.colorBgLayout,
+            background: token.colorBgLayout,
           }}
         >
           {activeView === 'settings' && <SettingsPage />}
@@ -901,7 +847,6 @@ export default function ProjectList() {
             />
           )}
         
-        <ChangelogFloatingButton />
         </div>
       </div>
 

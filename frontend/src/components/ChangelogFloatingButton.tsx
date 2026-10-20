@@ -1,32 +1,28 @@
 import { useState } from 'react';
-import { FloatButton, Grid } from 'antd';
+import { Button, theme } from 'antd';
 import { FileTextOutlined } from '@ant-design/icons';
 import ChangelogModal from './ChangelogModal';
 
-const { useBreakpoint } = Grid;
-
+/**
+ * 更新日志入口：以内联按钮形式放在顶栏，避免浮动按钮遮挡页面内容
+ */
 export default function ChangelogFloatingButton() {
   const [showChangelog, setShowChangelog] = useState(false);
-  const screens = useBreakpoint();
-  const isMobile = !screens.md;
+  const { token } = theme.useToken();
 
   return (
     <>
-      <FloatButton
+      <Button
+        type="text"
         icon={<FileTextOutlined />}
-        type="primary"
-        tooltip="查看更新日志"
-        style={{
-          // 桌面端时，确保按钮在主内容区域内（侧边栏右侧）
-          right: 24,
-          bottom: 100,
-          // 移动端无侧边栏，不需要额外处理
-          ...(isMobile ? {} : {
-            // 确保 zIndex 低于侧边栏但高于内容
-            zIndex: 999,
-          }),
-        }}
         onClick={() => setShowChangelog(true)}
+        title="更新日志"
+        style={{
+          color: token.colorTextSecondary,
+          width: 36,
+          height: 36,
+          borderRadius: 18,
+        }}
       />
 
       <ChangelogModal

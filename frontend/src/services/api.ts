@@ -103,6 +103,8 @@ api.interceptors.response.use(
   },
   (error) => {
     let errorMessage = '请求失败';
+    // 登录页上的「未登录」401 属于预期状态（页面本身就在等待登录），不弹错误提示
+    let silent = false;
 
     if (error.response) {
       const status = error.response.status;
@@ -126,6 +128,8 @@ api.interceptors.response.use(
 
           if (isUnauthenticated && window.location.pathname !== '/login') {
             window.location.href = '/login';
+          } else if (isUnauthenticated) {
+            silent = true;
           }
           break;
         }
@@ -156,7 +160,9 @@ api.interceptors.response.use(
       errorMessage = error.message || '请求失败';
     }
 
-    message.error(errorMessage);
+    if (!silent) {
+      message.error(errorMessage);
+    }
     console.error('API Error:', errorMessage, error);
 
     return Promise.reject(error);
@@ -1460,7 +1466,7 @@ export const projectAgentApi = {
       }
       throw new Error(detail);
     }
-    if (!response.body) throw new Error('无法读取木木创作助手响应流');
+    if (!response.body) throw new Error('无法读取小新创作助手响应流');
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -1486,8 +1492,8 @@ export const projectAgentApi = {
         else if (event.type === 'final_done') callbacks.onFinalDone?.(event.data);
         else if (event.type === 'result') callbacks.onResult?.(event.data);
         else if (event.type === 'error') {
-          callbacks.onError?.(event.error || '木木创作助手执行失败');
-          throw new Error(event.error || '木木创作助手执行失败');
+          callbacks.onError?.(event.error || '小新创作助手执行失败');
+          throw new Error(event.error || '小新创作助手执行失败');
         }
       }
     }

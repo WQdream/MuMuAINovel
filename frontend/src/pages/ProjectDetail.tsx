@@ -374,7 +374,8 @@ export default function ProjectDetail() {
   return (
     <Layout style={{ minHeight: '100vh', height: '100vh', overflow: 'hidden' }}>
       <Header style={{
-        background: token.colorPrimary,
+        background: token.colorBgContainer,
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
         padding: mobile ? '0 12px' : '0 24px',
         display: 'flex',
         alignItems: 'center',
@@ -384,7 +385,6 @@ export default function ProjectDetail() {
         left: mobile ? 0 : (collapsed ? 60 : 220),
         right: 0,
         zIndex: 1000,
-        boxShadow: `0 2px 10px ${alphaColor(token.colorText, 0.16)}`,
         height: mobile ? 56 : 70,
         transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         overflow: 'hidden'
@@ -397,7 +397,7 @@ export default function ProjectDetail() {
               onClick={() => setDrawerVisible(true)}
               style={{
                 fontSize: '18px',
-                color: token.colorWhite,
+                color: token.colorText,
                 width: '36px',
                 height: '36px'
               }}
@@ -407,13 +407,9 @@ export default function ProjectDetail() {
 
         <h2 style={{
           margin: 0,
-          color: token.colorWhite,
-          fontSize: mobile ? '16px' : '24px',
+          color: token.colorText,
+          fontSize: mobile ? '16px' : '18px',
           fontWeight: 600,
-          textShadow: `0 2px 4px ${alphaColor(token.colorText, 0.2)}`,
-          position: mobile ? 'static' : 'absolute',
-          left: mobile ? 'auto' : '50%',
-          transform: mobile ? 'none' : 'translateX(-50%)',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -429,9 +425,9 @@ export default function ProjectDetail() {
           <Space size={2} style={{ zIndex: 1 }}>
             <Button
               type="text"
-              icon={<img src="/logo.svg" alt="木木创作助手" style={{ width: 20, height: 20, display: 'block' }} />}
+              icon={<img src="/logo.svg" alt="小新工坊" style={{ width: 20, height: 20, display: 'block' }} />}
               onClick={() => setAgentDrawerVisible(true)}
-              style={{ color: token.colorWhite, width: 36, height: 36 }}
+              style={{ color: token.colorTextSecondary, width: 36, height: 36 }}
             />
             <Button
               type="text"
@@ -439,7 +435,7 @@ export default function ProjectDetail() {
               onClick={() => navigate('/')}
               style={{
                 fontSize: '14px',
-                color: token.colorWhite,
+                color: token.colorTextSecondary,
                 height: '36px',
                 padding: '0 6px',
               }}
@@ -450,61 +446,32 @@ export default function ProjectDetail() {
         )}
 
         {!mobile && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', zIndex: 1 }}>
-            <div style={{ display: 'flex', gap: '16px' }}>
-              {[
-                { label: '大纲', value: outlines.length, unit: '条' },
-                { label: '角色', value: characters.length, unit: '个' },
-                { label: '章节', value: chapters.length, unit: '章' },
-                { label: '已写', value: currentProject.current_words, unit: '字' },
-              ].map((item, index) => (
-                <div
-                  key={index}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backdropFilter: 'blur(4px)',
-                    borderRadius: '28px',
-                    minWidth: '56px',
-                    height: '56px',
-                    padding: '0 12px',
-                    boxShadow: `inset 0 0 15px ${alphaColor(token.colorWhite, 0.15)}, 0 4px 10px ${alphaColor(token.colorText, 0.1)}`,
-                    cursor: 'default',
-                    transition: 'all 0.3s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'translateY(-3px) scale(1.02)';
-                    e.currentTarget.style.boxShadow = `inset 0 0 20px ${alphaColor(token.colorWhite, 0.25)}, 0 8px 16px ${alphaColor(token.colorText, 0.15)}`;
-                    e.currentTarget.style.border = `1px solid ${alphaColor(token.colorWhite, 0.1)}`;
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                    e.currentTarget.style.boxShadow = `inset 0 0 15px ${alphaColor(token.colorWhite, 0.15)}, 0 4px 10px ${alphaColor(token.colorText, 0.1)}`;
-                  }}
-                >
-                  <span style={{
-                    fontSize: '11px',
-                    color: alphaColor(token.colorWhite, 0.9),
-                    marginBottom: '2px',
-                    lineHeight: 1
-                  }}>
-                    {item.label}
-                  </span>
-                  <span style={{
-                    fontSize: '15px',
-                    fontWeight: '600',
-                    color: token.colorWhite,
-                    lineHeight: 1,
-                    fontFamily: 'Monaco, monospace'
-                  }}>
-                    {item.value > 10000 ? (item.value / 10000).toFixed(1) + 'w' : item.value}
-                    <span style={{ fontSize: '10px', marginLeft: '2px', opacity: 0.8 }}>{item.unit}</span>
-                  </span>
-                </div>
-              ))}
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', zIndex: 1 }}>
+            {[
+              { label: '大纲', value: outlines.length, unit: '条' },
+              { label: '角色', value: characters.length, unit: '个' },
+              { label: '章节', value: chapters.length, unit: '章' },
+              { label: '已写', value: currentProject.current_words, unit: '字' },
+            ].map((item, index) => (
+              <div
+                key={index}
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 4,
+                  padding: '4px 10px',
+                  borderRadius: 8,
+                  background: token.colorFillQuaternary,
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                }}
+              >
+                <span style={{ fontSize: 11, color: token.colorTextTertiary }}>{item.label}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
+                  {item.value > 10000 ? (item.value / 10000).toFixed(1) + 'w' : item.value}
+                  <span style={{ fontSize: 10, marginLeft: 2, opacity: 0.7 }}>{item.unit}</span>
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </Header>
@@ -577,7 +544,8 @@ export default function ProjectDetail() {
                 display: 'flex',
                 alignItems: 'center',
                 padding: collapsed ? 0 : '0 12px',
-                background: token.colorPrimary,
+                background: token.colorBgContainer,
+                borderBottom: `1px solid ${token.colorBorderSecondary}`,
                 flexShrink: 0,
                 justifyContent: collapsed ? 'center' : 'space-between',
                 gap: 8
@@ -588,7 +556,7 @@ export default function ProjectDetail() {
                     icon={<MenuUnfoldOutlined />}
                     onClick={() => setCollapsed(false)}
                     style={{
-                      color: token.colorWhite,
+                      color: token.colorTextSecondary,
                       width: '100%',
                       height: '100%',
                       padding: 0,
@@ -604,19 +572,18 @@ export default function ProjectDetail() {
                       <div style={{
                         width: 30,
                         height: 30,
-                        background: alphaColor(token.colorWhite, 0.2),
+                        background: alphaColor(token.colorPrimary, 0.08),
                         borderRadius: 8,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        color: token.colorWhite,
+                        color: token.colorPrimary,
                         fontSize: 16,
-                        backdropFilter: 'blur(4px)'
                       }}>
                         <BookOutlined />
                       </div>
                       <span style={{
-                        color: token.colorWhite,
+                        color: token.colorText,
                         fontWeight: 600,
                         fontSize: 15,
                         whiteSpace: 'nowrap',
@@ -631,7 +598,7 @@ export default function ProjectDetail() {
                       icon={<MenuFoldOutlined />}
                       onClick={() => setCollapsed(true)}
                       style={{
-                        color: token.colorWhite,
+                        color: token.colorTextSecondary,
                         width: 32,
                         height: 32,
                         padding: 0,

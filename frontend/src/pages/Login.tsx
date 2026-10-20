@@ -801,7 +801,7 @@ export default function Login() {
                       <br />
                       <span
                         style={{
-                          backgroundImage: `linear-gradient(90deg, ${token.colorPrimary} 0%, #d946ef 100%)`,
+                          backgroundImage: `linear-gradient(90deg, ${token.colorPrimary} 0%, #4A4A42 100%)`,
                           WebkitBackgroundClip: 'text',
                           backgroundClip: 'text',
                           WebkitTextFillColor: 'transparent',
@@ -926,8 +926,12 @@ export default function Login() {
                   <Alert
                     type="info"
                     showIcon
-                    icon={<SafetyCertificateOutlined />}
-                    style={{ background: alphaColor(token.colorPrimary, 0.06), borderRadius: 12 }}
+                    icon={<SafetyCertificateOutlined style={{ color: token.colorTextSecondary }} />}
+                    style={{
+                      background: token.colorBgContainer,
+                      border: `1px solid ${token.colorBorderSecondary}`,
+                      borderRadius: 12,
+                    }}
                     message="登录说明"
                     description={(
                       <ul style={{ margin: 0, paddingLeft: 18 }}>

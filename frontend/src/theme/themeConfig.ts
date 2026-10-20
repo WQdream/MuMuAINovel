@@ -5,7 +5,7 @@ import type { ThemeMode } from './themeStorage';
 export type ResolvedThemeMode = Exclude<ThemeMode, 'system'>;
 
 const sharedToken: ThemeConfig['token'] = {
-  colorPrimary: '#4D8088',
+  colorPrimary: '#1F1F1B',
   borderRadius: 8,
   wireframe: false,
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif",
@@ -28,15 +28,15 @@ const lightThemeConfig: ThemeConfig = {
   algorithm: theme.defaultAlgorithm,
   token: {
     ...sharedToken,
-    colorBgBase: '#F8F6F1',
+    colorBgBase: '#F6F6F2',
     colorTextBase: '#2B2B2B',
-    colorBgLayout: '#F8F6F1',
+    colorBgLayout: '#F6F6F2',
     colorBgContainer: '#FFFFFF',
   },
   components: {
     ...sharedComponents,
     Layout: {
-      bodyBg: '#F8F6F1',
+      bodyBg: '#F6F6F2',
       headerBg: '#FFFFFF',
       siderBg: '#FFFFFF',
     },

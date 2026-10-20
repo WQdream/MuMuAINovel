@@ -1677,8 +1677,8 @@ export default function Outline() {
           justifyContent: 'space-between',
           alignItems: isMobile ? 'stretch' : 'center'
         }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+            <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24, whiteSpace: 'nowrap' }}>
               <FileTextOutlined style={{ marginRight: 8 }} />
               故事大纲
             </h2>
@@ -1688,7 +1688,7 @@ export default function Outline() {
               </Tag>
             )}
           </div>
-          <Space size="small" wrap={isMobile}>
+          <Space size="small" wrap style={{ flex: 1, minWidth: 0, justifyContent: 'flex-end' }}>
             <Input.Search
               allowClear
               placeholder="搜索大纲（序号/标题/内容）"
