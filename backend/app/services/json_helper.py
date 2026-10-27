@@ -1,7 +1,7 @@
 """JSON 处理工具类"""
 import json
 import re
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 from app.logger import get_logger, safe_preview
 from app.utils.reasoning_text import strip_think_tags
 
@@ -362,6 +362,80 @@ def _fix_multiple_objects_as_value(text: str) -> str:
     return text
 
 
+def _close_truncated_json(text: str) -> Optional[str]:
+    """
+    修补被 max_tokens 截断的 JSON 尾部。
+
+    AI 流式输出触顶时，字符串和括号都可能是半截的：
+        {"hooks": [{"type": "悬念", "content": "他推开门
+    这里截掉最后一个不完整的键值对，补齐引号与括号，让前面的完整内容可用。
+    """
+    if not text:
+        return None
+
+    stack: List[str] = []
+    in_string = False
+    escaped = False
+    # 记录每个结构层级中最近一个可以安全截断的位置（逗号之后）
+    last_safe_cut = -1
+    last_safe_stack: List[str] = []
+    last_safe_in_string = False
+
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+        if char in "{[":
+            stack.append(char)
+            continue
+        if char in "}]":
+            if stack:
+                stack.pop()
+            continue
+        if char == ",":
+            last_safe_cut = index
+            last_safe_stack = list(stack)
+            last_safe_in_string = in_string
+
+    def _close(open_stack: List[str]) -> str:
+        return "".join("}" if opener == "{" else "]" for opener in reversed(open_stack))
+
+    candidates: List[str] = []
+    if not in_string and not stack:
+        candidates.append(text)
+    # 优先：截到最后一个逗号，丢弃半截字段
+    if last_safe_cut > 0:
+        candidates.append(text[:last_safe_cut].rstrip().rstrip(",") + _close(last_safe_stack))
+    # 兜底：补上被截断的引号后再闭合剩余括号
+    tail = text + '"' if in_string and not escaped else text
+    candidates.append(tail.rstrip().rstrip(",") + _close(stack))
+
+    for candidate in candidates:
+        if not candidate.strip():
+            continue
+        try:
+            json.loads(candidate)
+            logger.warning(
+                "⚠️ 检测到被截断的 JSON，已截断尾部并按结构补齐（原长 %s → 修补后 %s）",
+                len(text),
+                len(candidate),
+            )
+            return candidate
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
 def clean_json_response(text: str) -> str:
     """清洗 AI 返回的 JSON（改进版 - 流式安全）"""
     try:
@@ -489,6 +563,18 @@ def clean_json_response(text: str) -> str:
             result = text
             logger.warning(f"⚠️ 未找到JSON结束位置，返回全部内容（长度: {len(result)}）")
             logger.debug(f"   栈状态: {stack}")
+
+        # 修复0：输出被 max_tokens 截断（无结束括号）时，按结构补齐尾部
+        if end <= 0:
+            repaired = _close_truncated_json(result)
+            if repaired:
+                result = repaired
+                try:
+                    json.loads(result)
+                    logger.info("✅ 截断 JSON 已修补成功")
+                    return result
+                except json.JSONDecodeError:
+                    pass
         
         # 验证清洗后的结果
         try:

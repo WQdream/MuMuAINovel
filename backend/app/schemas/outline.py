@@ -70,6 +70,29 @@ class OutlineGenerateRequest(BaseModel):
     enable_mcp: bool = Field(True, description="是否启用MCP工具增强（搜索情节设计参考）")
 
 
+class OutlineDirectionSuggestion(BaseModel):
+    """AI推荐的单条续写方向"""
+    title: str = Field(..., description="方向标题")
+    description: str = Field(..., description="可直接填入故事发展方向的具体描述")
+    conflict: Optional[str] = Field(None, description="核心冲突或吸引力")
+
+
+class OutlineDirectionRequest(BaseModel):
+    """生成续写方向建议的请求模型"""
+    project_id: str = Field(..., description="项目ID")
+    plot_stage: str = Field("development", description="情节阶段")
+    requirements: Optional[str] = Field(None, description="其他要求")
+    current_direction: Optional[str] = Field(None, description="用户当前填写的方向")
+    exclude_directions: List[str] = Field(default_factory=list, description="已推荐过、需要避免重复的方向")
+    provider: Optional[str] = Field(None, description="AI提供商")
+    model: Optional[str] = Field(None, description="AI模型")
+
+
+class OutlineDirectionResponse(BaseModel):
+    """续写方向建议响应模型"""
+    suggestions: List[OutlineDirectionSuggestion] = Field(..., description="推荐的续写方向")
+
+
 class ChapterOutlineGenerateRequest(BaseModel):
     """为单个章节生成大纲的请求模型"""
     outline_id: str = Field(..., description="大纲ID")

@@ -19,6 +19,9 @@ from app.schemas.outline import (
     OutlineResponse,
     OutlineListResponse,
     OutlineGenerateRequest,
+    OutlineDirectionRequest,
+    OutlineDirectionResponse,
+    OutlineDirectionSuggestion,
     OutlineExpansionRequest,
     OutlineExpansionResponse,
     BatchOutlineExpansionRequest,
@@ -37,6 +40,7 @@ from app.services.memory_service import memory_service
 from app.logger import get_logger
 from app.api.settings import get_user_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response, WizardProgressTracker
+from app.utils.provider_policy import detect_policy_refusal, policy_refusal_error
 
 router = APIRouter(prefix="/outlines", tags=["大纲管理"])
 logger = get_logger(__name__)
@@ -148,6 +152,163 @@ async def get_project_outlines(
 ):
     """获取指定项目的所有大纲（路径参数版本，兼容旧API）"""
     return await get_outlines(project_id, request, db)
+
+
+@router.post(
+    "/continue-directions",
+    response_model=OutlineDirectionResponse,
+    summary="AI推荐续写方向"
+)
+async def generate_continue_directions(
+    data: OutlineDirectionRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user_ai_service: AIService = Depends(get_user_ai_service),
+):
+    """基于最近大纲生成若干差异化续写方向，仅返回建议，不修改项目数据。"""
+    user_id = getattr(request.state, "user_id", None)
+    project = await verify_project_access(data.project_id, user_id, db)
+
+    outlines_result = await db.execute(
+        select(Outline)
+        .where(Outline.project_id == data.project_id)
+        .order_by(Outline.order_index)
+    )
+    existing_outlines = outlines_result.scalars().all()
+    if not existing_outlines:
+        raise HTTPException(status_code=400, detail="当前项目还没有大纲，无法推荐续写方向")
+
+    characters_result = await db.execute(
+        select(Character).where(Character.project_id == data.project_id)
+    )
+    characters = characters_result.scalars().all()
+
+    context = await _build_outline_continue_context(
+        project=project,
+        latest_outlines=existing_outlines,
+        characters=characters,
+        chapter_count=5,
+        plot_stage=data.plot_stage,
+        story_direction=data.current_direction or "尚未确定",
+        requirements=data.requirements or "",
+        db=db,
+    )
+
+    stage_instructions = {
+        "development": "继续展开情节，深化人物关系，推进主线冲突，并为后续发展蓄力",
+        "climax": "推动矛盾集中爆发，让主要冲突升级，同时保持人物选择有代价",
+        "ending": "收束主要矛盾与伏笔，推动人物完成关键选择，并给出有回响的结局",
+    }
+    stage_instruction = stage_instructions.get(data.plot_stage, stage_instructions["development"])
+    excluded = [
+        item.strip()[:300]
+        for item in data.exclude_directions[:20]
+        if item and item.strip()
+    ]
+    excluded_text = "\n".join(f"- {item}" for item in excluded) if excluded else "无"
+
+    prompt = f"""<system>
+你是经验丰富的小说策划编辑，擅长根据已有故事寻找真正可写、彼此不同的后续方向。
+</system>
+
+<task>
+请为下面的小说推荐 4 个下一步剧情发展方向。
+用户可能暂时没有思路，因此建议必须具体到“接下来发生什么、谁做出选择、冲突如何升级”，而不是空泛的主题词。
+</task>
+
+<story_context>
+{context['project_info']}
+
+{context['recent_outlines']}
+
+{context['characters_info']}
+</story_context>
+
+<current_state>
+情节阶段：{stage_instruction}
+用户已有想法：{data.current_direction or "尚未确定"}
+其他要求：{data.requirements or "无"}
+</current_state>
+
+<already_suggested>
+以下方向已经推荐过，本轮必须避开其核心走向：
+{excluded_text}
+</already_suggested>
+
+<rules>
+1. 必须承接最近已有大纲，不得重启故事、改写既有事实或突然换主角。
+2. 4 个方向的核心事件、冲突来源和人物选择必须明显不同，不能只是同一剧情换措辞。
+3. 优先利用现有角色、组织、关系、职业和未解决矛盾；确有必要时才引入新角色。
+4. 每个方向描述 80-160 个中文字符，可直接填入“故事发展方向”供后续生成大纲。
+5. 不要写章节列表，不要提前写完整结局，不要使用 Markdown。
+6. 只输出可被 JSON 直接解析的数组。
+</rules>
+
+<output>
+[
+  {{
+    "title": "不超过12字的简短标题",
+    "description": "具体说明接下来发生的事件、人物选择、冲突升级与阶段钩子",
+    "conflict": "一句话概括核心冲突"
+  }}
+]
+</output>"""
+
+    try:
+        parsed = await user_ai_service.call_with_json_retry(
+            prompt=prompt,
+            provider=data.provider,
+            model=data.model,
+            temperature=0.9,
+            # 推理型模型会先消耗思考 token，预留足够空间避免正文被截断为空。
+            max_tokens=max(6000, getattr(user_ai_service, "default_max_tokens", 0) or 0),
+            expected_type="array",
+            max_retries=2,
+            auto_mcp=False,
+        )
+    except Exception as exc:
+        logger.error(f"AI推荐续写方向失败: {exc}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"AI 生成续写方向失败: {exc}") from exc
+
+    if isinstance(parsed, dict):
+        parsed = parsed.get("suggestions") or parsed.get("directions") or [parsed]
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=502, detail="AI 返回的续写方向格式无效")
+
+    suggestions: List[OutlineDirectionSuggestion] = []
+    seen_titles = set()
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or item.get("name") or "").strip()
+        description = str(
+            item.get("description")
+            or item.get("direction")
+            or item.get("summary")
+            or ""
+        ).strip()
+        conflict = str(item.get("conflict") or item.get("hook") or "").strip() or None
+        if not title or not description:
+            continue
+        title = title[:30]
+        description = description[:500]
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        suggestions.append(
+            OutlineDirectionSuggestion(
+                title=title,
+                description=description,
+                conflict=conflict[:200] if conflict else None,
+            )
+        )
+        if len(suggestions) >= 4:
+            break
+
+    if not suggestions:
+        raise HTTPException(status_code=502, detail="AI 没有返回可用的续写方向，请重试")
+
+    return OutlineDirectionResponse(suggestions=suggestions)
 
 
 @router.get("/{outline_id}", response_model=OutlineResponse, summary="获取大纲详情")
@@ -814,6 +975,20 @@ class JSONParseError(Exception):
         self.original_content = original_content
 
 
+class ProviderPolicyError(Exception):
+    """服务商内容审核拦截：重试无意义，需直接暴露给用户。"""
+
+    def __init__(self, message: str, original_content: str = ""):
+        super().__init__(message)
+        self.original_content = original_content
+
+
+def _ensure_not_policy_refusal(ai_response: str) -> None:
+    refusal = detect_policy_refusal(ai_response)
+    if refusal:
+        raise ProviderPolicyError(policy_refusal_error(refusal), ai_response)
+
+
 def _normalize_character_entries(raw_characters: Any) -> list:
     """标准化大纲 characters 字段，兼容旧字符串格式。"""
     if not isinstance(raw_characters, list):
@@ -900,6 +1075,8 @@ def _parse_ai_response(ai_response: str, raise_on_error: bool = False) -> list:
         JSONParseError: 当raise_on_error=True且解析失败时抛出
     """
     try:
+        # 服务商可能用 HTTP 200 + 审核话术代替大纲 JSON，重试也拿不到结果。
+        _ensure_not_policy_refusal(ai_response)
         # 使用统一的JSON清洗方法（从AIService导入）
         from app.services.ai_service import AIService
         ai_service_temp = AIService()
@@ -950,6 +1127,9 @@ def _parse_ai_response(ai_response: str, raise_on_error: bool = False) -> list:
         }]
     except JSONParseError:
         # 重新抛出JSONParseError
+        raise
+    except ProviderPolicyError:
+        # 审核拦截不是解析问题：保留原始原因，不降级成"系统错误"
         raise
     except Exception as e:
         error_msg = f"解析异常: {str(e)}"

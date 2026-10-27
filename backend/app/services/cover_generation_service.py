@@ -17,6 +17,12 @@ from app.config import PROJECT_ROOT
 from app.logger import get_logger
 from app.models.project import Project
 from app.models.settings import Settings
+from app.services.image_config_service import resolve_effective_image_settings
+from app.services.api_quota_service import (
+    CONFIG_TYPE_IMAGE,
+    consume_quota,
+    refund_quota,
+)
 from app.services.cover_providers.base_cover_provider import BaseCoverProvider, CoverGenerationResult
 from app.services.cover_providers.gemini_cover_provider import GeminiCoverProvider
 from app.services.cover_providers.grok_cover_provider import GrokCoverProvider
@@ -51,7 +57,8 @@ class CoverGenerationService:
     ) -> dict:
         project = await self._get_project(db=db, user_id=user_id, project_id=project_id)
         settings = await self._get_settings(db=db, user_id=user_id)
-        self._validate_cover_settings(settings)
+        image_settings = await resolve_effective_image_settings(settings, db)
+        self._validate_image_settings(settings, image_settings)
 
         if project.cover_status == "generating":
             raise HTTPException(status_code=409, detail="封面正在生成中，请勿重复提交")
@@ -63,17 +70,33 @@ class CoverGenerationService:
             user_id=user_id,
             db=db,
         )
-        project.cover_status = "generating"
-        project.cover_error = None
-        project.cover_prompt = prompt
-        await db.commit()
-        await db.refresh(project)
+
+        # 先校验并占用额度，再进入 generating 状态。额度不足不应污染封面失败状态。
+        shared_config_id = image_settings.get("shared_config_id")
+        quota_consumed = False
+        if shared_config_id:
+            await consume_quota(
+                db,
+                user_id=user_id,
+                config_type=CONFIG_TYPE_IMAGE,
+                config_id=shared_config_id,
+                config_name=image_settings.get("shared_config_name") or "公共图片配置",
+                daily_limit=image_settings.get("daily_call_limit"),
+                total_limit=image_settings.get("total_call_limit"),
+            )
+            quota_consumed = True
 
         try:
-            provider = self._build_provider(settings)
+            project.cover_status = "generating"
+            project.cover_error = None
+            project.cover_prompt = prompt
+            await db.commit()
+            await db.refresh(project)
+
+            provider = self._build_provider(image_settings)
             result = await provider.generate_cover(
                 prompt=prompt,
-                model=settings.cover_image_model or "",
+                model=image_settings["cover_image_model"] or "",
                 width=COVER_WIDTH,
                 height=COVER_HEIGHT,
             )
@@ -98,10 +121,18 @@ class CoverGenerationService:
                 "cover_image_url": project.cover_image_url,
                 "cover_prompt": project.cover_prompt,
                 "provider": result["provider"],
-                "model": result["model"],
+                # 公共图片配置可能配置了展示别名，响应里不能绕过别名泄露真实模型名。
+                "model": image_settings.get("model_display_name") or result["model"],
                 "message": "封面生成成功",
             }
         except httpx.HTTPStatusError as exc:
+            if quota_consumed:
+                await refund_quota(
+                    db,
+                    user_id=user_id,
+                    config_type=CONFIG_TYPE_IMAGE,
+                    config_id=shared_config_id,
+                )
             logger.error("封面生成上游 HTTP 错误: project_id=%s error=%s", project.id, exc, exc_info=True)
             detail = self._extract_upstream_error_detail(exc)
             project.cover_status = "failed"
@@ -109,12 +140,26 @@ class CoverGenerationService:
             await db.commit()
             raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
         except HTTPException as exc:
+            if quota_consumed:
+                await refund_quota(
+                    db,
+                    user_id=user_id,
+                    config_type=CONFIG_TYPE_IMAGE,
+                    config_id=shared_config_id,
+                )
             logger.error("封面生成业务错误: project_id=%s error=%s", project.id, exc.detail, exc_info=True)
             project.cover_status = "failed"
             project.cover_error = str(exc.detail)
             await db.commit()
             raise
         except Exception as exc:
+            if quota_consumed:
+                await refund_quota(
+                    db,
+                    user_id=user_id,
+                    config_type=CONFIG_TYPE_IMAGE,
+                    config_id=shared_config_id,
+                )
             logger.error("封面生成失败: project_id=%s error=%s", project.id, exc, exc_info=True)
             project.cover_status = "failed"
             project.cover_error = str(exc)
@@ -151,6 +196,12 @@ class CoverGenerationService:
         except httpx.HTTPStatusError as exc:
             detail = self._extract_upstream_error_detail(exc)
             raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+        except httpx.RequestError as exc:
+            logger.warning("封面图片接口测试连接失败: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"无法连接图片接口，请检查 API 地址和网络：{exc}",
+            ) from exc
 
         return CoverTestResult(
             success=True,
@@ -199,17 +250,25 @@ class CoverGenerationService:
             raise HTTPException(status_code=400, detail="请先在设置页完成封面图片配置")
         return settings
 
-    def _validate_cover_settings(self, settings: Settings) -> None:
+    def _validate_image_settings(
+        self,
+        settings: Settings,
+        image_settings: dict,
+    ) -> None:
         if not settings.cover_enabled:
             raise HTTPException(status_code=400, detail="封面图片功能未启用，请先在设置页开启")
-        if not settings.cover_api_provider or not settings.cover_api_key or not settings.cover_image_model:
+        if (
+            not image_settings.get("cover_api_provider")
+            or not image_settings.get("cover_api_key")
+            or not image_settings.get("cover_image_model")
+        ):
             raise HTTPException(status_code=400, detail="封面图片配置不完整，请前往设置页补全")
 
-    def _build_provider(self, settings: Settings) -> BaseCoverProvider:
+    def _build_provider(self, image_settings: dict) -> BaseCoverProvider:
         return self._build_provider_from_values(
-            provider=settings.cover_api_provider or "",
-            api_key=settings.cover_api_key or "",
-            api_base_url=settings.cover_api_base_url,
+            provider=image_settings.get("cover_api_provider") or "",
+            api_key=image_settings.get("cover_api_key") or "",
+            api_base_url=image_settings.get("cover_api_base_url"),
         )
 
     def _build_provider_from_values(
@@ -228,7 +287,10 @@ class CoverGenerationService:
         if provider_value == "mumu":
             if normalized_base_url.endswith("/v1beta"):
                 return GeminiCoverProvider(api_key=api_key, base_url=normalized_base_url)
-            return GrokCoverProvider(api_key=api_key, base_url=normalized_base_url or "https://zhongzhuan.mumuverse.space/v1")
+            return GrokCoverProvider(
+                api_key=api_key,
+                base_url=normalized_base_url or "https://zhongzhuan.mumuverse.space/v1",
+            )
         raise HTTPException(status_code=400, detail="当前版本仅支持 Gemini、Grok 或 MuMuのAPI 作为封面图片 Provider")
 
     def _save_cover_file(

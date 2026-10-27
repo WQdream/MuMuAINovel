@@ -22,6 +22,10 @@ from app.models.background_task import BackgroundTask
 from app.models.announcement import Announcement
 from app.models.project_agent import AgentConversation, AgentMessage, AgentToolCall, AgentExecutionStep
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeChunk
+from app.models.admin_access_log import AdminAccessLog
+from app.models.shared_api_config import SharedApiConfig
+from app.models.shared_image_api_config import SharedImageApiConfig
+from app.models.api_usage import ApiUsageCounter
 
 __all__ = [
     "Project",
@@ -60,4 +64,8 @@ __all__ = [
     "KnowledgeBase",
     "KnowledgeDocument",
     "KnowledgeChunk",
+    "AdminAccessLog",
+    "SharedApiConfig",
+    "SharedImageApiConfig",
+    "ApiUsageCounter",
 ]

@@ -9,6 +9,8 @@ from datetime import datetime
 class ImportRequest(BaseModel):
     """导入提示词请求"""
     custom_name: Optional[str] = Field(None, max_length=100, description="自定义名称")
+    overwrite: bool = Field(False, description="已存在相同提示词时覆盖已有风格")
+    duplicate_action: Optional[str] = Field(None, description="重复处理：overwrite 覆盖 / copy 新建副本")
 
 
 class DownloadRequest(BaseModel):

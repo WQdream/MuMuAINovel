@@ -53,9 +53,12 @@ RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
     fi
 
 # 安装系统依赖（添加数据库工具）
+# nodejs：AI 去味的确定性检测脚本（backend/app/skills/story-deslop/scripts）需要 Node 运行时。
+# 脚本只用 fs/path + 可选链，Debian 自带的 Node 18 足够；缺失时后端会自动降级为纯模型改写。
 RUN apt-get update && apt-get install -y \
     gcc \
     curl \
+    nodejs \
     postgresql-client \
     netcat-traditional \
     && rm -rf /var/lib/apt/lists/*

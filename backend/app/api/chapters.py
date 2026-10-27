@@ -5,8 +5,10 @@ from sqlalchemy import select, func, update
 from sqlalchemy.orm import selectinload
 import json
 import asyncio
+import httpx
 from typing import Awaitable, Callable, Optional
 from datetime import datetime, timedelta
+import time
 from asyncio import Queue, Lock
 
 from app.database import get_db, get_engine
@@ -53,10 +55,12 @@ from app.schemas.regeneration import (
 from app.services.ai_service import AIService
 from app.services.prompt_service import prompt_service, PromptService, WritingStyleManager
 from app.services.plot_analyzer import PlotAnalyzer
+from app.services.analysis_monitor import analysis_monitor
 from app.services.memory_service import memory_service
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
 from app.logger import get_logger
+from app.utils.provider_policy import detect_policy_refusal, policy_refusal_error
 from app.api.settings import get_user_ai_service, get_user_ai_service_from_db_by_usage
 from app.utils.sse_response import SSEResponse, create_sse_response
 
@@ -66,6 +70,12 @@ logger = get_logger(__name__)
 # 全局数据库写入锁（每个用户一个锁，用于保护SQLite写入操作）
 db_write_locks: dict[str, Lock] = {}
 analysis_background_tasks: set[asyncio.Task] = set()
+active_chapter_generations: set[str] = set()
+
+# 后台任务以 background_tasks 表状态为准；未绑定任务的流式生成使用兜底租约。
+CHAPTER_GENERATION_LEASE_SECONDS = 2 * 60 * 60
+active_chapter_generation_started_at: dict[str, float] = {}
+active_chapter_generation_task_ids: dict[str, str] = {}
 
 ANALYSIS_TASK_TIMEOUT_SECONDS = 600
 ANALYSIS_TASK_STALE_SECONDS = 720
@@ -93,6 +103,124 @@ async def get_db_write_lock(user_id: str) -> Lock:
         db_write_locks[user_id] = Lock()
         logger.debug(f"🔒 为用户 {user_id} 创建数据库写入锁")
     return db_write_locks[user_id]
+
+
+async def _has_active_chapter_generation_task(
+    chapter_id: str,
+    project_id: str,
+    user_id: str,
+    db: AsyncSession,
+) -> bool:
+    """检查数据库里是否仍有该章节的排队/运行任务。"""
+    result = await db.execute(
+        select(BackgroundTask).where(
+            BackgroundTask.user_id == user_id,
+            BackgroundTask.project_id == project_id,
+            BackgroundTask.task_type == "chapter_generate",
+            BackgroundTask.status.in_(("pending", "running")),
+        )
+    )
+    return any(
+        isinstance(task.task_input, dict)
+        and task.task_input.get("chapter_id") == chapter_id
+        for task in result.scalars().all()
+    )
+
+
+async def _claim_chapter_generation(
+    chapter_id: str,
+    project_id: str,
+    user_id: str,
+    db: AsyncSession,
+) -> bool:
+    now = time.monotonic()
+    started_at = active_chapter_generation_started_at.get(chapter_id)
+    if chapter_id in active_chapter_generations:
+        task_id = active_chapter_generation_task_ids.get(chapter_id)
+        if task_id:
+            try:
+                task_result = await db.execute(
+                    select(BackgroundTask.status).where(
+                        BackgroundTask.id == task_id,
+                        BackgroundTask.user_id == user_id,
+                    )
+                )
+                task_status = task_result.scalar_one_or_none()
+                if task_status in ("pending", "running"):
+                    return False
+            except Exception as exc:
+                logger.warning(f"检查章节生成任务状态失败，保留现有锁: {chapter_id} {exc}")
+                return False
+
+            logger.warning(f"清理已结束但未释放的章节生成锁: {chapter_id}")
+            _release_chapter_generation(chapter_id)
+        else:
+            if await _has_active_chapter_generation_task(
+                chapter_id, project_id, user_id, db
+            ):
+                return False
+            if (
+                started_at is not None
+                and now - started_at < CHAPTER_GENERATION_LEASE_SECONDS
+            ):
+                return False
+            logger.warning(f"清理遗留的章节生成锁: {chapter_id}")
+            _release_chapter_generation(chapter_id)
+
+    active_chapter_generations.add(chapter_id)
+    active_chapter_generation_started_at[chapter_id] = now
+    return True
+
+
+def _bind_chapter_generation_task(chapter_id: str, task_id: str) -> None:
+    active_chapter_generation_task_ids[chapter_id] = task_id
+
+
+def _release_chapter_generation(chapter_id: str) -> None:
+    active_chapter_generations.discard(chapter_id)
+    active_chapter_generation_started_at.pop(chapter_id, None)
+    active_chapter_generation_task_ids.pop(chapter_id, None)
+
+
+async def _create_db_session(user_id: str) -> AsyncSession:
+    engine = await get_engine(user_id)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    return session_factory()
+
+
+def _minimum_complete_length(target_word_count: int) -> int:
+    return min(500, max(120, int(target_word_count * 0.2)))
+
+
+def _chapter_generation_error(full_content: str, target_word_count: int) -> Optional[str]:
+    """区分「服务商内容审核拦截」「空输出」「提前结束」三种失败，避免误报成截断。"""
+    refusal = detect_policy_refusal(full_content)
+    if refusal:
+        return policy_refusal_error(refusal)
+
+    stripped = full_content.strip()
+    if not stripped:
+        return (
+            "AI 未返回正文（可能把全部输出用于思考或被模型限流）。"
+            "本次内容未保存，请重试或更换模型"
+        )
+    if len(stripped) < _minimum_complete_length(target_word_count):
+        return (
+            f"AI 生成提前结束，仅生成 {len(stripped)} 字，未保存到章节。请重试"
+        )
+    return None
+
+
+async def _monitor_event(
+    task_id: str,
+    level: str,
+    message: str,
+    progress: Optional[int] = None,
+) -> None:
+    """把分析器的实时事件写入内存监控（异步签名以匹配回调类型）。"""
+    analysis_monitor.emit(task_id, level, message, progress)
 
 
 async def _set_analysis_task_terminal_state(
@@ -888,10 +1016,13 @@ async def analyze_chapter_background(
     user_id: str,
     project_id: str,
     task_id: str,
-    ai_service: Optional[AIService] = None,
     progress_callback: Optional[Callable[[int], Awaitable[None]]] = None,
 ) -> bool:
-    """执行有硬超时保障的章节分析，并确保中断后任务进入终态。"""
+    """执行有硬超时保障的章节分析，并确保中断后任务进入终态。
+
+    章节分析统一使用「章节内容分析」专用文本模型配置（未配置时回退当前启用配置），
+    不接受外部传入的 AI 服务实例，避免写作模型与分析方法混用。
+    """
     try:
         return await asyncio.wait_for(
             _analyze_chapter_background_impl(
@@ -899,7 +1030,6 @@ async def analyze_chapter_background(
                 user_id=user_id,
                 project_id=project_id,
                 task_id=task_id,
-                ai_service=ai_service,
                 progress_callback=progress_callback,
             ),
             timeout=ANALYSIS_TASK_TIMEOUT_SECONDS,
@@ -907,9 +1037,13 @@ async def analyze_chapter_background(
     except TimeoutError:
         error_message = f"分析任务超时（超过{ANALYSIS_TASK_TIMEOUT_SECONDS // 60}分钟）"
         logger.error(f"❌ {error_message}: chapter_id={chapter_id}, task_id={task_id}")
+        analysis_monitor.emit(task_id, "error", error_message, None)
+        analysis_monitor.finish(task_id, "failed")
         await _set_analysis_task_terminal_state(user_id, task_id, "failed", error_message)
         return False
     except asyncio.CancelledError:
+        analysis_monitor.emit(task_id, "error", "分析任务被取消", None)
+        analysis_monitor.finish(task_id, "failed")
         terminal_update = asyncio.create_task(
             _set_analysis_task_terminal_state(
                 user_id,
@@ -927,7 +1061,6 @@ async def _analyze_chapter_background_impl(
     user_id: str,
     project_id: str,
     task_id: str,
-    ai_service: Optional[AIService] = None,
     progress_callback: Optional[Callable[[int], Awaitable[None]]] = None,
 ) -> bool:
     """
@@ -938,7 +1071,6 @@ async def _analyze_chapter_background_impl(
         user_id: 用户ID
         project_id: 项目ID
         task_id: 任务ID
-        ai_service: AI服务实例
         
     Returns:
         bool: True表示分析成功，False表示分析失败
@@ -1002,19 +1134,41 @@ async def _analyze_chapter_background_impl(
                 task.completed_at = datetime.now()
                 await db_session.commit()
             logger.error(f"❌ 章节不存在或内容为空: {chapter_id}")
+            analysis_monitor.start(
+                task_id=task_id,
+                project_id=project_id,
+                chapter_id=chapter_id,
+            )
+            analysis_monitor.emit(task_id, "error", "章节不存在或内容为空", None)
+            analysis_monitor.finish(task_id, "failed")
             return False
+
+        # 过程监控：记录本章分析的分阶段日志，供前端「分析监控」面板查看
+        analysis_monitor.start(
+            task_id=task_id,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            chapter_number=chapter.chapter_number,
+            chapter_title=chapter.title,
+        )
+        analysis_monitor.emit(
+            task_id,
+            "info",
+            f"任务已领取：第{chapter.chapter_number}章《{chapter.title}》，正文 {len(chapter.content)} 字",
+            20,
+        )
         
         async with write_lock:
             task.progress = 20
             await db_session.commit()
         await report_progress(20)
         
-        if ai_service is None:
-            ai_service = await get_user_ai_service_from_db_by_usage(
-                user_id=user_id,
-                db=db_session,
-                usage="chapter_analysis"
-            )
+        ai_service = await get_user_ai_service_from_db_by_usage(
+            user_id=user_id,
+            db=db_session,
+            usage="chapter_analysis"
+        )
+        analysis_monitor.emit(task_id, "info", "AI 服务已就绪，开始加载伏笔与角色上下文", 22)
 
         # 获取已埋入的伏笔列表（用于回收匹配，传入当前章节号以启用智能标记）
         existing_foreshadows = await foreshadow_service.get_planted_foreshadows_for_analysis(
@@ -1023,6 +1177,12 @@ async def _analyze_chapter_background_impl(
             current_chapter_number=chapter.chapter_number  # 传入当前章节号以启用智能标记
         )
         logger.info(f"📋 后台分析 - 已获取{len(existing_foreshadows)}个已埋入伏笔用于匹配（含智能回收标记）")
+        analysis_monitor.emit(
+            task_id,
+            "info",
+            f"已加载 {len(existing_foreshadows)} 个已埋入伏笔用于回收匹配",
+            23,
+        )
         
         # 获取项目角色信息（根据大纲/展开规划筛选本章相关角色）
         filter_character_names = None
@@ -1080,10 +1240,22 @@ async def _analyze_chapter_background_impl(
             filter_character_names=filter_character_names
         )
         logger.info(f"📋 后台分析 - 已获取{len(project_characters)}个角色信息用于分析")
+        analysis_monitor.emit(
+            task_id,
+            "info",
+            f"已加载 {len(project_characters)} 个角色信息",
+            24,
+        )
         
         # 定义重试回调函数，用于在重试时更新任务状态
         async def on_retry_callback(attempt: int, max_retries: int, wait_time: int, error_reason: str):
             """重试时更新任务状态，让前端能感知到重试进度"""
+            analysis_monitor.emit(
+                task_id,
+                "warn",
+                f"第 {attempt}/{max_retries} 次尝试失败（{error_reason[:120]}），{wait_time}s 后压缩输出重试",
+                25,
+            )
             try:
                 async with write_lock:
                     # 重新获取任务（确保获取最新状态）
@@ -1112,17 +1284,32 @@ async def _analyze_chapter_background_impl(
             word_count=chapter.word_count or len(chapter.content),
             existing_foreshadows=existing_foreshadows,
             on_retry=on_retry_callback,
-            characters_info=characters_info
+            characters_info=characters_info,
+            on_event=lambda level, msg, progress=None: _monitor_event(
+                task_id, level, msg, progress
+            ),
         )
         
         if not analysis_result:
+            failure_reason = getattr(analyzer, "last_error", None) or "AI 未返回有效分析结果"
+            # 服务商审核拦截等明确原因不再叠加「AI分析失败」前缀，避免掩盖真实原因。
+            is_explicit_reason = failure_reason.startswith(("模型服务商拒绝", "AI响应为空"))
+            task_error = (
+                failure_reason
+                if is_explicit_reason
+                else f"AI分析失败：{failure_reason}"
+            )
             async with write_lock:
                 task.status = 'failed'
-                task.error_message = 'AI分析失败，请检查日志'
+                task.error_message = task_error[:500]
                 task.completed_at = datetime.now()
                 await db_session.commit()
-            logger.error(f"❌ AI分析失败: {chapter_id}")
+            logger.error(f"❌ AI分析失败: {chapter_id}, 原因: {failure_reason}")
+            analysis_monitor.emit(task_id, "error", task_error, None)
+            analysis_monitor.finish(task_id, "failed")
             return False
+
+        analysis_monitor.emit(task_id, "info", "分析结果已生成，开始写入数据库", 65)
         
         async with write_lock:
             task.progress = 60
@@ -1412,12 +1599,17 @@ async def _analyze_chapter_background_impl(
         if update_success:
             await report_progress(100)
             logger.info(f"✅ 章节分析完成: {chapter_id}, 提取{len(memories)}条记忆")
+            analysis_monitor.emit(task_id, "info", "分析完成，记忆与伏笔已写入", 100)
+            analysis_monitor.finish(task_id, "completed")
         else:
             logger.error(f"❌ 章节分析完成但无法更新任务终态: {chapter_id}")
+            analysis_monitor.finish(task_id, "completed")
         return update_success
         
     except Exception as e:
         logger.error(f"❌ 后台分析异常: {str(e)}", exc_info=True)
+        analysis_monitor.emit(task_id, "error", f"分析异常：{str(e)[:200]}", None)
+        analysis_monitor.finish(task_id, "failed")
         if db_session:
             try:
                 await db_session.rollback()
@@ -1458,44 +1650,47 @@ async def generate_chapter_content_stream(
     custom_model = generate_request.model if hasattr(generate_request, 'model') else None
     temp_narrative_perspective = generate_request.narrative_perspective if hasattr(generate_request, 'narrative_perspective') else None
     skill_key = generate_request.skill_key if hasattr(generate_request, 'skill_key') else None
-    # 预先验证章节存在性（使用临时会话）
-    async for temp_db in get_db(request):
-        try:
-            result = await temp_db.execute(
-                select(Chapter).where(Chapter.id == chapter_id)
+    current_user_id = getattr(request.state, "user_id", "system")
+    temp_db = await _create_db_session(current_user_id)
+    try:
+        result = await temp_db.execute(
+            select(Chapter).where(Chapter.id == chapter_id)
+        )
+        chapter = result.scalar_one_or_none()
+        if not chapter:
+            raise HTTPException(status_code=404, detail="章节不存在")
+
+        can_generate, error_msg, previous_chapters = await check_prerequisites(temp_db, chapter)
+        if not can_generate:
+            raise HTTPException(status_code=400, detail=error_msg)
+        analysis_ready, analysis_msg = await check_previous_analysis_ready(temp_db, chapter)
+        if not analysis_ready:
+            raise HTTPException(status_code=409, detail=analysis_msg)
+
+        previous_chapters_data = [
+            {
+                'id': ch.id,
+                'chapter_number': ch.chapter_number,
+                'title': ch.title,
+                'content': ch.content
+            }
+            for ch in previous_chapters
+        ]
+
+        if not await _claim_chapter_generation(
+            chapter_id, chapter.project_id, current_user_id, temp_db
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="该章节已有生成任务正在运行，请等待任务完成或先在后台任务面板取消该任务",
             )
-            chapter = result.scalar_one_or_none()
-            if not chapter:
-                raise HTTPException(status_code=404, detail="章节不存在")
-            
-            # 检查前置条件
-            can_generate, error_msg, previous_chapters = await check_prerequisites(temp_db, chapter)
-            if not can_generate:
-                raise HTTPException(status_code=400, detail=error_msg)
-            analysis_ready, analysis_msg = await check_previous_analysis_ready(temp_db, chapter)
-            if not analysis_ready:
-                raise HTTPException(status_code=409, detail=analysis_msg)
-            
-            # 保存前置章节数据供生成器使用
-            previous_chapters_data = [
-                {
-                    'id': ch.id,
-                    'chapter_number': ch.chapter_number,
-                    'title': ch.title,
-                    'content': ch.content
-                }
-                for ch in previous_chapters
-            ]
-        finally:
-            await temp_db.close()
-        break
+    finally:
+        await temp_db.close()
     
     async def event_generator():
-        # 在生成器内部创建独立的数据库会话
         db_session = None
         db_committed = False
-        # 获取当前用户ID（在生成器外部就需要）
-        current_user_id = getattr(request.state, "user_id", "system")
+        session_cm = None
         
         # 初始化标准进度追踪器
         from app.utils.sse_response import WizardProgressTracker
@@ -1503,9 +1698,10 @@ async def generate_chapter_content_stream(
         
         try:
             yield await tracker.start()
-            
-            # 创建新的数据库会话
-            async for db_session in get_db(request):
+
+            session_cm = get_db(request)
+            db_session = await anext(session_cm)
+            while True:
                 # === 加载阶段 ===
                 yield await tracker.loading("加载章节信息...", 0.2)
                 
@@ -1776,27 +1972,21 @@ async def generate_chapter_content_stream(
 确保在整个章节创作过程中始终保持风格的一致性。"""
                     logger.info(f"✅ 已将写作风格注入系统提示词（{len(style_content)}字符）")
                 
+
                 # 🔢 计算 max_tokens 限制
                 # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
                 # 同时设置上限防止过长，下限确保基本可用
                 calculated_max_tokens = int(target_word_count * 3)
-                calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
-                logger.info(f"📊 目标字数: {target_word_count}, 计算 max_tokens: {calculated_max_tokens}")
-                
-                # 🔢 计算 max_tokens 限制
-                # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
-                # 同时设置上限防止过长，下限确保基本可用
-                calculated_max_tokens = int(target_word_count * 3)
-                calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
+                calculated_max_tokens = max(2000, min(calculated_max_tokens + 4096, 20000))
                 logger.info(f"📊 目标字数: {target_word_count}, 计算 max_tokens: {calculated_max_tokens}")
                 
                 # 准备生成参数
                 generate_kwargs = {
                     "prompt": prompt,
                     "system_prompt": system_prompt_with_style,
-                    "tool_choice": "required",
+                    "tool_choice": "auto",
                     "max_tokens": calculated_max_tokens,
-                    "auto_mcp": bool(generate_request.enable_mcp)
+                    "auto_mcp": False,
                 }
                 if custom_model:
                     logger.info(f"  使用自定义模型: {custom_model}")
@@ -1833,6 +2023,12 @@ async def generate_chapter_content_stream(
                         yield await tracker.heartbeat()
                     
                     await asyncio.sleep(0)  # 让出控制权
+
+                generation_error = _chapter_generation_error(
+                    full_content, target_word_count
+                )
+                if generation_error:
+                    raise RuntimeError(generation_error)
                 
                 # === 保存阶段 ===
                 yield await tracker.saving("正在保存章节...", 0.3)
@@ -1903,7 +2099,6 @@ async def generate_chapter_content_stream(
                     user_id=current_user_id,
                     project_id=project.id,
                     task_id=task_id,
-                    ai_service=user_ai_service
                 )
                 
                 yield await tracker.saving("章节保存完成", 0.8)
@@ -1932,43 +2127,17 @@ async def generate_chapter_content_stream(
                 break  # 退出async for db_session循环
         
         except GeneratorExit:
-            # SSE连接断开
             logger.warning("章节生成器被提前关闭（SSE断开）")
-            if db_session and not db_committed:
-                try:
-                    if db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.info("章节生成事务已回滚（GeneratorExit）")
-                except Exception as e:
-                    logger.error(f"GeneratorExit回滚失败: {str(e)}")
         except Exception as e:
             logger.error(f"流式创作章节失败: {str(e)}")
-            if db_session and not db_committed:
-                try:
-                    if db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.info("章节生成事务已回滚（异常）")
-                except Exception as rollback_error:
-                    logger.error(f"回滚失败: {str(rollback_error)}")
             yield await tracker.error(str(e))
         finally:
-            # 确保数据库会话被正确关闭
-            if db_session:
+            if session_cm is not None:
                 try:
-                    # 最后检查：确保没有未提交的事务
-                    if not db_committed and db_session.in_transaction():
-                        await db_session.rollback()
-                        logger.warning("在finally中发现未提交事务，已回滚")
-                    
-                    await db_session.close()
-                    logger.info("数据库会话已关闭")
+                    await session_cm.aclose()
                 except Exception as close_error:
                     logger.error(f"关闭数据库会话失败: {str(close_error)}")
-                    # 强制关闭
-                    try:
-                        await db_session.close()
-                    except Exception:
-                        pass
+            _release_chapter_generation(chapter_id)
     
     return create_sse_response(event_generator())
 
@@ -2008,23 +2177,37 @@ async def generate_chapter_content_background(
     if not analysis_ready:
         raise HTTPException(status_code=409, detail=analysis_msg)
 
+    if not await _claim_chapter_generation(
+        chapter_id, chapter.project_id, user_id, db
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="该章节已有生成任务正在运行，请等待任务完成或先在后台任务面板取消该任务",
+        )
+
     # 创建后台任务
     from app.services.background_task_service import background_task_service, TaskProgressTracker
-    task = await background_task_service.create_task(
-        user_id=user_id,
-        project_id=chapter.project_id,
-        task_type="chapter_generate",
-        task_input={
-            "chapter_id": chapter_id,
-            "style_id": generate_request.style_id,
-            "target_word_count": generate_request.target_word_count or 3000,
-            "enable_mcp": generate_request.enable_mcp,
-            "model": generate_request.model,
-            "narrative_perspective": generate_request.narrative_perspective,
-            "skill_key": generate_request.skill_key,
-        },
-        db=db
-    )
+    try:
+        task = await background_task_service.create_task(
+            user_id=user_id,
+            project_id=chapter.project_id,
+            task_type="chapter_generate",
+            task_input={
+                "chapter_id": chapter_id,
+                "style_id": generate_request.style_id,
+                "target_word_count": generate_request.target_word_count or 3000,
+                "enable_mcp": generate_request.enable_mcp,
+                "model": generate_request.model,
+                "narrative_perspective": generate_request.narrative_perspective,
+                "skill_key": generate_request.skill_key,
+            },
+            db=db
+        )
+    except Exception:
+        _release_chapter_generation(chapter_id)
+        raise
+
+    _bind_chapter_generation_task(chapter_id, task.id)
 
     # 后台执行的函数
     async def _run_chapter_generation(task_id: str, bg_user_id: str):
@@ -2034,39 +2217,46 @@ async def generate_chapter_content_background(
         engine = await get_engine(bg_user_id)
         AsyncSessionLocal = async_sessionmaker(engine, class_=BgAsyncSession, expire_on_commit=False)
 
-        async with AsyncSessionLocal() as bg_db:
-            tracker = TaskProgressTracker(task_id, bg_user_id, "章节")
-            try:
-                await tracker.start()
+        try:
+            async with AsyncSessionLocal() as bg_db:
+                tracker = TaskProgressTracker(task_id, bg_user_id, "章节")
+                try:
+                    await tracker.start()
 
-                # 获取AI服务
-                from app.api.settings import get_user_ai_service_from_db
-                bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
+                    # 获取AI服务
+                    from app.api.settings import get_user_ai_service_from_db
+                    bg_ai_service = await get_user_ai_service_from_db(bg_user_id, bg_db)
 
-                await _run_chapter_generation_bg(
-                    task_input={
-                        "chapter_id": chapter_id,
-                        "style_id": generate_request.style_id,
-                        "target_word_count": generate_request.target_word_count or 3000,
-                        "enable_mcp": generate_request.enable_mcp,
-                        "model": generate_request.model,
-                        "narrative_perspective": generate_request.narrative_perspective,
-                        "skill_key": generate_request.skill_key,
-                    },
-                    db=bg_db,
-                    ai_service=bg_ai_service,
-                    tracker=tracker,
-                    user_id=bg_user_id,
-                    task_id=task_id,
-                )
+                    await _run_chapter_generation_bg(
+                        task_input={
+                            "chapter_id": chapter_id,
+                            "style_id": generate_request.style_id,
+                            "target_word_count": generate_request.target_word_count or 3000,
+                            "enable_mcp": generate_request.enable_mcp,
+                            "model": generate_request.model,
+                            "narrative_perspective": generate_request.narrative_perspective,
+                            "skill_key": generate_request.skill_key,
+                        },
+                        db=bg_db,
+                        ai_service=bg_ai_service,
+                        tracker=tracker,
+                        user_id=bg_user_id,
+                        task_id=task_id,
+                    )
 
-            except Exception as e:
-                logger.error(f"❌ 后台章节生成失败: {e}", exc_info=True)
-                await tracker.error(str(e))
+                except Exception as e:
+                    logger.error(f"❌ 后台章节生成失败: {e}", exc_info=True)
+                    await tracker.error(str(e))
+        finally:
+            _release_chapter_generation(chapter_id)
 
-    await background_task_service.spawn_background_task(
-        task.id, user_id, _run_chapter_generation
-    )
+    try:
+        await background_task_service.spawn_background_task(
+            task.id, user_id, _run_chapter_generation
+        )
+    except Exception:
+        _release_chapter_generation(chapter_id)
+        raise
 
     return {
         "task_id": task.id,
@@ -2095,7 +2285,7 @@ async def _run_chapter_generation_bg(
     target_word_count = task_input.get("target_word_count", 3000)
     custom_model = task_input.get("model")
     temp_narrative_perspective = task_input.get("narrative_perspective")
-    enable_mcp = task_input.get("enable_mcp", True)
+    enable_mcp = task_input.get("enable_mcp", False)
     write_lock = await get_db_write_lock(user_id)
 
     # === 加载阶段 ===
@@ -2277,14 +2467,14 @@ async def _run_chapter_generation_bg(
 确保在整个章节创作过程中始终保持风格的一致性。"""
 
     calculated_max_tokens = int(target_word_count * 3)
-    calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))
+    calculated_max_tokens = max(2000, min(calculated_max_tokens + 4096, 20000))
 
     generate_kwargs = {
         "prompt": prompt,
         "system_prompt": system_prompt_with_style,
-        "tool_choice": "required",
+        "tool_choice": "auto",
         "max_tokens": calculated_max_tokens,
-        "auto_mcp": bool(enable_mcp)
+        "auto_mcp": False,
     }
     if custom_model:
         generate_kwargs["model"] = custom_model
@@ -2316,6 +2506,10 @@ async def _run_chapter_generation_bg(
             )
 
         await asyncio.sleep(0)
+
+    generation_error = _chapter_generation_error(full_content, target_word_count)
+    if generation_error:
+        raise RuntimeError(generation_error)
 
     # === 保存阶段 ===
     if await tracker.check_cancelled():
@@ -2377,39 +2571,41 @@ async def _run_chapter_generation_bg(
     except Exception as plant_error:
         logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
 
-    # 创建分析任务
-    analysis_task = AnalysisTask(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        status='pending',
-        progress=0
-    )
-    db.add(analysis_task)
-    await db.commit()
-    await db.refresh(analysis_task)
+    try:
+        async with write_lock:
+            analysis_task = AnalysisTask(
+                chapter_id=chapter_id,
+                user_id=user_id,
+                project_id=current_chapter.project_id,
+                status='pending',
+                progress=0
+            )
+            db.add(analysis_task)
+            await db.commit()
+            await db.refresh(analysis_task)
 
-    logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
+        logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
+        await tracker.set_result({
+            "chapter_id": chapter_id,
+            "word_count": new_word_count,
+            "analysis_task_id": analysis_task.id,
+        })
+        await tracker.analyzing(0, f"正文已保存，共 {new_word_count} 字；正在分析章节...")
 
-    await tracker.set_result({
-        "chapter_id": chapter_id,
-        "word_count": new_word_count,
-        "analysis_task_id": analysis_task.id,
-    })
-    await tracker.analyzing(0, "章节创作完成，准备分析...")
-
-    analysis_success = await analyze_chapter_background(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        task_id=analysis_task.id,
-        progress_callback=tracker.analyzing,
-    )
-    if not analysis_success:
-        raise RuntimeError("章节内容已生成，但章节分析失败")
-
-    # === 完成 ===
-    await tracker.complete(f"创作和分析完成！共 {new_word_count} 字")
+        analysis_success = await analyze_chapter_background(
+            chapter_id=chapter_id,
+            user_id=user_id,
+            project_id=current_chapter.project_id,
+            task_id=analysis_task.id,
+            progress_callback=tracker.analyzing,
+        )
+        if not analysis_success:
+            await tracker.complete(f"章节创作完成，共 {new_word_count} 字；分析未完成，可稍后重新分析")
+        else:
+            await tracker.complete(f"章节创作与分析完成，共 {new_word_count} 字")
+    except Exception as analysis_error:
+        logger.error(f"⚠️ 章节正文已保存，但分析流程异常: {analysis_error}", exc_info=True)
+        await tracker.complete(f"章节正文已保存，共 {new_word_count} 字；分析未完成，可稍后重新分析")
 
 
 def _build_analysis_task_status_payload(
@@ -2607,7 +2803,7 @@ async def _run_chapter_generation_bg(
     target_word_count = task_input.get("target_word_count", 3000)
     custom_model = task_input.get("model")
     temp_narrative_perspective = task_input.get("narrative_perspective")
-    enable_mcp = task_input.get("enable_mcp", True)
+    enable_mcp = task_input.get("enable_mcp", False)
     skill_key = task_input.get("skill_key")
     write_lock = await get_db_write_lock(user_id)
 
@@ -2815,14 +3011,14 @@ async def _run_chapter_generation_bg(
 确保在整个章节创作过程中始终保持风格的一致性。"""
 
     calculated_max_tokens = int(target_word_count * 3)
-    calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))
+    calculated_max_tokens = max(2000, min(calculated_max_tokens + 4096, 20000))
 
     generate_kwargs = {
         "prompt": prompt,
         "system_prompt": system_prompt_with_style,
-        "tool_choice": "required",
+        "tool_choice": "auto",
         "max_tokens": calculated_max_tokens,
-        "auto_mcp": bool(enable_mcp)
+        "auto_mcp": False,
     }
     if custom_model:
         generate_kwargs["model"] = custom_model
@@ -2911,40 +3107,41 @@ async def _run_chapter_generation_bg(
     except Exception as plant_error:
         logger.warning(f"⚠️ 自动标记伏笔埋入失败: {str(plant_error)}")
 
-    # 创建分析任务
-    analysis_task = AnalysisTask(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        status='pending',
-        progress=0
-    )
-    db.add(analysis_task)
-    await db.commit()
-    await db.refresh(analysis_task)
+    try:
+        async with write_lock:
+            analysis_task = AnalysisTask(
+                chapter_id=chapter_id,
+                user_id=user_id,
+                project_id=current_chapter.project_id,
+                status='pending',
+                progress=0
+            )
+            db.add(analysis_task)
+            await db.commit()
+            await db.refresh(analysis_task)
 
-    logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
+        logger.info(f"📋 后台生成：已创建分析任务: {analysis_task.id}")
+        await tracker.set_result({
+            "chapter_id": chapter_id,
+            "word_count": new_word_count,
+            "analysis_task_id": analysis_task.id,
+        })
+        await tracker.analyzing(0, f"正文已保存，共 {new_word_count} 字；正在分析章节...")
 
-    await tracker.set_result({
-        "chapter_id": chapter_id,
-        "word_count": new_word_count,
-        "analysis_task_id": analysis_task.id,
-    })
-    await tracker.analyzing(0, "章节创作完成，准备分析...")
-
-    analysis_success = await analyze_chapter_background(
-        chapter_id=chapter_id,
-        user_id=user_id,
-        project_id=current_chapter.project_id,
-        task_id=analysis_task.id,
-        ai_service=ai_service,
-        progress_callback=tracker.analyzing,
-    )
-    if not analysis_success:
-        raise RuntimeError("章节内容已生成，但章节分析失败")
-
-    # === 完成 ===
-    await tracker.complete(f"创作和分析完成！共 {new_word_count} 字")
+        analysis_success = await analyze_chapter_background(
+            chapter_id=chapter_id,
+            user_id=user_id,
+            project_id=current_chapter.project_id,
+            task_id=analysis_task.id,
+            progress_callback=tracker.analyzing,
+        )
+        if not analysis_success:
+            await tracker.complete(f"章节创作完成，共 {new_word_count} 字；分析未完成，可稍后重新分析")
+        else:
+            await tracker.complete(f"章节创作与分析完成，共 {new_word_count} 字")
+    except Exception as analysis_error:
+        logger.error(f"⚠️ 章节正文已保存，但分析流程异常: {analysis_error}", exc_info=True)
+        await tracker.complete(f"章节正文已保存，共 {new_word_count} 字；分析未完成，可稍后重新分析")
 
 
 def _build_analysis_task_status_payload(
@@ -3040,6 +3237,41 @@ async def get_analysis_task_status(
     return _build_analysis_task_status_payload(chapter_id, task, auto_recovered)
 
 
+@router.get("/project/{project_id}/analysis/monitor", summary="查询章节分析过程监控")
+async def get_analysis_monitor(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    返回该项目当前进程中所有章节分析任务的过程日志。
+
+    日志只保存在内存里（服务重启即清空），用于排查「分析卡住 / 输出被截断 /
+    JSON 解析失败」这类问题；任务终态仍以 AnalysisTask 为准。
+    """
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(project_id, user_id, db)
+
+    tasks = analysis_monitor.list_by_project(project_id)
+    return {
+        "project_id": project_id,
+        "total": len(tasks),
+        "items": [task.to_payload() for task in tasks],
+    }
+
+
+@router.delete("/project/{project_id}/analysis/monitor", summary="清空章节分析过程监控")
+async def clear_analysis_monitor(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(project_id, user_id, db)
+    removed = analysis_monitor.clear_project(project_id)
+    return {"project_id": project_id, "removed": removed}
+
+
 @router.post("/project/{project_id}/analysis/statuses", summary="批量查询章节分析任务状态", response_model=BatchAnalysisStatusResponse)
 async def get_project_analysis_task_statuses(
     project_id: str,
@@ -3104,7 +3336,6 @@ async def _run_batch_analysis_in_sequence(
     tasks_queue: list[dict[str, int | str]],
     user_id: str,
     project_id: str,
-    ai_service: Optional[AIService] = None
 ) -> None:
     """按章节顺序逐个执行分析任务。"""
     for index, task_item in enumerate(tasks_queue, start=1):
@@ -3119,7 +3350,6 @@ async def _run_batch_analysis_in_sequence(
                 user_id=user_id,
                 project_id=project_id,
                 task_id=task_id,
-                ai_service=ai_service
             )
             if not success:
                 logger.warning(f"⚠️ 一键顺序分析返回失败: chapter_id={chapter_id}, task_id={task_id}")
@@ -4000,7 +4230,19 @@ async def execute_batch_generation_in_order(
                         )
 
                         if not analysis_result:
-                            error_message = "分析函数返回失败"
+                            # 透出真实原因（例如服务商内容审核拦截），避免只显示"分析函数返回失败"
+                            analysis_error = (
+                                await db_session.execute(
+                                    select(AnalysisTask.error_message).where(
+                                        AnalysisTask.id == analysis_task.id
+                                    )
+                                )
+                            ).scalar_one_or_none()
+                            error_message = (
+                                analysis_error
+                                or getattr(analysis_task, "error_message", None)
+                                or "分析函数返回失败"
+                            )
                             logger.error(f"❌ 章节分析失败，批量生成中断: 第{chapter.chapter_number}章")
 
                             failed_info = {
@@ -4355,7 +4597,7 @@ async def generate_single_chapter_for_batch(
     # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
     # 同时设置上限防止过长，下限确保基本可用
     calculated_max_tokens = int(target_word_count * 3)
-    calculated_max_tokens = max(2000, min(calculated_max_tokens, 16000))  # 限制在 2000-16000 之间
+    calculated_max_tokens = max(2000, min(calculated_max_tokens + 4096, 20000))
     logger.info(f"📊 批量生成 - 目标字数: {target_word_count}, 计算 max_tokens: {calculated_max_tokens}")
     
     # 非流式生成内容
@@ -4364,9 +4606,9 @@ async def generate_single_chapter_for_batch(
     generate_kwargs = {
         "prompt": prompt,
         "system_prompt": system_prompt_with_style,
-        "tool_choice": "required",
+        "tool_choice": "auto",
         "max_tokens": calculated_max_tokens,
-        "auto_mcp": bool(enable_mcp)
+        "auto_mcp": False,
     }
     # 如果传入了自定义模型，使用指定的模型
     if custom_model:
@@ -5097,7 +5339,9 @@ async def partial_regenerate_stream(
             else:
                 target_words = int(original_word_count * 1.5)
             
-            calculated_max_tokens = max(500, min(int(target_words * 3), 8000))
+            # 输出预算按目标字数动态计算，并为推理模型的思考预留空间。
+            # 1000 字重写时约 7096 token，上限 20000 可覆盖约 5000 字以内的局部重写。
+            calculated_max_tokens = max(2000, min(int(target_words * 3) + 4096, 20000))
             
             # 流式生成
             full_content = ""
@@ -5107,26 +5351,51 @@ async def partial_regenerate_stream(
                 current_chars=0,
                 estimated_total=target_words
             )
-            
-            async for chunk in user_ai_service.generate_text_stream(
-                prompt=prompt,
-                max_tokens=calculated_max_tokens
-            ):
-                full_content += chunk
-                chunk_count += 1
-                
-                # 发送内容块
-                yield await tracker.generating_chunk(chunk)
-                
-                # 每5个chunk发送一次进度更新
-                if chunk_count % 5 == 0:
-                    yield await tracker.generating(
-                        current_chars=len(full_content),
-                        estimated_total=target_words,
-                        message=f'正在重写中... 已生成 {len(full_content)} 字'
+
+            # 仅在尚未输出任何正文时自动重试；已有正文时保留内容，避免重复和丢失。
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    async for chunk in user_ai_service.generate_text_stream(
+                        prompt=prompt,
+                        max_tokens=calculated_max_tokens,
+                    ):
+                        full_content += chunk
+                        chunk_count += 1
+
+                        yield await tracker.generating_chunk(chunk)
+
+                        if chunk_count % 5 == 0:
+                            yield await tracker.generating(
+                                current_chars=len(full_content),
+                                estimated_total=target_words,
+                                message=f'正在重写中... 已生成 {len(full_content)} 字'
+                            )
+
+                        await asyncio.sleep(0)
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except (httpx.TransportError, httpx.TimeoutException) as stream_error:
+                    if full_content.strip():
+                        raise RuntimeError(
+                            f"AI 输出中断（已生成 {len(full_content.strip())} 字），请重试"
+                        ) from stream_error
+                    if attempt >= max_attempts:
+                        raise RuntimeError(
+                            "AI 服务连续中断，未生成任何内容，请稍后重试"
+                        ) from stream_error
+                    wait_time = 2 ** attempt
+                    logger.warning(
+                        f"⚠️ 局部重写流式连接中断，{wait_time}秒后重试 "
+                        f"({attempt}/{max_attempts - 1}): {stream_error}"
                     )
-                
-                await asyncio.sleep(0)
+                    yield await tracker.generating(
+                        current_chars=0,
+                        estimated_total=target_words,
+                        message=f'连接中断，{wait_time} 秒后重试...'
+                    )
+                    await asyncio.sleep(wait_time)
             
             # 清理输出（移除可能的前后缀）
             full_content = full_content.strip()
@@ -5151,6 +5420,11 @@ async def partial_regenerate_stream(
                 full_content = full_content[1:-1]
             
             new_word_count = len(full_content)
+
+            if not full_content:
+                raise RuntimeError(
+                    "AI 未返回重写正文（可能把全部输出用于思考）。本次结果未应用，请重试或更换模型"
+                )
             
             logger.info(f"✅ 局部重写完成: 原文{original_word_count}字 -> 新文{new_word_count}字")
             

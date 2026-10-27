@@ -209,13 +209,18 @@ from app.api import (
     auth, users, settings, writing_styles, memories,
     mcp_plugins, admin, inspiration, prompt_templates,
     changelog, careers, foreshadows, prompt_workshop, book_import,
-    project_covers, project_agent, tasks, skills, announcements, knowledge
+    project_covers, project_agent, tasks, skills, announcements, knowledge,
+    admin_review, admin_api_config, admin_image_api_config,
+    polish,
 )
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
+app.include_router(admin_review.router, prefix="/api")
+app.include_router(admin_api_config.router, prefix="/api")
+app.include_router(admin_image_api_config.router, prefix="/api")
 
 app.include_router(projects.router, prefix="/api")
 app.include_router(project_covers.router, prefix="/api")
@@ -236,6 +241,7 @@ app.include_router(mcp_plugins.router, prefix="/api")  # MCP插件管理API
 app.include_router(prompt_templates.router, prefix="/api")  # 提示词模板管理API
 app.include_router(changelog.router, prefix="/api")  # 更新日志API
 app.include_router(skills.router)  # Skill API（已包含/api前缀）
+app.include_router(polish.router, prefix="/api")  # AI去味API（检测/改写/批量）
 app.include_router(prompt_workshop.router, prefix="/api")  # 提示词工坊API
 app.include_router(book_import.router, prefix="/api")  # 拆书导入API
 app.include_router(tasks.router, prefix="/api")  # 后台任务API

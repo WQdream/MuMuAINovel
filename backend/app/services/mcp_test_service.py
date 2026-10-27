@@ -161,8 +161,25 @@ class MCPTestService:
                 select(UserSettings).where(UserSettings.user_id == user.user_id)
             )
             user_settings = settings_result.scalar_one_or_none()
-            
-            if not user_settings or not user_settings.api_key:
+
+            # 局部导入避免与 app.api.settings 形成循环依赖
+            from app.api.settings import (
+                resolve_effective_ai_settings,
+                resolve_runtime_ai_config,
+            )
+
+            effective = (
+                await resolve_effective_ai_settings(user_settings, db_session)
+                if user_settings
+                else None
+            )
+            resolved_config = resolve_runtime_ai_config(
+                effective['api_provider'] if effective else None,
+                effective['api_key'] if effective else None,
+                effective['api_base_url'] if effective else None,
+            )
+
+            if not effective or not resolved_config["api_key"]:
                 # 没有AI配置，返回简单测试结果
                 logger.warning("用户未配置AI服务，跳过智能测试")
                 return MCPTestResult(
@@ -179,14 +196,22 @@ class MCPTestService:
             
             # 4. 使用AI选择工具并生成测试参数
             logger.info(f"使用AI分析工具并生成测试计划...")
-            
+
             ai_service = create_user_ai_service(
-                api_provider=user_settings.api_provider,
-                api_key=user_settings.api_key,
-                api_base_url=user_settings.api_base_url,
-                model_name=user_settings.llm_model,
+                api_provider=resolved_config["api_provider"],
+                api_key=resolved_config["api_key"],
+                api_base_url=resolved_config["api_base_url"],
+                model_name=effective['llm_model'],
+                model_aliases=effective.get('model_aliases'),
                 temperature=0.3,
-                max_tokens=1000
+                max_tokens=1000,
+                disable_thinking=bool(effective['disable_thinking']),
+                user_id=user.user_id,
+                db_session=db_session,
+                quota_config_id=effective.get('shared_config_id'),
+                quota_config_name=effective.get('shared_config_name'),
+                quota_daily_limit=effective.get('daily_call_limit'),
+                quota_total_limit=effective.get('total_call_limit'),
             )
             
             # 使用统一门面转换为OpenAI Function Calling格式

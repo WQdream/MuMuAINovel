@@ -8,11 +8,10 @@ from app.models.memory import StoryMemory, PlotAnalysis
 from app.models.chapter import Chapter
 from app.models.project import Project
 from app.services.memory_service import memory_service
-from app.services.plot_analyzer import get_plot_analyzer
+from app.services.plot_analyzer import PlotAnalyzer
 from app.services.foreshadow_service import foreshadow_service
-from app.services.ai_service import create_user_ai_service
 from app.models.settings import Settings
-from app.api.settings import resolve_runtime_ai_config
+from app.api.settings import get_user_ai_service_from_db_by_usage
 from app.logger import get_logger
 from app.api.common import verify_project_access
 import uuid
@@ -63,16 +62,11 @@ async def analyze_chapter(
         if not settings:
             raise HTTPException(status_code=400, detail="请先配置AI设置")
         
-        runtime_config = resolve_runtime_ai_config(settings.api_provider, settings.api_key, settings.api_base_url)
-
-        # 创建AI服务
-        ai_service = create_user_ai_service(
-            api_provider=runtime_config["api_provider"],
-            api_key=runtime_config["api_key"],
-            api_base_url=runtime_config["api_base_url"],
-            model_name=settings.llm_model,
-            temperature=settings.temperature,
-            max_tokens=settings.max_tokens
+        # 与其他章节分析入口保持一致：优先使用「章节内容分析」专用配置
+        ai_service = await get_user_ai_service_from_db_by_usage(
+            user_id=user_id,
+            db=db,
+            usage="chapter_analysis",
         )
         
         # 获取已埋入的伏笔列表（用于回收匹配）
@@ -83,7 +77,7 @@ async def analyze_chapter(
         logger.info(f"📋 已获取{len(existing_foreshadows)}个已埋入伏笔用于分析匹配")
         
         # 执行剧情分析（传入已有伏笔列表）
-        analyzer = get_plot_analyzer(ai_service)
+        analyzer = PlotAnalyzer(ai_service)
         analysis_result = await analyzer.analyze_chapter(
             chapter_number=chapter.chapter_number,
             title=chapter.title,

@@ -292,42 +292,98 @@ async def import_item(
     user_id = get_current_user_id(request)
     user_identifier = get_user_identifier(user_id)
     
-    # 获取提示词详情
+    # 获取提示词详情（先不计数，确认真正写入后再计数）
+    local_item = None
     if is_workshop_server():
         result = await db.execute(
             select(PromptWorkshopItem).where(PromptWorkshopItem.id == item_id)
         )
-        item = result.scalar_one_or_none()
-        if not item:
+        local_item = result.scalar_one_or_none()
+        if not local_item:
             raise HTTPException(status_code=404, detail="提示词不存在")
-        item_data = _item_to_dict(item)
-        
-        # 增加下载计数
-        item.download_count += 1
-        await db.commit()
+        item_data = _item_to_dict(local_item)
     else:
-        # 从云端获取
         try:
             result = await workshop_client.get_item(item_id, user_identifier=user_identifier)
             item_data = result.get("data", result)
-            
-            # 通知云端增加下载计数
-            try:
-                await workshop_client.record_download(item_id, user_identifier)
-            except Exception as e:
-                logger.warning(f"通知云端下载计数失败: {e}")
         except WorkshopClientError as e:
             raise HTTPException(status_code=503, detail=str(e))
-    
+
+    # 查重：同一用户下已有相同提示词内容则按请求处理
+    duplicate_result = await db.execute(
+        select(WritingStyle).where(
+            WritingStyle.user_id == user_id,
+            WritingStyle.prompt_content == item_data["prompt_content"]
+        ).order_by(WritingStyle.id)
+    )
+    existing_style = duplicate_result.scalars().first()
+    duplicate_action = "overwrite" if data.overwrite else data.duplicate_action
+    if existing_style and duplicate_action not in ("overwrite", "copy"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "STYLE_ALREADY_EXISTS",
+                "message": f"写作风格中已存在相同提示词「{existing_style.name}」",
+                "existing_style": {
+                    "id": existing_style.id,
+                    "name": existing_style.name,
+                    "description": existing_style.description,
+                    "prompt_content": existing_style.prompt_content,
+                    "style_type": existing_style.style_type,
+                }
+            }
+        )
+
+    # 确认会写入后，再记录下载次数
+    if is_workshop_server() and local_item is not None:
+        local_item.download_count += 1
+        await db.commit()
+    elif not is_workshop_server():
+        try:
+            await workshop_client.record_download(item_id, user_identifier)
+        except Exception as e:
+            logger.warning(f"通知云端下载计数失败: {e}")
+
+    if existing_style and duplicate_action == "overwrite":
+        existing_style.name = data.custom_name or existing_style.name
+        existing_style.description = f"从提示词工坊导入: {item_data.get('description', '') or ''}"
+        existing_style.prompt_content = item_data["prompt_content"]
+        await db.commit()
+        await db.refresh(existing_style)
+        return {
+            "success": True,
+            "message": "已覆盖已有写作风格",
+            "overwritten": True,
+            "writing_style": {
+                "id": existing_style.id,
+                "name": existing_style.name,
+                "style_type": existing_style.style_type,
+                "prompt_content": existing_style.prompt_content
+            }
+        }
+
     # 创建本地写作风格
     count_result = await db.execute(
         select(func.count(WritingStyle.id)).where(WritingStyle.user_id == user_id)
     )
     max_order = count_result.scalar_one()
     
+    new_name = data.custom_name or item_data["name"]
+    if existing_style:
+        # 明确要求再建一份时，自动追加序号避免同名
+        used_names_result = await db.execute(
+            select(WritingStyle.name).where(WritingStyle.user_id == user_id)
+        )
+        used_names = {row[0] for row in used_names_result.all()}
+        base_name = new_name
+        suffix = 2
+        while new_name in used_names:
+            new_name = f"{base_name} ({suffix})"
+            suffix += 1
+
     new_style = WritingStyle(
         user_id=user_id,
-        name=data.custom_name or item_data["name"],
+        name=new_name,
         style_type="custom",
         description=f"从提示词工坊导入: {item_data.get('description', '') or ''}",
         prompt_content=item_data["prompt_content"],

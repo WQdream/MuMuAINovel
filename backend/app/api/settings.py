@@ -11,21 +11,48 @@ from datetime import datetime
 import httpx
 import json
 import time
+import uuid
 
 from app.database import get_db
 from app.models.settings import Settings
 from app.services.cover_generation_service import cover_generation_service
 from app.schemas.settings import (
     SettingsCreate, SettingsUpdate, SettingsResponse,
-    APIKeyPreset, APIKeyPresetConfig, PresetCreateRequest,
-    PresetUpdateRequest, PresetResponse, PresetListResponse,
-    ChapterAnalysisPresetSelectionRequest,
-    SystemSMTPSettingsResponse, SystemSMTPSettingsUpdate, SMTPTestRequest
+    SystemSMTPSettingsResponse, SystemSMTPSettingsUpdate, SMTPTestRequest,
+    TextModelConfig, TextModelConfigCreateRequest, TextModelConfigUpdateRequest,
+    TextModelConfigListResponse, ChapterAnalysisTextModelSelectionRequest,
+    SharedApiConfigSummary, SharedApiConfigImportRequest,
+    ImageModelConfig, ImageModelConfigCreateRequest, ImageModelConfigUpdateRequest,
+    ImageModelConfigListResponse,
 )
 from app.user_manager import User
 from app.logger import get_logger, safe_preview
 from app.config import settings as app_settings, PROJECT_ROOT
 from app.services.ai_service import AIService, create_user_ai_service, create_user_ai_service_with_mcp, normalize_provider
+from app.services.api_quota_service import (
+    CONFIG_TYPE_IMAGE,
+    CONFIG_TYPE_TEXT,
+    consume_quota,
+    get_quota_status,
+    quota_payload,
+    refund_quota,
+)
+from app.services.image_config_service import (
+    ACTIVE_SHARED_IMAGE_PREF_KEY,
+    DISMISSED_SHARED_IMAGE_PREF_KEY,
+    IMAGE_MODELS_PREF_KEY,
+    apply_image_model_to_settings,
+    compose_user_image_configs,
+    find_image_config,
+    get_enabled_shared_image_config,
+    get_image_models_payload,
+    is_shared_image_card_id,
+    present_image_configs,
+    resolve_effective_image_settings,
+    rollback_invalid_shared_image_config,
+    safe_load_preferences,
+    shared_image_id_from_card,
+)
 from app.services.email_service import email_service
 from app.security import validate_ai_http_url
 
@@ -118,24 +145,313 @@ def _safe_load_preferences(raw_preferences: Optional[str]) -> Dict[str, Any]:
         return {}
 
 
-def _get_api_presets_payload(prefs: Dict[str, Any]) -> Dict[str, Any]:
-    """获取API预设偏好结构。"""
-    api_presets = prefs.get('api_presets')
-    if not isinstance(api_presets, dict):
-        api_presets = {'presets': [], 'version': '1.0'}
-    if not isinstance(api_presets.get('presets'), list):
-        api_presets['presets'] = []
-    api_presets.setdefault('version', '1.0')
-    return api_presets
+def _get_text_models_payload(prefs: Dict[str, Any]) -> Dict[str, Any]:
+    """获取文本模型配置容器，并迁移旧的「配置预设」数据。"""
+    _migrate_legacy_presets(prefs)
+    payload = prefs.get('text_models')
+    if not isinstance(payload, dict):
+        payload = {'configs': [], 'version': '1.0'}
+    if not isinstance(payload.get('configs'), list):
+        payload['configs'] = []
+    payload.setdefault('version', '1.0')
+    return payload
 
 
-def _get_chapter_analysis_preset_id(prefs: Dict[str, Any]) -> Optional[str]:
-    """读取章节内容分析专用API预设ID。"""
-    preset_id = prefs.get('chapter_analysis_preset_id')
-    return preset_id if isinstance(preset_id, str) and preset_id.strip() else None
+def _get_chapter_analysis_config_id(prefs: Dict[str, Any]) -> Optional[str]:
+    """读取章节内容分析专用文本模型配置 ID。"""
+    config_id = prefs.get('chapter_analysis_config_id')
+    return config_id if isinstance(config_id, str) and config_id.strip() else None
 
 
-def _build_ai_service_from_config(
+def _migrate_legacy_presets(prefs: Dict[str, Any]) -> None:
+    """把旧版 `api_presets` 合并进 `text_models`，并移除旧字段。
+
+    旧版把同一份 API 配置存了两份（文本模型卡片 + 配置预设），这里按 id 与
+    配置指纹去重后合并，只保留一个启用项，避免迁移后出现双份「使用中」。
+    """
+    legacy = prefs.pop('api_presets', None)
+    legacy_chapter_id = prefs.pop('chapter_analysis_preset_id', None)
+
+    payload = prefs.get('text_models')
+    if not isinstance(payload, dict):
+        payload = {'configs': [], 'version': '1.0'}
+    configs = payload.get('configs')
+    if not isinstance(configs, list):
+        configs = []
+
+    def fingerprint(cfg: Dict[str, Any]) -> tuple:
+        return (
+            _normalize_raw_provider(cfg.get('api_provider')),
+            cfg.get('api_key') or '',
+            (cfg.get('api_base_url') or '').rstrip('/'),
+            cfg.get('llm_model') or '',
+            float(cfg.get('temperature') if cfg.get('temperature') is not None else 0.7),
+            int(cfg.get('max_tokens') if cfg.get('max_tokens') is not None else 2000),
+        )
+
+    by_id = {cfg.get('id'): cfg for cfg in configs if isinstance(cfg, dict)}
+    by_fingerprint = {
+        fingerprint(cfg): cfg for cfg in configs if isinstance(cfg, dict)
+    }
+    legacy_id_map: Dict[str, str] = {}
+    legacy_active_id: Optional[str] = None
+
+    legacy_presets = legacy.get('presets') if isinstance(legacy, dict) else None
+    if isinstance(legacy_presets, list):
+        for preset in legacy_presets:
+            if not isinstance(preset, dict):
+                continue
+            config = preset.get('config')
+            if not isinstance(config, dict):
+                continue
+            record = {
+                'id': preset.get('id') or f"tm_{int(datetime.now().timestamp() * 1000)}",
+                'name': preset.get('name') or '未命名配置',
+                'note': preset.get('description'),
+                'is_active': bool(preset.get('is_active')),
+                'created_at': preset.get('created_at') or datetime.now().isoformat(),
+                'api_provider': _normalize_raw_provider(config.get('api_provider')),
+                'api_key': config.get('api_key') or '',
+                'api_base_url': config.get('api_base_url'),
+                'llm_model': config.get('llm_model'),
+                'temperature': config.get('temperature', 0.7),
+                'max_tokens': config.get('max_tokens', 2000),
+                'system_prompt': config.get('system_prompt'),
+                'disable_thinking': bool(config.get('disable_thinking', False)),
+            }
+            existing = by_id.get(record['id']) or by_fingerprint.get(fingerprint(record))
+            if existing:
+                # 旧预设与已有卡片是同一份配置，直接复用已有卡片
+                legacy_id_map[str(preset.get('id') or '')] = existing.get('id')
+                if record['is_active']:
+                    legacy_active_id = existing.get('id')
+                continue
+            configs.append(record)
+            by_id[record['id']] = record
+            by_fingerprint[fingerprint(record)] = record
+            legacy_id_map[str(preset.get('id') or '')] = record['id']
+            if record['is_active']:
+                legacy_active_id = record['id']
+
+    if legacy_active_id:
+        # 旧版中「生效的预设」就是主设置里的配置，迁移后应继续是启用项
+        for cfg in configs:
+            if isinstance(cfg, dict):
+                cfg['is_active'] = (cfg.get('id') == legacy_active_id)
+
+    active_seen = False
+    for cfg in configs:
+        if not isinstance(cfg, dict):
+            continue
+        if cfg.get('is_active') and active_seen:
+            cfg['is_active'] = False
+        elif cfg.get('is_active'):
+            active_seen = True
+
+    if legacy_chapter_id:
+        migrated_chapter_id = legacy_id_map.get(str(legacy_chapter_id), str(legacy_chapter_id))
+        if any(cfg.get('id') == migrated_chapter_id for cfg in configs if isinstance(cfg, dict)):
+            prefs['chapter_analysis_config_id'] = migrated_chapter_id
+
+    payload['configs'] = configs
+    prefs['text_models'] = payload
+
+
+async def _get_shared_api_config(db: AsyncSession, config_id: Optional[str]):
+    """读取一条「开放中」的公共配置；已停用/已删除返回 None。"""
+    if not isinstance(config_id, str) or not config_id.strip():
+        return None
+
+    from app.models.shared_api_config import SharedApiConfig
+
+    result = await db.execute(
+        select(SharedApiConfig).where(
+            SharedApiConfig.id == config_id.strip(),
+            SharedApiConfig.is_enabled.is_(True),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _annotate_shared_text_quota(
+    db: AsyncSession,
+    user_id: str,
+    cards: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """给用户端公共文本卡片补上额度信息，不修改卡片里的其它字段。"""
+    for card in cards:
+        shared_config_id = card.get('shared_config_id')
+        if not shared_config_id:
+            continue
+        status = await get_quota_status(
+            db,
+            user_id=user_id,
+            config_type=CONFIG_TYPE_TEXT,
+            config_id=shared_config_id,
+            daily_limit=card.get('daily_call_limit'),
+            total_limit=card.get('total_call_limit'),
+        )
+        for key, value in quota_payload(status).items():
+            card[f'quota_{key}'] = value
+    return cards
+
+
+def _shared_config_to_settings(shared) -> Dict[str, Any]:
+    """把公共配置转换成运行时配置字典。
+
+    `llm_model` 必须始终是真实模型名，用于真正发起请求；
+    `model_display_name` 只是可选的对外展示别名，不参与 API 调用。
+    """
+    return {
+        'shared_config_id': shared.id,
+        'api_provider': shared.api_provider,
+        'api_key': shared.api_key or "",
+        'api_base_url': shared.api_base_url,
+        'llm_model': shared.llm_model,
+        'model_display_name': shared.model_display_name,
+        'model_aliases': sorted(
+            {
+                name
+                for name in (shared.llm_model, shared.model_display_name)
+                if name
+            }
+        ),
+        'temperature': shared.temperature,
+        'max_tokens': shared.max_tokens,
+        'system_prompt': shared.system_prompt,
+        'disable_thinking': bool(shared.disable_thinking),
+        'shared_config_name': shared.name,
+        'daily_call_limit': shared.daily_call_limit,
+        'total_call_limit': shared.total_call_limit,
+    }
+
+
+async def resolve_effective_ai_settings(settings: Settings, db: AsyncSession) -> Dict[str, Any]:
+    """解析「当前真正生效」的 AI 配置。
+
+    公共配置卡片在用户 Settings 里只存 `active_shared_config_id`，真实密钥
+    始终留在 shared_api_configs 表，因此用户永远读不到明文 Key。
+    """
+    effective: Dict[str, Any] = {
+        'shared_config_id': None,
+        'api_provider': settings.api_provider,
+        'api_key': settings.api_key,
+        'api_base_url': settings.api_base_url,
+        'llm_model': settings.llm_model,
+        'model_aliases': [],
+        'temperature': settings.temperature,
+        'max_tokens': settings.max_tokens,
+        'system_prompt': settings.system_prompt,
+        'disable_thinking': bool(getattr(settings, 'disable_thinking', False)),
+    }
+
+    prefs = _safe_load_preferences(settings.preferences)
+    shared_id = prefs.get('active_shared_config_id')
+    if not shared_id:
+        return effective
+
+    shared = await _get_shared_api_config(db, shared_id)
+    if not shared:
+        logger.warning(f"生效中的公共 API 配置不可用，回退用户自有配置: {shared_id}")
+        snapshot = prefs.get('pre_shared_settings')
+        if isinstance(snapshot, dict) and snapshot:
+            effective.update(
+                {
+                    'api_provider': snapshot.get('api_provider'),
+                    'api_key': snapshot.get('api_key') or '',
+                    'api_base_url': snapshot.get('api_base_url'),
+                    'llm_model': snapshot.get('llm_model'),
+                    'model_aliases': [],
+                    'temperature': snapshot.get('temperature'),
+                    'max_tokens': snapshot.get('max_tokens'),
+                    'system_prompt': snapshot.get('system_prompt'),
+                    'disable_thinking': bool(snapshot.get('disable_thinking', False)),
+                }
+            )
+            return effective
+
+        own_active = next(
+            (
+                cfg
+                for cfg in _get_text_models_payload(prefs).get('configs', [])
+                if isinstance(cfg, dict)
+                and cfg.get('is_active')
+                and not cfg.get('shared_config_id')
+            ),
+            None,
+        )
+        if own_active:
+            effective.update(
+                {
+                    'api_provider': _normalize_raw_provider(own_active.get('api_provider')),
+                    'api_key': own_active.get('api_key') or effective['api_key'],
+                    'api_base_url': own_active.get('api_base_url'),
+                    'llm_model': own_active.get('llm_model'),
+                    'model_aliases': [],
+                    'temperature': own_active.get('temperature'),
+                    'max_tokens': own_active.get('max_tokens'),
+                    'system_prompt': own_active.get('system_prompt'),
+                    'disable_thinking': bool(own_active.get('disable_thinking', False)),
+                }
+            )
+        return effective
+
+    effective.update(_shared_config_to_settings(shared))
+    return effective
+
+
+async def apply_shared_fallback(settings: Settings, db: AsyncSession) -> bool:
+    """如果生效中的公共配置已停用/删除，把 Settings 主字段还原成快照。
+
+    读接口与写接口都会调用：任何入口看到「公共配置已失效」时都能就地修复，
+    避免主字段一直停留在公共配置的模型名上。
+    """
+    prefs = _safe_load_preferences(settings.preferences)
+    shared_id = prefs.get('active_shared_config_id')
+    if not shared_id:
+        return False
+    if await _get_shared_api_config(db, shared_id):
+        return False
+
+    snapshot = prefs.get('pre_shared_settings')
+    if isinstance(snapshot, dict) and snapshot:
+        settings.api_provider = snapshot.get('api_provider') or settings.api_provider
+        settings.api_key = snapshot.get('api_key') or ''
+        settings.api_base_url = snapshot.get('api_base_url')
+        settings.llm_model = snapshot.get('llm_model')
+        settings.temperature = snapshot.get('temperature')
+        settings.max_tokens = snapshot.get('max_tokens')
+        settings.system_prompt = snapshot.get('system_prompt')
+        settings.disable_thinking = bool(snapshot.get('disable_thinking', False))
+        logger.info(f"公共配置已失效，已还原快照: user={settings.user_id}, shared={shared_id}")
+
+    prefs.pop('active_shared_config_id', None)
+    prefs.pop('pre_shared_settings', None)
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+    return True
+
+
+async def _present_settings_response(settings: Settings, db: AsyncSession) -> SettingsResponse:
+    """构造设置响应：公共配置生效时隐藏管理员侧的接口地址与密钥。"""
+    response = SettingsResponse.model_validate(settings)
+    prefs = _safe_load_preferences(settings.preferences)
+    shared_id = prefs.get('active_shared_config_id')
+    shared = await _get_shared_api_config(db, shared_id) if shared_id else None
+    if shared:
+        # 接口地址与密钥属于管理员侧信息，运行时由后端按 shared_config_id 解析
+        response = response.model_copy(
+            update={
+                'api_key': '',
+                'api_base_url': None,
+                'llm_model': shared.model_display_name or shared.llm_model,
+                'model_display_name': shared.model_display_name or shared.llm_model,
+                'shared_config_active': True,
+            }
+        )
+    return response
+
+
+async def _build_ai_service_from_config(
     *,
     config: Dict[str, Any],
     user_id: str,
@@ -153,12 +469,18 @@ def _build_ai_service_from_config(
         api_key=resolved_config["api_key"],
         api_base_url=resolved_config["api_base_url"],
         model_name=config.get('llm_model') or app_settings.default_model,
+        model_aliases=config.get('model_aliases'),
         temperature=config.get('temperature') if config.get('temperature') is not None else app_settings.default_temperature,
         max_tokens=config.get('max_tokens') if config.get('max_tokens') is not None else app_settings.default_max_tokens,
         user_id=user_id,
         db_session=db,
         system_prompt=config.get('system_prompt'),
         enable_mcp=enable_mcp,
+        disable_thinking=bool(config.get('disable_thinking', False)),
+        quota_config_id=config.get('shared_config_id'),
+        quota_config_name=config.get('shared_config_name') or config.get('name'),
+        quota_daily_limit=config.get('daily_call_limit'),
+        quota_total_limit=config.get('total_call_limit'),
     )
 
 
@@ -256,19 +578,28 @@ async def get_user_ai_service(
     
     # ✅ 使用支持MCP的工厂函数创建AI服务实例
     # 传递 user_id 和 db_session，使得 AIService 能够自动加载用户配置的MCP工具
-    resolved_settings = resolve_runtime_ai_config(settings.api_provider, settings.api_key, settings.api_base_url)
+    # 若用户当前生效的是管理员下发的公共配置，这里会解出真实密钥
+    effective = await resolve_effective_ai_settings(settings, db)
+    resolved_settings = resolve_runtime_ai_config(
+        effective['api_provider'], effective['api_key'], effective['api_base_url']
+    )
     return create_user_ai_service_with_mcp(
         api_provider=resolved_settings["api_provider"],
         api_key=resolved_settings["api_key"],
         api_base_url=resolved_settings["api_base_url"],
-        model_name=settings.llm_model,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
+        model_name=effective['llm_model'],
+        model_aliases=effective.get('model_aliases'),
+        temperature=effective['temperature'],
+        max_tokens=effective['max_tokens'],
         user_id=user.user_id,          # ✅ 传递 user_id
         db_session=db,                 # ✅ 传递 db_session
-        system_prompt=settings.system_prompt,
+        system_prompt=effective['system_prompt'],
         enable_mcp=enable_mcp,         # 根据MCP插件状态动态决定
-        disable_thinking=bool(getattr(settings, 'disable_thinking', False)),
+        disable_thinking=bool(effective['disable_thinking']),
+        quota_config_id=effective.get('shared_config_id'),
+        quota_config_name=effective.get('shared_config_name'),
+        quota_daily_limit=effective.get('daily_call_limit'),
+        quota_total_limit=effective.get('total_call_limit'),
     )
 
 
@@ -307,34 +638,50 @@ async def get_user_ai_service_from_db_by_usage(
 
     if usage == "chapter_analysis":
         prefs = _safe_load_preferences(settings.preferences)
-        api_presets = _get_api_presets_payload(prefs)
-        presets = api_presets.get('presets', [])
-        preset_id = _get_chapter_analysis_preset_id(prefs)
-        if preset_id:
-            target_preset = next((p for p in presets if p.get('id') == preset_id), None)
-            if target_preset and isinstance(target_preset.get('config'), dict):
-                logger.info(f"用户 {user_id} 使用章节内容分析专用API预设: {target_preset.get('name')}")
-                return _build_ai_service_from_config(
-                    config=target_preset['config'],
-                    user_id=user_id,
-                    db=db,
-                    enable_mcp=enable_mcp,
-                )
-            logger.warning(f"用户 {user_id} 配置的章节内容分析预设不存在，回退默认API配置: {preset_id}")
+        config_id = _get_chapter_analysis_config_id(prefs)
+        if config_id:
+            configs = await _compose_user_configs(prefs, db)
+            target_config = await _resolve_card_by_id(configs, config_id)
+            if target_config:
+                merged = target_config
+                if target_config.get('shared_config_id'):
+                    shared = await _get_shared_api_config(db, target_config['shared_config_id'])
+                    merged = _shared_config_to_settings(shared) if shared else {}
+                if not merged:
+                    logger.warning(
+                        f"章节内容分析配置引用的公共配置已停用，回退默认配置: {target_config.get('name')}"
+                    )
+                else:
+                    logger.info(f"用户 {user_id} 使用章节内容分析专用文本模型配置: {target_config.get('name')}")
+                    return await _build_ai_service_from_config(
+                        config=merged,
+                        user_id=user_id,
+                        db=db,
+                        enable_mcp=enable_mcp,
+                    )
+            logger.warning(f"用户 {user_id} 配置的章节内容分析模型不存在，回退默认API配置: {config_id}")
 
-    resolved_settings = resolve_runtime_ai_config(settings.api_provider, settings.api_key, settings.api_base_url)
+    effective = await resolve_effective_ai_settings(settings, db)
+    resolved_settings = resolve_runtime_ai_config(
+        effective['api_provider'], effective['api_key'], effective['api_base_url']
+    )
     return create_user_ai_service_with_mcp(
         api_provider=resolved_settings["api_provider"],
         api_key=resolved_settings["api_key"],
         api_base_url=resolved_settings["api_base_url"],
-        model_name=settings.llm_model,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
+        model_name=effective['llm_model'],
+        model_aliases=effective.get('model_aliases'),
+        temperature=effective['temperature'],
+        max_tokens=effective['max_tokens'],
         user_id=user_id,
         db_session=db,
-        system_prompt=settings.system_prompt,
+        system_prompt=effective['system_prompt'],
         enable_mcp=enable_mcp,
-        disable_thinking=bool(getattr(settings, 'disable_thinking', False)),
+        disable_thinking=bool(effective['disable_thinking']),
+        quota_config_id=effective.get('shared_config_id'),
+        quota_config_name=effective.get('shared_config_name'),
+        quota_daily_limit=effective.get('daily_call_limit'),
+        quota_total_limit=effective.get('total_call_limit'),
     )
 
 
@@ -367,8 +714,15 @@ async def get_settings(
         await db.refresh(settings)
         logger.info(f"用户 {user.user_id} 的设置已从.env同步到数据库")
     
+    if await apply_shared_fallback(settings, db):
+        await db.commit()
+        await db.refresh(settings)
+
     logger.info(f"用户 {user.user_id} 获取已保存的设置")
-    return settings
+
+    # 生效中的是管理员公共配置时，接口地址与密钥属于管理员侧信息，
+    # 不下发给客户端，运行时由后端按 shared_config_id 解析。
+    return await _present_settings_response(settings, db)
 
 
 @router.post("/cover/test")
@@ -387,6 +741,292 @@ async def test_cover_settings(
         "message": result.message,
         "provider": result.provider,
         "model": result.model,
+    }
+
+
+# ========== 图片模型多配置 ==========
+
+@router.get("/image-models", response_model=ImageModelConfigListResponse)
+async def list_image_models(
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取图片模型卡片（含管理员开放的公共图片配置）。"""
+    settings = await get_user_settings(user.user_id, db)
+    prefs = safe_load_preferences(settings.preferences)
+    payload = get_image_models_payload(prefs, settings)
+    configs = await compose_user_image_configs(prefs, db, settings)
+    for config in configs:
+        shared_config_id = config.get("shared_config_id")
+        if not shared_config_id:
+            continue
+        status = await get_quota_status(
+            db,
+            user_id=user.user_id,
+            config_type=CONFIG_TYPE_IMAGE,
+            config_id=shared_config_id,
+            daily_limit=config.get("daily_call_limit"),
+            total_limit=config.get("total_call_limit"),
+        )
+        for key, value in quota_payload(status).items():
+            config[f"quota_{key}"] = value
+
+    active_shared_id = prefs.get(ACTIVE_SHARED_IMAGE_PREF_KEY)
+    active_id = None
+    if active_shared_id:
+        shared_card_id = f"shared_img_{active_shared_id}"
+        active = find_image_config(configs, shared_card_id)
+        if not active:
+            rollback_invalid_shared_image_config(settings, prefs)
+            restored = next(
+                (
+                    cfg
+                    for cfg in payload.get("configs", [])
+                    if isinstance(cfg, dict) and cfg.get("is_active")
+                ),
+                None,
+            )
+            active_id = restored.get("id") if restored else None
+        else:
+            active_id = shared_card_id
+    else:
+        active = next(
+            (
+                cfg
+                for cfg in payload.get("configs", [])
+                if isinstance(cfg, dict) and cfg.get("is_active")
+            ),
+            None,
+        )
+        active_id = active.get("id") if active else None
+
+    # 首次读取时把旧版单套封面配置或公共配置失效回退持久化。
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+    await db.commit()
+
+    return {
+        "configs": present_image_configs(configs),
+        "total": len(configs),
+        "active_config_id": active_id,
+    }
+
+
+@router.post("/image-models", response_model=ImageModelConfig)
+async def create_image_model(
+    data: ImageModelConfigCreateRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """新增一套个人图片模型配置（不自动启用）。"""
+    settings = await get_user_settings(user.user_id, db)
+    prefs = safe_load_preferences(settings.preferences)
+    payload = get_image_models_payload(prefs, settings)
+    configs = payload.get("configs", [])
+
+    record = {
+        "id": f"img_{uuid.uuid4().hex}",
+        "name": data.name.strip(),
+        "note": data.note,
+        "is_active": False,
+        "created_at": datetime.now().isoformat(),
+        **data.model_dump(exclude={"name", "note"}),
+        "api_provider": _normalize_raw_provider(data.api_provider),
+        "model_display_name": (data.model_display_name or "").strip() or None,
+    }
+    configs.append(record)
+    if len(configs) == 1:
+        record["is_active"] = True
+        apply_image_model_to_settings(settings, record, prefs)
+    payload["configs"] = configs
+    prefs[IMAGE_MODELS_PREF_KEY] = payload
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+    await db.commit()
+    logger.info(f"用户 {user.user_id} 新增图片模型配置: {record['name']}")
+    return present_image_configs([record])[0]
+
+
+@router.put("/image-models/{config_id}", response_model=ImageModelConfig)
+async def update_image_model(
+    config_id: str,
+    data: ImageModelConfigUpdateRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新个人图片模型配置；公共配置不允许用户修改。"""
+    if is_shared_image_card_id(config_id):
+        raise HTTPException(status_code=400, detail="公共图片配置由管理员统一维护，无法修改")
+
+    settings = await get_user_settings(user.user_id, db)
+    prefs = safe_load_preferences(settings.preferences)
+    payload = get_image_models_payload(prefs, settings)
+    configs = payload.get("configs", [])
+    target = next((cfg for cfg in configs if cfg.get("id") == config_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="图片配置不存在")
+
+    updates = data.model_dump(exclude_unset=True)
+    if "api_provider" in updates and updates["api_provider"]:
+        updates["api_provider"] = _normalize_raw_provider(updates["api_provider"])
+    if "model_display_name" in updates:
+        updates["model_display_name"] = (updates["model_display_name"] or "").strip() or None
+    target.update(updates)
+
+    payload["configs"] = configs
+    prefs[IMAGE_MODELS_PREF_KEY] = payload
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+    if target.get("is_active"):
+        apply_image_model_to_settings(settings, target, prefs)
+    await db.commit()
+    logger.info(f"用户 {user.user_id} 更新图片模型配置: {config_id}")
+    return present_image_configs([target])[0]
+
+
+@router.post("/image-models/{config_id}/activate")
+async def activate_image_model(
+    config_id: str,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """启用一张图片模型卡片，其余个人卡片自动取消启用。"""
+    settings = await get_user_settings(user.user_id, db)
+    prefs = safe_load_preferences(settings.preferences)
+    payload = get_image_models_payload(prefs, settings)
+    configs = await compose_user_image_configs(prefs, db, settings)
+    target = find_image_config(configs, config_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="图片配置不存在")
+
+    if target.get("shared_config_id"):
+        shared = await get_enabled_shared_image_config(db, target["shared_config_id"])
+        if not shared:
+            raise HTTPException(status_code=400, detail="该公共图片配置已被管理员停用或删除")
+        apply_image_model_to_settings(settings, target, prefs)
+        name = target.get("name")
+    else:
+        for cfg in payload.get("configs", []):
+            if isinstance(cfg, dict):
+                cfg["is_active"] = cfg.get("id") == config_id
+        payload["configs"] = payload.get("configs", [])
+        prefs[IMAGE_MODELS_PREF_KEY] = payload
+        apply_image_model_to_settings(settings, target, prefs)
+        name = target.get("name")
+
+    await db.commit()
+    logger.info(f"用户 {user.user_id} 启用图片模型配置: {name}")
+    return {"message": "已启用", "config_id": config_id, "config_name": name}
+
+
+@router.delete("/image-models/{config_id}")
+async def delete_image_model(
+    config_id: str,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除个人图片配置；公共配置只从当前用户列表中隐藏。"""
+    settings = await get_user_settings(user.user_id, db)
+    prefs = safe_load_preferences(settings.preferences)
+
+    if is_shared_image_card_id(config_id):
+        shared_id = shared_image_id_from_card(config_id)
+        dismissed = prefs.get(DISMISSED_SHARED_IMAGE_PREF_KEY)
+        dismissed_ids = set(dismissed) if isinstance(dismissed, list) else set()
+        dismissed_ids.add(shared_id)
+        prefs[DISMISSED_SHARED_IMAGE_PREF_KEY] = sorted(dismissed_ids)
+        if prefs.get(ACTIVE_SHARED_IMAGE_PREF_KEY) == shared_id:
+            rollback_invalid_shared_image_config(settings, prefs)
+        await db.commit()
+        return {"message": "已从列表移除", "config_id": config_id}
+
+    payload = get_image_models_payload(prefs, settings)
+    configs = payload.get("configs", [])
+    target = next((cfg for cfg in configs if cfg.get("id") == config_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="图片配置不存在")
+    payload["configs"] = [cfg for cfg in configs if cfg.get("id") != config_id]
+    prefs[IMAGE_MODELS_PREF_KEY] = payload
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+    await db.commit()
+    return {"message": "已删除", "config_id": config_id}
+
+
+@router.post("/image-models/{config_id}/test")
+async def test_image_model(
+    config_id: str,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """测试单张图片卡片，不影响当前启用配置。"""
+    settings = await get_user_settings(user.user_id, db)
+    prefs = safe_load_preferences(settings.preferences)
+    configs = await compose_user_image_configs(prefs, db, settings)
+    target = find_image_config(configs, config_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="图片配置不存在")
+
+    if target.get("shared_config_id"):
+        shared = await get_enabled_shared_image_config(db, target["shared_config_id"])
+        if not shared:
+            raise HTTPException(status_code=404, detail="公共图片配置不存在或已停用")
+        provider = shared.api_provider
+        api_key = shared.api_key or ""
+        api_base_url = shared.api_base_url
+        image_model = shared.image_model
+        quota_status = await get_quota_status(
+            db,
+            user_id=user.user_id,
+            config_type=CONFIG_TYPE_IMAGE,
+            config_id=shared.id,
+            daily_limit=shared.daily_call_limit,
+            total_limit=shared.total_call_limit,
+        )
+        if quota_status.is_exhausted:
+            raise HTTPException(
+                status_code=429,
+                detail=f"「{shared.name}」生成次数已达上限，请切换其他配置或稍后再试",
+            )
+        await consume_quota(
+            db,
+            user_id=user.user_id,
+            config_type=CONFIG_TYPE_IMAGE,
+            config_id=shared.id,
+            config_name=shared.name,
+            daily_limit=shared.daily_call_limit,
+            total_limit=shared.total_call_limit,
+        )
+    else:
+        provider = target.get("api_provider")
+        api_key = target.get("api_key") or ""
+        api_base_url = target.get("api_base_url")
+        image_model = target.get("image_model")
+
+    try:
+        result = await cover_generation_service.test_cover_settings(
+            provider=provider,
+            api_key=api_key,
+            api_base_url=api_base_url,
+            model=image_model,
+        )
+    except Exception:
+        if target.get("shared_config_id"):
+            await refund_quota(
+                db,
+                user_id=user.user_id,
+                config_type=CONFIG_TYPE_IMAGE,
+                config_id=target["shared_config_id"],
+            )
+        raise
+    if target.get("shared_config_id") and not result.success:
+        await refund_quota(
+            db,
+            user_id=user.user_id,
+            config_type=CONFIG_TYPE_IMAGE,
+            config_id=target["shared_config_id"],
+        )
+    return {
+        "success": result.success,
+        "message": result.message,
+        "provider": result.provider,
+        "model": target.get("model_display_name") or result.model,
     }
 
 
@@ -510,8 +1150,8 @@ async def save_settings(
     如果设置已存在则更新，否则创建新设置
     仅保存到数据库
     
-    注意：手动保存配置后会自动取消之前激活的预设状态，
-    因为手动修改的配置可能与预设不一致
+    注意：手动保存配置后会自动取消文本模型卡片的启用状态，
+    因为手动修改的配置可能与卡片不一致
     """
     # 查找现有设置
     result = await db.execute(
@@ -527,36 +1167,48 @@ async def save_settings(
         for key, value in settings_dict.items():
             setattr(settings, key, value)
         
-        # 检查并取消预设激活状态
-        # 因为用户手动修改了配置，可能与之前激活的预设不一致
+        # 手动保存配置意味着用户改用自定义凭据：
+        # 取消卡片启用状态，并解除管理员公共配置的引用
         try:
-            prefs = json.loads(settings.preferences or '{}')
-            api_presets = prefs.get('api_presets', {'presets': [], 'version': '1.0'})
-            presets = api_presets.get('presets', [])
-            
-            # 找到激活的预设并检查是否与当前保存的配置一致
-            active_preset = next((p for p in presets if p.get('is_active')), None)
-            if active_preset:
-                preset_config = active_preset.get('config', {})
-                # 检查配置是否发生变化
-                config_changed = (
-                    preset_config.get('api_provider') != settings_dict.get('api_provider', settings.api_provider) or
-                    preset_config.get('api_key') != settings_dict.get('api_key', settings.api_key) or
-                    preset_config.get('api_base_url') != settings_dict.get('api_base_url', settings.api_base_url) or
-                    preset_config.get('llm_model') != settings_dict.get('llm_model', settings.llm_model) or
-                    preset_config.get('temperature') != settings_dict.get('temperature', settings.temperature) or
-                    preset_config.get('max_tokens') != settings_dict.get('max_tokens', settings.max_tokens)
-                )
-                
-                if config_changed:
-                    # 取消激活状态
-                    active_preset['is_active'] = False
-                    prefs['api_presets'] = api_presets
-                    settings.preferences = json.dumps(prefs, ensure_ascii=False)
-                    logger.info(f"用户 {user.user_id} 手动修改配置，已取消预设 {active_preset.get('name')} 的激活状态")
+            prefs = _safe_load_preferences(settings.preferences)
+            had_legacy = 'api_presets' in prefs or 'chapter_analysis_preset_id' in prefs
+            payload = _get_text_models_payload(prefs)
+            active_config = _find_active_text_model(payload.get('configs', []))
+            prefs_changed = had_legacy
+
+            if active_config:
+                effective = {
+                    'api_provider': settings.api_provider,
+                    'api_key': settings.api_key,
+                    'api_base_url': settings.api_base_url,
+                    'llm_model': settings.llm_model,
+                    'temperature': settings.temperature,
+                    'max_tokens': settings.max_tokens,
+                }
+                if not _same_ai_config(active_config, effective):
+                    active_config['is_active'] = False
+                    prefs_changed = True
+                    logger.info(
+                        f"用户 {user.user_id} 手动修改配置，已取消卡片 {active_config.get('name')} 的启用状态"
+                    )
+
+            # 只有真的提交文本模型凭据时才解除公共配置引用；
+            # 只保存封面等其它设置时不应把用户从公共配置上踢下来。
+            touched_ai = any(
+                key in settings_dict
+                for key in ('api_provider', 'api_key', 'api_base_url', 'llm_model')
+            )
+            if touched_ai:
+                if prefs.pop('active_shared_config_id', None) is not None:
+                    prefs_changed = True
+                prefs.pop('pre_shared_settings', None)
+
+            if prefs_changed:
+                prefs['text_models'] = payload
+                settings.preferences = json.dumps(prefs, ensure_ascii=False)
         except (json.JSONDecodeError, TypeError) as e:
             logger.warning(f"解析用户 {user.user_id} 的preferences失败: {e}")
-        
+
         await db.commit()
         await db.refresh(settings)
         logger.info(f"用户 {user.user_id} 更新设置")
@@ -570,8 +1222,8 @@ async def save_settings(
         await db.commit()
         await db.refresh(settings)
         logger.info(f"用户 {user.user_id} 创建设置")
-    
-    return settings
+
+    return await _present_settings_response(settings, db)
 
 
 @router.put("", response_model=SettingsResponse)
@@ -600,8 +1252,8 @@ async def update_settings(
     await db.commit()
     await db.refresh(settings)
     logger.info(f"用户 {user.user_id} 更新设置")
-    
-    return settings
+
+    return await _present_settings_response(settings, db)
 
 
 @router.delete("")
@@ -631,8 +1283,9 @@ async def delete_settings(
 async def get_available_models(
     api_key: Optional[str] = "",
     api_base_url: Optional[str] = "",
-    provider: str = "openai",
-    user: User = Depends(require_login)
+    provider: Optional[str] = None,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     从配置的 API 获取可用的模型列表
@@ -646,6 +1299,35 @@ async def get_available_models(
         模型列表
     """
     try:
+        if not api_base_url:
+            # 未显式传参时按当前生效配置解析（含管理员公共配置），
+            # 密钥只在服务端使用，不回传给客户端。
+            current = await get_user_settings(user.user_id, db)
+            effective = await resolve_effective_ai_settings(current, db)
+            if effective.get('shared_config_id'):
+                # 公共配置生效时不能把上游真实模型列表透给用户，
+                # 否则前面的显示名称就被绕过了。
+                display_model = (
+                    effective.get('model_display_name')
+                    or effective.get('llm_model')
+                )
+                return {
+                    "provider": effective.get('api_provider'),
+                    "models": [
+                        {
+                            "value": display_model,
+                            "label": display_model,
+                            "description": "公共配置",
+                        }
+                    ],
+                    "count": 1,
+                }
+            api_key = effective.get('api_key') or ''
+            api_base_url = effective.get('api_base_url') or ''
+            provider = effective.get('api_provider') or provider or 'openai'
+        if not api_base_url:
+            raise HTTPException(status_code=400, detail="尚未配置可用的接口地址")
+
         raw_provider = _normalize_raw_provider(provider)
         resolved_config = resolve_runtime_ai_config(raw_provider, api_key, api_base_url)
         provider = resolved_config["api_provider"]
@@ -755,7 +1437,11 @@ class ApiTestRequest(BaseModel):
 
 
 @router.post("/check-function-calling")
-async def check_function_calling_support(data: ApiTestRequest):
+async def check_function_calling_support(
+    data: ApiTestRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
     """
     检查模型是否支持 Function Calling（工具调用）
     
@@ -770,12 +1456,41 @@ async def check_function_calling_support(data: ApiTestRequest):
     Returns:
         检测结果包含支持状态、详细信息和建议
     """
-    raw_provider = _normalize_raw_provider(data.provider)
-    resolved_config = resolve_runtime_ai_config(raw_provider, data.api_key, data.api_base_url)
+    api_key = data.api_key
+    api_base_url = data.api_base_url
+    provider_input = data.provider
+    llm_model = data.llm_model
+    display_model: Optional[str] = None
+    quota_config_id: Optional[str] = None
+    quota_config_name: Optional[str] = None
+    quota_daily_limit: Optional[int] = None
+    quota_total_limit: Optional[int] = None
+    if not api_base_url:
+        # 公共配置生效时前端拿不到接口地址与密钥，按当前生效配置在服务端解析
+        current = await get_user_settings(user.user_id, db)
+        effective = await resolve_effective_ai_settings(current, db)
+        api_key = effective.get('api_key') or ''
+        api_base_url = effective.get('api_base_url') or ''
+        provider_input = effective.get('api_provider') or provider_input
+        display_model = effective.get('model_display_name')
+        if effective.get('shared_config_id'):
+            display_model = effective.get('model_display_name') or effective.get('llm_model')
+            quota_config_id = effective.get('shared_config_id')
+            quota_config_name = effective.get('shared_config_name')
+            quota_daily_limit = effective.get('daily_call_limit')
+            quota_total_limit = effective.get('total_call_limit')
+        if (
+            effective.get('shared_config_id')
+            and display_model
+            and llm_model in (display_model, effective.get('llm_model'))
+        ):
+            llm_model = effective.get('llm_model') or llm_model
+
+    raw_provider = _normalize_raw_provider(provider_input)
+    resolved_config = resolve_runtime_ai_config(raw_provider, api_key, api_base_url)
     api_key = resolved_config["api_key"]
     api_base_url = resolved_config["api_base_url"]
     provider = resolved_config["api_provider"]
-    llm_model = data.llm_model
     
     try:
         start_time = time.time()
@@ -819,7 +1534,14 @@ async def check_function_calling_support(data: ApiTestRequest):
             api_base_url=api_base_url,
             default_model=llm_model,
             default_temperature=0.3,  # 使用较低温度以获得更确定的行为
-            default_max_tokens=200
+            default_max_tokens=200,
+            user_id=user.user_id,
+            db_session=db,
+            enable_mcp=False,
+            quota_config_id=quota_config_id,
+            quota_config_name=quota_config_name,
+            quota_daily_limit=quota_daily_limit,
+            quota_total_limit=quota_total_limit,
         )
         
         # 发送带工具的测试请求
@@ -871,7 +1593,7 @@ async def check_function_calling_support(data: ApiTestRequest):
             "message": "✅ 模型支持 Function Calling" if supported else "❌ 模型不支持 Function Calling",
             "response_time_ms": response_time,
             "provider": provider,
-            "model": llm_model,
+            "model": display_model or llm_model,
             "details": {
                 "finish_reason": finish_reason,
                 "has_tool_calls": bool(tool_calls),
@@ -901,6 +1623,10 @@ async def check_function_calling_support(data: ApiTestRequest):
         
         return result
         
+    except HTTPException:
+        # 公共配置额度耗尽等 HTTP 错误需要保留状态码，不能在检测接口里被吞成普通失败。
+        raise
+
     except ValueError as e:
         error_msg = str(e)
         logger.error(f"❌ Function Calling 检测配置错误: {error_msg}")
@@ -1163,7 +1889,7 @@ async def test_api_connection(data: ApiTestRequest):
         }
 
 
-# ========== API配置预设管理（零数据库改动方案）==========
+# ========== 用户设置读取 ==========
 
 async def get_user_settings(user_id: str, db: AsyncSession) -> Settings:
     """获取用户settings，如果不存在则创建"""
@@ -1188,354 +1914,592 @@ async def get_user_settings(user_id: str, db: AsyncSession) -> Settings:
     return settings
 
 
-@router.get("/presets", response_model=PresetListResponse)
-async def get_presets(
-    user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
-):
+# ========== 文本模型配置 ==========
+# 存储位置：preferences['text_models'] = {"configs": [...], "version": "1.0"}
+
+def _find_active_text_model(configs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """返回当前启用的文本模型配置。"""
+    return next((cfg for cfg in configs if cfg.get('is_active')), None)
+
+
+def _same_ai_config(left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+    """比较两份 AI 配置是否等价（用于判断卡片是否仍与生效配置一致）。"""
+    def key(cfg: Dict[str, Any]) -> tuple:
+        resolved = _apply_provider_defaults(
+            cfg.get('api_provider'), cfg.get('api_key'), cfg.get('api_base_url')
+        )
+        return (
+            _normalize_raw_provider(cfg.get('api_provider')),
+            cfg.get('api_key') or resolved['api_key'] or '',
+            (cfg.get('api_base_url') or resolved['api_base_url'] or '').rstrip('/'),
+            cfg.get('llm_model') or '',
+            float(cfg.get('temperature') if cfg.get('temperature') is not None else 0.7),
+            int(cfg.get('max_tokens') if cfg.get('max_tokens') is not None else 2000),
+        )
+
+    return key(left) == key(right)
+
+
+def _virtual_card(shared) -> Dict[str, Any]:
+    """把管理员公共配置映射成用户列表里的一张卡片（不含密钥与接口地址）。
+
+    接口地址同样属于管理员侧的基础设施信息，用户端只需要知道「能用」，
+    真正调用时由后端按 shared_config_id 从库里取完整参数。
     """
-    获取所有API配置预设
-    
-    从preferences字段读取预设列表
-    """
-    settings = await get_user_settings(user.user_id, db)
-    
-    # 解析preferences
-    try:
-        prefs = json.loads(settings.preferences or '{}')
-    except json.JSONDecodeError:
-        logger.warning(f"用户 {user.user_id} 的preferences字段JSON格式错误，重置为空")
-        prefs = {}
-    
-    api_presets = _get_api_presets_payload(prefs)
-    presets = api_presets.get('presets', [])
-    chapter_analysis_preset_id = _get_chapter_analysis_preset_id(prefs)
-    if chapter_analysis_preset_id and not any(p.get('id') == chapter_analysis_preset_id for p in presets):
-        chapter_analysis_preset_id = None
-    
-    # 找到激活的预设
-    active_preset_id = next(
-        (p['id'] for p in presets if p.get('is_active')),
-        None
-    )
-    
-    logger.info(f"用户 {user.user_id} 获取预设列表，共 {len(presets)} 个")
-    
+    display_model = shared.model_display_name or shared.llm_model
     return {
-        "presets": presets,
-        "total": len(presets),
-        "active_preset_id": active_preset_id,
-        "chapter_analysis_preset_id": chapter_analysis_preset_id
-    }
-
-
-@router.post("/presets", response_model=PresetResponse)
-async def create_preset(
-    data: PresetCreateRequest,
-    user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    创建新预设
-    
-    将预设添加到preferences字段的JSON中
-    """
-    settings = await get_user_settings(user.user_id, db)
-    
-    # 解析preferences
-    try:
-        prefs = json.loads(settings.preferences or '{}')
-    except json.JSONDecodeError:
-        prefs = {}
-    
-    api_presets = prefs.get('api_presets', {'presets': [], 'version': '1.0'})
-    presets = api_presets.get('presets', [])
-    
-    # 创建新预设
-    new_preset = {
-        "id": f"preset_{int(datetime.now().timestamp() * 1000)}",
-        "name": data.name,
-        "description": data.description,
+        "id": f"shared_{shared.id}",
+        "name": shared.name,
+        "note": shared.note,
         "is_active": False,
-        "created_at": datetime.now().isoformat(),
-        "config": {
-            **data.config.model_dump(),
-            "api_provider": _normalize_raw_provider(data.config.api_provider)
-        }
-    }
-    
-    presets.append(new_preset)
-    
-    # 保存回preferences
-    api_presets['presets'] = presets
-    prefs['api_presets'] = api_presets
-    settings.preferences = json.dumps(prefs, ensure_ascii=False)
-    
-    await db.commit()
-    
-    logger.info(f"用户 {user.user_id} 创建预设: {data.name}")
-    return new_preset
-
-
-@router.put("/presets/{preset_id}", response_model=PresetResponse)
-async def update_preset(
-    preset_id: str,
-    data: PresetUpdateRequest,
-    user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    更新预设
-    
-    在preferences字段的JSON中更新指定预设
-    """
-    settings = await get_user_settings(user.user_id, db)
-    
-    # 解析preferences
-    try:
-        prefs = json.loads(settings.preferences or '{}')
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="配置数据格式错误")
-    
-    api_presets = prefs.get('api_presets', {'presets': [], 'version': '1.0'})
-    presets = api_presets.get('presets', [])
-    
-    # 找到并更新预设
-    target_preset = next((p for p in presets if p['id'] == preset_id), None)
-    if not target_preset:
-        raise HTTPException(status_code=404, detail="预设不存在")
-    
-    # 更新字段
-    if data.name is not None:
-        target_preset['name'] = data.name
-    if data.description is not None:
-        target_preset['description'] = data.description
-    if data.config is not None:
-        target_preset['config'] = {
-            **data.config.model_dump(),
-            'api_provider': _normalize_raw_provider(data.config.api_provider)
-        }
-    
-    # 保存回preferences
-    prefs['api_presets'] = api_presets
-    settings.preferences = json.dumps(prefs, ensure_ascii=False)
-    
-    await db.commit()
-    
-    logger.info(f"用户 {user.user_id} 更新预设: {preset_id}")
-    return target_preset
-
-
-@router.delete("/presets/{preset_id}")
-async def delete_preset(
-    preset_id: str,
-    user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    删除预设
-    
-    从preferences字段的JSON中删除指定预设
-    """
-    settings = await get_user_settings(user.user_id, db)
-    
-    # 解析preferences
-    try:
-        prefs = json.loads(settings.preferences or '{}')
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="配置数据格式错误")
-    
-    api_presets = _get_api_presets_payload(prefs)
-    presets = api_presets.get('presets', [])
-    
-    # 找到预设
-    target_preset = next((p for p in presets if p['id'] == preset_id), None)
-    if not target_preset:
-        raise HTTPException(status_code=404, detail="预设不存在")
-    
-    # 检查是否是激活的预设
-    if target_preset.get('is_active'):
-        raise HTTPException(status_code=400, detail="无法删除激活中的预设，请先激活其他预设")
-    
-    # 删除预设
-    presets = [p for p in presets if p['id'] != preset_id]
-    if prefs.get('chapter_analysis_preset_id') == preset_id:
-        prefs.pop('chapter_analysis_preset_id', None)
-    
-    # 保存回preferences
-    api_presets['presets'] = presets
-    prefs['api_presets'] = api_presets
-    settings.preferences = json.dumps(prefs, ensure_ascii=False)
-    
-    await db.commit()
-    
-    logger.info(f"用户 {user.user_id} 删除预设: {preset_id}")
-    return {"message": "预设已删除", "preset_id": preset_id}
-
-
-@router.post("/presets/{preset_id}/activate")
-async def activate_preset(
-    preset_id: str,
-    user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    激活预设
-    
-    将预设的配置应用到Settings主字段
-    """
-    settings = await get_user_settings(user.user_id, db)
-    
-    # 解析preferences
-    try:
-        prefs = json.loads(settings.preferences or '{}')
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="配置数据格式错误")
-    
-    api_presets = prefs.get('api_presets', {'presets': [], 'version': '1.0'})
-    presets = api_presets.get('presets', [])
-    
-    # 找到目标预设
-    target_preset = next((p for p in presets if p['id'] == preset_id), None)
-    if not target_preset:
-        raise HTTPException(status_code=404, detail="预设不存在")
-    
-    # 应用配置到Settings主字段
-    config = target_preset['config']
-    resolved_config = _apply_provider_defaults(config.get('api_provider'), config.get('api_key'), config.get('api_base_url'))
-    settings.api_provider = _normalize_raw_provider(config['api_provider'])
-    settings.api_key = config.get('api_key') or ""
-    settings.api_base_url = resolved_config["api_base_url"]
-    settings.llm_model = config['llm_model']
-    settings.temperature = config['temperature']
-    settings.max_tokens = config['max_tokens']
-    settings.system_prompt = config.get('system_prompt')
-    
-    # 更新所有预设的is_active状态
-    for preset in presets:
-        preset['is_active'] = (preset['id'] == preset_id)
-    
-    # 保存回preferences
-    prefs['api_presets'] = api_presets
-    settings.preferences = json.dumps(prefs, ensure_ascii=False)
-    
-    await db.commit()
-    
-    logger.info(f"用户 {user.user_id} 激活预设: {target_preset['name']}")
-    return {
-        "message": "预设已激活",
-        "preset_id": preset_id,
-        "preset_name": target_preset['name']
+        "created_at": shared.created_at.isoformat() if shared.created_at else datetime.now().isoformat(),
+        "shared_config_id": shared.id,
+        "api_provider": shared.api_provider,
+        "api_key": "",
+        "api_base_url": "",
+        # 用户端只看到展示名；真实模型名只用于后端运行时解析。
+        # 未配置展示名时，llm_model 就保持真实模型名。
+        "llm_model": display_model,
+        "model_display_name": display_model,
+        "model_aliases": sorted({shared.llm_model, display_model}),
+        "temperature": shared.temperature,
+        "max_tokens": shared.max_tokens,
+        # 系统提示词属于管理员侧的编排信息，同样不下发
+        "system_prompt": "",
+        "disable_thinking": bool(shared.disable_thinking),
+        "daily_call_limit": shared.daily_call_limit,
+        "total_call_limit": shared.total_call_limit,
     }
 
 
-@router.put("/presets/usage/chapter-analysis")
-async def set_chapter_analysis_preset_selection(
-    data: ChapterAnalysisPresetSelectionRequest,
+async def _compose_user_configs(
+    prefs: Dict[str, Any],
+    db: AsyncSession,
+) -> List[Dict[str, Any]]:
+    """用户最终看到的卡片列表 = 他自己的卡片 + 管理员开放的公共配置。
+
+    公共配置不落进用户 preferences，每次读取时按管理员最新内容拼出来，
+    因此管理员改参数、停用、删除都会立刻反映到用户端。
+    """
+    from app.models.shared_api_config import SharedApiConfig
+
+    configs = [
+        cfg
+        for cfg in _get_text_models_payload(prefs).get("configs", [])
+        if isinstance(cfg, dict) and not cfg.get("shared_config_id")
+    ]
+
+    dismissed = prefs.get("shared_dismissed")
+    dismissed_ids = set(dismissed) if isinstance(dismissed, list) else set()
+
+    result = await db.execute(
+        select(SharedApiConfig)
+        .where(SharedApiConfig.is_enabled.is_(True))
+        .order_by(SharedApiConfig.sort_order.asc(), SharedApiConfig.created_at.asc())
+    )
+    for shared in result.scalars().all():
+        if shared.id in dismissed_ids:
+            continue
+        configs.append(_virtual_card(shared))
+    return configs
+
+
+def _is_shared_card_id(config_id: Optional[str]) -> bool:
+    """公共配置卡片使用 `shared_<uuid>` 形式，便于和用户卡片区分。"""
+    return isinstance(config_id, str) and config_id.startswith("shared_")
+
+
+def _shared_id_from_card(config_id: str) -> str:
+    return config_id[len("shared_"):]
+
+
+async def _resolve_card_by_id(
+    configs: List[Dict[str, Any]],
+    config_id: str,
+) -> Optional[Dict[str, Any]]:
+    """按卡片 ID 在组合列表里查找，公共卡片以 `shared_<uuid>` 命中。"""
+    for cfg in configs:
+        if cfg.get("id") == config_id:
+            return cfg
+        shared_id = cfg.get("shared_config_id")
+        if shared_id and config_id == f"shared_{shared_id}":
+            return cfg
+    return None
+
+def _present_text_model(configs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """输出给前端的卡片：公共配置永远不回显密钥与接口地址。"""
+    presented: List[Dict[str, Any]] = []
+    for cfg in configs:
+        if not isinstance(cfg, dict):
+            continue
+        item = dict(cfg)
+        if item.get('shared_config_id'):
+            item['api_key'] = ''
+            item['api_base_url'] = ''
+            item['system_prompt'] = ''
+            item['shared_available'] = True
+        presented.append(item)
+    return presented
+
+
+@router.get("/text-models", response_model=TextModelConfigListResponse)
+async def list_text_models(
     user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """设置章节内容分析专用API预设；为空则使用默认API配置。"""
+    """获取文本模型卡片列表（含管理员开放给所有人的公共配置）。"""
     settings = await get_user_settings(user.user_id, db)
     prefs = _safe_load_preferences(settings.preferences)
-    api_presets = _get_api_presets_payload(prefs)
-    presets = api_presets.get('presets', [])
-
-    preset_id = data.preset_id.strip() if data.preset_id else None
-    preset_name = None
-    if preset_id:
-        target_preset = next((p for p in presets if p.get('id') == preset_id), None)
-        if not target_preset:
-            raise HTTPException(status_code=404, detail="预设不存在")
-        prefs['chapter_analysis_preset_id'] = preset_id
-        preset_name = target_preset.get('name')
-    else:
-        prefs.pop('chapter_analysis_preset_id', None)
-
-    prefs['api_presets'] = api_presets
-    settings.preferences = json.dumps(prefs, ensure_ascii=False)
-    await db.commit()
-
-    logger.info(f"用户 {user.user_id} 设置章节内容分析API预设: {preset_id or '默认配置'}")
+    had_legacy_data = 'api_presets' in prefs or 'chapter_analysis_preset_id' in prefs
+    payload = _get_text_models_payload(prefs)
+    configs = await _compose_user_configs(prefs, db)
+    await _annotate_shared_text_quota(db, user.user_id, configs)
+    active_shared_id = prefs.get('active_shared_config_id')
+    active = _find_active_text_model(payload.get('configs', []))
+    if active_shared_id:
+        shared_card = next(
+            (cfg for cfg in configs if cfg.get('shared_config_id') == active_shared_id),
+            None,
+        )
+        if shared_card:
+            active = shared_card
+        else:
+            # 公共配置被停用/删除后自动回退到用户自己的启用卡片
+            prefs.pop('active_shared_config_id', None)
+            active_shared_id = None
+            had_legacy_data = True
+            if active:
+                await _apply_text_model_to_settings(settings, active, prefs)
+                logger.info(
+                    f"用户 {user.user_id} 的公共配置已失效，回退到自有配置: {active.get('name')}"
+                )
+    chapter_config_id = _get_chapter_analysis_config_id(prefs)
+    if chapter_config_id and not await _resolve_card_by_id(configs, chapter_config_id):
+        # 引用已失效（配置被删除/迁移前遗留），回退为跟随当前启用配置
+        prefs.pop('chapter_analysis_config_id', None)
+        chapter_config_id = None
+        had_legacy_data = True
+    if had_legacy_data:
+        settings.preferences = json.dumps(prefs, ensure_ascii=False)
+        await db.commit()
+        logger.info(f"用户 {user.user_id} 的旧配置预设已合并到文本模型配置")
     return {
-        "message": "章节内容分析API配置已更新",
-        "chapter_analysis_preset_id": preset_id,
-        "preset_name": preset_name
+        "configs": _present_text_model(configs),
+        "total": len(configs),
+        "active_config_id": active.get('id') if active else None,
+        "chapter_analysis_config_id": chapter_config_id,
     }
 
 
-@router.post("/presets/{preset_id}/test")
-async def test_preset(
-    preset_id: str,
+@router.post("/text-models", response_model=TextModelConfig)
+async def create_text_model(
+    data: TextModelConfigCreateRequest,
     user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    测试预设的API连接
-    """
+    """保存一条新的文本模型配置（不自动启用）。"""
     settings = await get_user_settings(user.user_id, db)
-    
-    # 解析preferences
-    try:
-        prefs = json.loads(settings.preferences or '{}')
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="配置数据格式错误")
-    
-    api_presets = prefs.get('api_presets', {'presets': [], 'version': '1.0'})
-    presets = api_presets.get('presets', [])
-    
-    # 找到预设
-    target_preset = next((p for p in presets if p['id'] == preset_id), None)
-    if not target_preset:
-        raise HTTPException(status_code=404, detail="预设不存在")
-    
-    # 使用现有的test_api_connection逻辑
-    # 确保传递完整参数，与当前配置测试保持一致
-    config = target_preset['config']
-    test_request = ApiTestRequest(
-        api_key=config['api_key'],
-        api_base_url=config.get('api_base_url', ''),
-        provider=config['api_provider'],
-        llm_model=config['llm_model'],
-        temperature=config.get('temperature'),   # 使用预设中的温度参数
-        max_tokens=config.get('max_tokens')      # 使用预设中的最大tokens参数
-    )
-    
-    logger.info(f"用户 {user.user_id} 测试预设: {target_preset['name']}")
-    return await test_api_connection(test_request)
+    prefs = _safe_load_preferences(settings.preferences)
+    payload = _get_text_models_payload(prefs)
+    configs = payload.get('configs', [])
+
+    record = {
+        "id": f"tm_{int(datetime.now().timestamp() * 1000)}",
+        "name": data.name,
+        "note": data.note,
+        "is_active": False,
+        "created_at": datetime.now().isoformat(),
+        **data.model_dump(exclude={"name", "note"}),
+        "api_provider": _normalize_raw_provider(data.api_provider),
+    }
+    configs.append(record)
+    payload['configs'] = configs
+    prefs['text_models'] = payload
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+
+    await db.commit()
+    logger.info(f"用户 {user.user_id} 新增文本模型配置: {data.name}")
+    return record
 
 
-@router.post("/presets/from-current", response_model=PresetResponse)
-async def create_preset_from_current(
-    name: str,
-    description: Optional[str] = None,
+@router.put("/text-models/usage/chapter-analysis")
+async def set_chapter_analysis_text_model(
+    data: ChapterAnalysisTextModelSelectionRequest,
     user: User = Depends(require_login),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
+    """设置章节内容分析专用的文本模型配置；为空则沿用当前启用配置。"""
+    settings = await get_user_settings(user.user_id, db)
+    prefs = _safe_load_preferences(settings.preferences)
+    configs = _get_text_models_payload(prefs).get('configs', [])
+
+    config_id = data.config_id.strip() if data.config_id else None
+    config_name = None
+    if config_id:
+        target = await _resolve_card_by_id(
+            await _compose_user_configs(prefs, db), config_id
+        )
+        if not target:
+            raise HTTPException(status_code=404, detail="配置不存在")
+        prefs['chapter_analysis_config_id'] = config_id
+        config_name = target.get('name')
+    else:
+        prefs.pop('chapter_analysis_config_id', None)
+
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+    await db.commit()
+
+    logger.info(f"用户 {user.user_id} 设置章节内容分析模型: {config_id or '跟随当前启用配置'}")
+    return {
+        "message": "章节内容分析模型已更新",
+        "chapter_analysis_config_id": config_id,
+        "config_name": config_name,
+    }
+
+
+@router.put("/text-models/{config_id}", response_model=TextModelConfig)
+async def update_text_model(
+    config_id: str,
+    data: TextModelConfigUpdateRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新一条用户自己的文本模型配置。
+
+    公共配置卡片由管理员统一维护，不允许用户改任何字段。
     """
-    从当前配置创建新预设
-    
-    快捷方式：将当前激活的配置保存为新预设
+    if _is_shared_card_id(config_id):
+        raise HTTPException(
+            status_code=400,
+            detail="公共配置由管理员统一维护，无法修改",
+        )
+
+    settings = await get_user_settings(user.user_id, db)
+    prefs = _safe_load_preferences(settings.preferences)
+    payload = _get_text_models_payload(prefs)
+    configs = payload.get('configs', [])
+
+    target = next((cfg for cfg in configs if cfg.get('id') == config_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="配置不存在")
+
+    updates = data.model_dump(exclude_unset=True)
+    if 'api_provider' in updates and updates['api_provider']:
+        updates['api_provider'] = _normalize_raw_provider(updates['api_provider'])
+    target.update(updates)
+
+    payload['configs'] = configs
+    prefs['text_models'] = payload
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+
+    if target.get('is_active'):
+        await _apply_text_model_to_settings(settings, target, prefs)
+
+    await db.commit()
+    logger.info(f"用户 {user.user_id} 更新文本模型配置: {config_id}")
+    return (_present_text_model([target]))[0]
+
+
+@router.post("/text-models/{config_id}/activate")
+async def activate_text_model(
+    config_id: str,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """启用某条文本模型配置，其余配置自动取消启用。"""
+    settings = await get_user_settings(user.user_id, db)
+    prefs = _safe_load_preferences(settings.preferences)
+    payload = _get_text_models_payload(prefs)
+    configs = payload.get('configs', [])
+
+    if _is_shared_card_id(config_id):
+        shared_id = _shared_id_from_card(config_id)
+        shared = await _get_shared_api_config(db, shared_id)
+        if not shared:
+            raise HTTPException(status_code=400, detail="该公共配置已被管理员停用或删除")
+
+        # 保留用户自己卡片的 is_active，公共配置只通过 active_shared_config_id 生效，
+        # 这样管理员停用后可以立刻回退到他原本的那一套
+        await _apply_text_model_to_settings(settings, _shared_config_to_settings(shared), prefs)
+
+        payload['configs'] = configs
+        prefs['text_models'] = payload
+        prefs['active_shared_config_id'] = shared.id
+        settings.preferences = json.dumps(prefs, ensure_ascii=False)
+        await db.commit()
+        logger.info(f"用户 {user.user_id} 启用公共 API 配置: {shared.name}")
+        return {"message": "已启用", "config_id": config_id, "config_name": shared.name}
+
+    target = next((cfg for cfg in configs if cfg.get('id') == config_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="配置不存在")
+
+    for cfg in configs:
+        cfg['is_active'] = (cfg.get('id') == config_id)
+    await _apply_text_model_to_settings(settings, target, prefs)
+
+    payload['configs'] = configs
+    prefs['text_models'] = payload
+    prefs.pop('active_shared_config_id', None)
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+
+    await db.commit()
+    logger.info(f"用户 {user.user_id} 启用文本模型配置: {target.get('name')}")
+    return {"message": "已启用", "config_id": config_id, "config_name": target.get('name')}
+
+
+@router.delete("/text-models/{config_id}")
+async def delete_text_model(
+    config_id: str,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除文本模型配置。
+
+    公共配置卡片不能真删（管理员还在开放），删除只是把它从自己的列表隐藏。
     """
     settings = await get_user_settings(user.user_id, db)
-    
-    # 从当前Settings主字段读取配置
-    current_config = APIKeyPresetConfig(
-        api_provider=_normalize_raw_provider(settings.api_provider),
-        api_key=settings.api_key,
-        api_base_url=settings.api_base_url,
-        llm_model=settings.llm_model,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
-        system_prompt=settings.system_prompt
+    prefs = _safe_load_preferences(settings.preferences)
+
+    if _is_shared_card_id(config_id):
+        shared_id = _shared_id_from_card(config_id)
+        dismissed = prefs.get('shared_dismissed')
+        dismissed_ids = set(dismissed) if isinstance(dismissed, list) else set()
+        dismissed_ids.add(shared_id)
+        prefs['shared_dismissed'] = sorted(dismissed_ids)
+        if prefs.get('chapter_analysis_config_id') == config_id:
+            prefs.pop('chapter_analysis_config_id', None)
+        if prefs.get('active_shared_config_id') == shared_id:
+            # 隐藏正在生效的公共配置时，立刻把主配置还原成启用前的快照
+            snapshot = prefs.get('pre_shared_settings')
+            if isinstance(snapshot, dict) and snapshot:
+                settings.api_provider = snapshot.get('api_provider') or settings.api_provider
+                settings.api_key = snapshot.get('api_key') or ''
+                settings.api_base_url = snapshot.get('api_base_url')
+                settings.llm_model = snapshot.get('llm_model')
+                settings.temperature = snapshot.get('temperature')
+                settings.max_tokens = snapshot.get('max_tokens')
+                settings.system_prompt = snapshot.get('system_prompt')
+                settings.disable_thinking = bool(snapshot.get('disable_thinking', False))
+            prefs.pop('active_shared_config_id', None)
+            prefs.pop('pre_shared_settings', None)
+        settings.preferences = json.dumps(prefs, ensure_ascii=False)
+        await db.commit()
+        logger.info(f"用户 {user.user_id} 隐藏公共 API 配置: {shared_id}")
+        return {"message": "已从列表移除", "config_id": config_id}
+
+    payload = _get_text_models_payload(prefs)
+    configs = payload.get('configs', [])
+
+    target = next((cfg for cfg in configs if cfg.get('id') == config_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="配置不存在")
+
+    payload['configs'] = [cfg for cfg in configs if cfg.get('id') != config_id]
+    if prefs.get('chapter_analysis_config_id') == config_id:
+        prefs.pop('chapter_analysis_config_id', None)
+    prefs['text_models'] = payload
+    settings.preferences = json.dumps(prefs, ensure_ascii=False)
+
+    await db.commit()
+    logger.info(f"用户 {user.user_id} 删除文本模型配置: {config_id}")
+    return {"message": "已删除", "config_id": config_id}
+
+
+@router.post("/text-models/{config_id}/test")
+async def test_text_model(
+    config_id: str,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """测试单条文本模型配置的 API 连接，不影响当前生效配置。"""
+    if _is_shared_card_id(config_id):
+        shared = await _get_shared_api_config(db, _shared_id_from_card(config_id))
+        if not shared:
+            raise HTTPException(status_code=404, detail="公共配置不存在或已停用")
+        target = _shared_config_to_settings(shared)
+        target["shared_config_id"] = shared.id
+        target["shared_config_name"] = shared.name
+        target["model_display_name"] = shared.model_display_name or shared.llm_model
+        logger.info(f"用户 {user.user_id} 测试公共 API 配置: {shared.name}")
+    else:
+        settings = await get_user_settings(user.user_id, db)
+        prefs = _safe_load_preferences(settings.preferences)
+        configs = _get_text_models_payload(prefs).get('configs', [])
+        found = next((cfg for cfg in configs if cfg.get('id') == config_id), None)
+        if not found:
+            raise HTTPException(status_code=404, detail="配置不存在")
+        target = found
+        logger.info(f"用户 {user.user_id} 测试文本模型配置: {found.get('name')}")
+
+    if _is_shared_card_id(config_id):
+        quota_status = await get_quota_status(
+            db,
+            user_id=user.user_id,
+            config_type=CONFIG_TYPE_TEXT,
+            config_id=target["shared_config_id"],
+            daily_limit=target.get("daily_call_limit"),
+            total_limit=target.get("total_call_limit"),
+        )
+        if quota_status.is_exhausted:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"「{target['shared_config_name']}」调用次数已达上限，"
+                    "请切换其他配置或稍后再试"
+                ),
+            )
+        await consume_quota(
+            db,
+            user_id=user.user_id,
+            config_type=CONFIG_TYPE_TEXT,
+            config_id=target["shared_config_id"],
+            config_name=target["shared_config_name"],
+            daily_limit=target.get("daily_call_limit"),
+            total_limit=target.get("total_call_limit"),
+        )
+        result = await test_api_connection(
+            ApiTestRequest(
+                api_key=target.get('api_key') or '',
+                api_base_url=target.get('api_base_url') or '',
+                provider=target.get('api_provider') or 'openai',
+                llm_model=target.get('llm_model') or '',
+                temperature=target.get('temperature'),
+                max_tokens=target.get('max_tokens'),
+            )
+        )
+        if not result.get("success"):
+            await refund_quota(
+                db,
+                user_id=user.user_id,
+                config_type=CONFIG_TYPE_TEXT,
+                config_id=target["shared_config_id"],
+            )
+        else:
+            # 测试请求也走通了公共配置，但仍返回给前端别名模型名
+            result["model"] = target.get('model_display_name') or target.get('llm_model')
+    else:
+        result = await test_api_connection(
+            ApiTestRequest(
+                api_key=target.get('api_key') or '',
+                api_base_url=target.get('api_base_url') or '',
+                provider=target.get('api_provider') or 'openai',
+                llm_model=target.get('llm_model') or '',
+                temperature=target.get('temperature'),
+                max_tokens=target.get('max_tokens'),
+            )
+        )
+    if _is_shared_card_id(config_id) and isinstance(result, dict):
+        # 测试结果也不回显真实模型名
+        result["model"] = target.get('model_display_name') or target.get('llm_model')
+    return result
+
+
+# ========== 管理员下发的公共配置（用户侧） ==========
+
+@router.get("/shared-api-configs", response_model=List[SharedApiConfigSummary])
+async def list_shared_api_configs_for_user(
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出管理员开放的公共配置（不含密钥），供用户端展示说明。"""
+    from app.models.shared_api_config import SharedApiConfig
+
+    result = await db.execute(
+        select(SharedApiConfig)
+        .where(SharedApiConfig.is_enabled.is_(True))
+        .order_by(SharedApiConfig.sort_order.asc(), SharedApiConfig.created_at.asc())
     )
-    
-    # 创建预设
-    create_request = PresetCreateRequest(
-        name=name,
-        description=description,
-        config=current_config
+    return [
+        SharedApiConfigSummary(
+            id=record.id,
+            name=record.name,
+            note=record.note,
+            api_provider=record.api_provider,
+            # 用户端只判断「是否可用」，接口地址不下发，避免暴露管理员的基础设施
+            api_base_url=None,
+            llm_model=record.model_display_name or record.llm_model,
+            model_display_name=record.model_display_name or record.llm_model,
+            temperature=record.temperature,
+            max_tokens=record.max_tokens,
+            disable_thinking=bool(record.disable_thinking),
+            daily_call_limit=record.daily_call_limit,
+            total_call_limit=record.total_call_limit,
+            already_imported=False,
+        )
+        for record in result.scalars().all()
+    ]
+
+
+@router.post("/shared-api-configs/{config_id}/import", response_model=TextModelConfig)
+async def import_shared_api_config(
+    config_id: str,
+    data: SharedApiConfigImportRequest,
+    user: User = Depends(require_login),
+    db: AsyncSession = Depends(get_db),
+):
+    """兼容旧入口：公共配置已自动出现在用户列表，这里只做「启用」。"""
+    shared = await _get_shared_api_config(db, config_id)
+    if not shared:
+        raise HTTPException(status_code=404, detail="公共配置不存在或已停用")
+
+    if data.activate:
+        await activate_text_model(f"shared_{shared.id}", user=user, db=db)
+
+    return (_present_text_model([_virtual_card(shared)]))[0]
+
+
+async def _apply_text_model_to_settings(
+    settings: Settings,
+    config: Dict[str, Any],
+    prefs: Optional[Dict[str, Any]] = None,
+) -> None:
+    """把文本模型配置写入主设置字段，使其真正生效。
+
+    公共配置（带 `shared_config_id`）只记录引用：主字段写入非敏感信息，
+    密钥始终留在 shared_api_configs 表，由运行时解析，避免用户拿到明文。
+    """
+    shared_id = config.get('shared_config_id')
+    resolved = resolve_runtime_ai_config(
+        config.get('api_provider'),
+        config.get('api_key'),
+        config.get('api_base_url'),
     )
-    
-    logger.info(f"用户 {user.user_id} 从当前配置创建预设: {name}")
-    return await create_preset(create_request, user, db)
+
+    if prefs is not None and shared_id and not prefs.get('pre_shared_settings'):
+        # 首次切到公共配置时快照当前的生效配置，供管理员停用后回退
+        prefs['pre_shared_settings'] = {
+            'api_provider': settings.api_provider,
+            'api_key': settings.api_key,
+            'api_base_url': settings.api_base_url,
+            'llm_model': settings.llm_model,
+            'temperature': settings.temperature,
+            'max_tokens': settings.max_tokens,
+            'system_prompt': settings.system_prompt,
+            'disable_thinking': bool(getattr(settings, 'disable_thinking', False)),
+        }
+
+    settings.api_provider = _normalize_raw_provider(config.get('api_provider'))
+    if shared_id:
+        # 公共配置不在用户身上存密钥：保留他原本的 Key，
+        # 管理员停用后可以继续回退到自己的一套，不至于直接不可用
+        settings.api_key = settings.api_key or ""
+    else:
+        settings.api_key = config.get('api_key') or ""
+    settings.api_base_url = resolved["api_base_url"]
+    settings.llm_model = config.get('llm_model')
+    settings.temperature = config.get('temperature')
+    settings.max_tokens = config.get('max_tokens')
+    if not shared_id:
+        # 公共配置的系统提示词由管理员侧在运行时注入，不落到用户记录里
+        settings.system_prompt = config.get('system_prompt')
+    settings.disable_thinking = bool(config.get('disable_thinking', False))
+
+    if prefs is not None:
+        if shared_id:
+            prefs['active_shared_config_id'] = shared_id
+        else:
+            prefs.pop('active_shared_config_id', None)
+            # 切回自己的卡片时清掉快照，避免下次误用旧值
+            prefs.pop('pre_shared_settings', None)
+        settings.preferences = json.dumps(prefs, ensure_ascii=False)

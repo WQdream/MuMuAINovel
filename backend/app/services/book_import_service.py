@@ -1620,20 +1620,37 @@ class BookImportService:
         mcp_plugins = mcp_result.scalars().all()
         enable_mcp = any(plugin.enabled for plugin in mcp_plugins) if mcp_plugins else False
 
-        if not user_settings.api_key:
+        # 局部导入避免与 app.api.settings 形成循环依赖
+        from app.api.settings import resolve_effective_ai_settings, resolve_runtime_ai_config
+
+        # 用户可能启用的是管理员下发的公共配置，需要在这里解出真实密钥
+        effective = await resolve_effective_ai_settings(user_settings, db)
+        resolved_config = resolve_runtime_ai_config(
+            effective['api_provider'],
+            effective['api_key'],
+            effective['api_base_url'],
+        )
+
+        if not resolved_config["api_key"]:
             raise HTTPException(status_code=400, detail="未配置AI Key，无法执行拆书反向生成")
 
         return create_user_ai_service_with_mcp(
-            api_provider=user_settings.api_provider,
-            api_key=user_settings.api_key,
-            api_base_url=user_settings.api_base_url or "",
-            model_name=user_settings.llm_model,
-            temperature=user_settings.temperature,
-            max_tokens=user_settings.max_tokens,
+            api_provider=resolved_config["api_provider"],
+            api_key=resolved_config["api_key"],
+            api_base_url=resolved_config["api_base_url"],
+            model_name=effective['llm_model'],
+            model_aliases=effective.get('model_aliases'),
+            temperature=effective['temperature'],
+            max_tokens=effective['max_tokens'],
             user_id=user_id,
             db_session=db,
-            system_prompt=user_settings.system_prompt,
+            system_prompt=effective['system_prompt'],
             enable_mcp=enable_mcp,
+            disable_thinking=bool(effective['disable_thinking']),
+            quota_config_id=effective.get('shared_config_id'),
+            quota_config_name=effective.get('shared_config_name'),
+            quota_daily_limit=effective.get('daily_call_limit'),
+            quota_total_limit=effective.get('total_call_limit'),
         )
 
     async def _run_post_import_wizard_generation(

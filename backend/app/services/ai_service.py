@@ -20,6 +20,12 @@ from app.services.ai_providers.anthropic_provider import AnthropicProvider
 from app.services.ai_providers.gemini_provider import GeminiProvider
 from app.services.ai_providers.base_provider import BaseAIProvider
 from app.services.json_helper import clean_json_response, parse_json
+from app.services.api_quota_service import (
+    CONFIG_TYPE_TEXT,
+    consume_quota,
+    refund_quota,
+)
+from app.utils.provider_policy import detect_policy_refusal, policy_refusal_error
 
 # 导出清理函数
 cleanup_http_clients = cleanup_all_clients
@@ -94,10 +100,20 @@ class AIService:
         db_session: Optional[Any] = None,
         enable_mcp: bool = True,
         disable_thinking: bool = False,
+        model_aliases: Optional[List[str]] = None,
+        quota_config_id: Optional[str] = None,
+        quota_config_name: Optional[str] = None,
+        quota_daily_limit: Optional[int] = None,
+        quota_total_limit: Optional[int] = None,
     ):
         self.raw_api_provider = (api_provider or app_settings.default_ai_provider or "openai").lower().strip()
         self.api_provider = normalize_provider(self.raw_api_provider)
         self.default_model = default_model or app_settings.default_model
+        # 用户只看到展示名，但请求仍要落到真实模型：
+        # aliases 里的任意名字都会被解析成 default_model。
+        self.model_aliases = {
+            str(name).strip() for name in (model_aliases or []) if str(name).strip()
+        }
         self.default_temperature = default_temperature or app_settings.default_temperature
         self.default_max_tokens = default_max_tokens or app_settings.default_max_tokens
         self.default_system_prompt = default_system_prompt
@@ -109,6 +125,12 @@ class AIService:
         self._enable_mcp = enable_mcp
         # 关闭思考（vLLM/Qwen 等思考模型）：通过 chat_template_kwargs 注入
         self.disable_thinking = disable_thinking
+        # 公共配置额度：仅在用户调用管理员下发的公共配置时生效。
+        self.quota_config_id = quota_config_id
+        self.quota_config_name = quota_config_name
+        self.quota_daily_limit = quota_daily_limit
+        self.quota_total_limit = quota_total_limit
+        self._quota_consumed = False
         self._cached_tools: Optional[List[Dict]] = None
         self._tools_loaded = False
         
@@ -159,6 +181,17 @@ class AIService:
             # 从启用变为禁用，清理缓存
             self.clear_mcp_cache()
         self._enable_mcp = value
+
+    def resolve_model_name(self, model: Optional[str] = None) -> str:
+        """把对外展示名或真实名统一解析成真正发给上游的模型名。"""
+        requested = (model or "").strip()
+        if not requested:
+            return self.default_model
+        if requested == self.default_model:
+            return self.default_model
+        if requested in self.model_aliases:
+            return self.default_model
+        return requested
     
     def clear_mcp_cache(self):
         """
@@ -202,7 +235,7 @@ class AIService:
         return AICallMetrics(
             request_mode=request_mode,
             provider=normalize_provider(provider or self.api_provider) or "unknown",
-            model=model or self.default_model,
+            model=self.resolve_model_name(model),
             user_id=self.user_id,
             stream=stream,
             auto_mcp=auto_mcp,
@@ -217,6 +250,39 @@ class AIService:
             logger.info(message)
         else:
             logger.error(message)
+
+    async def _consume_quota(self) -> None:
+        """公共配置的每次 AI 调用前占用一次额度。"""
+        if (
+            not self.quota_config_id
+            or not self.user_id
+            or not self.db_session
+            or (self.quota_daily_limit is None and self.quota_total_limit is None)
+        ):
+            return
+        await consume_quota(
+            self.db_session,
+            user_id=self.user_id,
+            config_type=CONFIG_TYPE_TEXT,
+            config_id=self.quota_config_id,
+            config_name=self.quota_config_name or "公共配置",
+            daily_limit=self.quota_daily_limit,
+            total_limit=self.quota_total_limit,
+        )
+        self._quota_consumed = True
+
+    async def _refund_quota(self) -> None:
+        if not self._quota_consumed or not self.quota_config_id or not self.user_id:
+            return
+        if not self.db_session:
+            return
+        self._quota_consumed = False
+        await refund_quota(
+            self.db_session,
+            user_id=self.user_id,
+            config_type=CONFIG_TYPE_TEXT,
+            config_id=self.quota_config_id,
+        )
 
     async def _prepare_mcp_tools(self, auto_mcp: bool = True, force_refresh: bool = False) -> Optional[List[Dict]]:
         """
@@ -361,7 +427,7 @@ class AIService:
                 prov = self._get_provider(kwargs.get("provider"))
                 next_response = await prov.generate(
                     prompt=prompt,
-                    model=kwargs.get("model") or self.default_model,
+                    model=self.resolve_model_name(kwargs.get("model")),
                     temperature=kwargs.get("temperature") or self.default_temperature,
                     max_tokens=kwargs.get("max_tokens") or self.default_max_tokens,
                     system_prompt=kwargs.get("system_prompt") or self.default_system_prompt,
@@ -451,10 +517,11 @@ class AIService:
         )
         
         try:
+            await self._consume_quota()
             prov = self._get_provider(provider)
             response = await prov.generate(
                 prompt=prompt,
-                model=model or self.default_model,
+                model=self.resolve_model_name(model),
                 temperature=temperature or self.default_temperature,
                 max_tokens=max_tokens or self.default_max_tokens,
                 system_prompt=system_prompt or self.default_system_prompt,
@@ -487,9 +554,11 @@ class AIService:
                 finish_reason=response.get("finish_reason"),
                 usage=usage,
             )
+            self._quota_consumed = False
             self._log_call_metrics(metrics)
             return response
         except Exception as e:
+            await self._refund_quota()
             metrics.finish(success=False, error=e)
             self._log_call_metrics(metrics)
             raise
@@ -549,12 +618,13 @@ class AIService:
         finish_reason = "stop"
         
         try:
+            await self._consume_quota()
             # 流式生成（Provider 层处理工具调用）
             prov = self._get_provider(provider)
             logger.debug(f"🔧 开始流式生成，provider={provider or self.api_provider}, tools_count={len(tools_to_use) if tools_to_use else 0}")
             async for chunk in prov.generate_stream(
                 prompt=prompt,
-                model=model or self.default_model,
+                model=self.resolve_model_name(model),
                 temperature=temperature or self.default_temperature,
                 max_tokens=max_tokens or self.default_max_tokens,
                 system_prompt=system_prompt or self.default_system_prompt,
@@ -581,8 +651,10 @@ class AIService:
                 finish_reason=finish_reason,
                 usage=latest_usage,
             )
+            self._quota_consumed = False
             self._log_call_metrics(metrics)
         except Exception as e:
+            await self._refund_quota()
             metrics.finish(
                 success=False,
                 response_length=len("".join(response_parts)),
@@ -653,6 +725,12 @@ class AIService:
                 metrics.tools_count = max(metrics.tools_count, len(self._cached_tools) if self._cached_tools else 0)
                 
                 last_response = result.get("content", "")
+
+                # 服务商可能返回 HTTP 200 + 一段审核话术而不是 JSON。
+                # 重试没有意义，直接抛出可读原因，避免上层报成「JSON 解析失败」。
+                refusal = detect_policy_refusal(last_response)
+                if refusal:
+                    raise ValueError(policy_refusal_error(refusal))
                 
                 try:
                     data = parse_json(last_response)
@@ -703,6 +781,14 @@ def create_user_ai_service(
     temperature: float,
     max_tokens: int,
     system_prompt: Optional[str] = None,
+    disable_thinking: bool = False,
+    model_aliases: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
+    db_session: Optional[Any] = None,
+    quota_config_id: Optional[str] = None,
+    quota_config_name: Optional[str] = None,
+    quota_daily_limit: Optional[int] = None,
+    quota_total_limit: Optional[int] = None,
 ) -> AIService:
     """创建用户 AI 服务（不带MCP支持）"""
     return AIService(
@@ -713,6 +799,15 @@ def create_user_ai_service(
         default_temperature=temperature,
         default_max_tokens=max_tokens,
         default_system_prompt=system_prompt,
+        disable_thinking=disable_thinking,
+        model_aliases=model_aliases,
+        user_id=user_id,
+        db_session=db_session,
+        enable_mcp=False,
+        quota_config_id=quota_config_id,
+        quota_config_name=quota_config_name,
+        quota_daily_limit=quota_daily_limit,
+        quota_total_limit=quota_total_limit,
     )
 
 
@@ -728,6 +823,11 @@ def create_user_ai_service_with_mcp(
     system_prompt: Optional[str] = None,
     enable_mcp: bool = True,
     disable_thinking: bool = False,
+    model_aliases: Optional[List[str]] = None,
+    quota_config_id: Optional[str] = None,
+    quota_config_name: Optional[str] = None,
+    quota_daily_limit: Optional[int] = None,
+    quota_total_limit: Optional[int] = None,
 ) -> AIService:
     """
     创建支持MCP的用户AI服务
@@ -759,4 +859,9 @@ def create_user_ai_service_with_mcp(
         db_session=db_session,
         enable_mcp=enable_mcp,
         disable_thinking=disable_thinking,
+        model_aliases=model_aliases,
+        quota_config_id=quota_config_id,
+        quota_config_name=quota_config_name,
+        quota_daily_limit=quota_daily_limit,
+        quota_total_limit=quota_total_limit,
     )

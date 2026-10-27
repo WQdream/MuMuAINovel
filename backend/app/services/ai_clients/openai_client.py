@@ -2,6 +2,8 @@
 import json
 from typing import Any, AsyncGenerator, Dict, Optional
 
+import httpx
+
 from app.logger import get_logger, summarize_log_value
 from app.services.ai_config import AIClientConfig
 from app.utils.reasoning_text import (
@@ -103,6 +105,7 @@ class OpenAIClient(BaseAIClient):
             # MiniMax otherwise embeds <think> in the visible chapter text.
             # extra_body is the SDK name; the HTTP JSON body uses the raw field.
             payload["reasoning_split"] = False
+            payload["reasoning"] = {"exclude": True}
         if tools:
             # 清理 $schema 字段
             cleaned = []
@@ -272,6 +275,32 @@ class OpenAIClient(BaseAIClient):
         except GeneratorExit:
             # 重新抛出GeneratorExit，让调用方处理
             raise
+        except httpx.HTTPStatusError as error:
+            status_code = error.response.status_code
+            logger.error(
+                "流式请求 HTTP %s: model=%s, base_url=%s",
+                status_code,
+                model,
+                self.base_url,
+            )
+            if status_code == 404:
+                raise RuntimeError(
+                    f"模型不可用：{model}。请在设置中重新选择当前服务商支持的模型"
+                ) from error
+            if status_code == 402:
+                raise RuntimeError(
+                    "AI 账户余额不足，无法调用该模型。请充值或在设置中更换可用模型"
+                ) from error
+            if status_code == 401:
+                raise RuntimeError(
+                    "AI API Key 无效或已过期，请在设置中重新填写"
+                ) from error
+            raise RuntimeError(
+                f"AI 服务请求失败（HTTP {status_code}），请检查模型配置或稍后重试"
+            ) from error
+        except httpx.RequestError as error:
+            logger.error("流式请求网络错误: %s: %s", type(error).__name__, error)
+            raise RuntimeError(f"无法连接 AI 服务：{error}") from error
         except Exception as e:
             logger.error(f"流式请求出错: {str(e)}")
             raise

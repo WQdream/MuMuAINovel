@@ -4,16 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.ai_service import AIService
 from app.services.json_helper import loads_json
 from app.services.prompt_service import prompt_service, PromptService
+from app.utils.provider_policy import detect_policy_refusal, policy_refusal_error
 from app.logger import get_logger, safe_preview
 import json
 import re
 import asyncio
+import contextlib
 
 logger = get_logger(__name__)
 
 # 重试回调类型定义
 OnRetryCallback = Callable[[int, int, int, str], Awaitable[None]]
 # 参数: (当前重试次数, 最大重试次数, 等待时间秒数, 错误原因)
+
+# 实时过程事件回调：(级别, 事件描述, 进度百分比)
+OnEventCallback = Callable[[str, str, Optional[int]], Awaitable[None]]
 
 
 class PlotAnalyzer:
@@ -40,7 +45,8 @@ class PlotAnalyzer:
         max_retries: int = 3,
         existing_foreshadows: Optional[List[Dict[str, Any]]] = None,
         on_retry: Optional[OnRetryCallback] = None,
-        characters_info: str = ""
+        characters_info: str = "",
+        on_event: Optional[OnEventCallback] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         分析单章内容（带重试机制）
@@ -56,11 +62,23 @@ class PlotAnalyzer:
             existing_foreshadows: 已埋入的伏笔列表（用于回收匹配）
             on_retry: 重试时的回调函数，参数为 (当前重试次数, 最大重试次数, 等待秒数, 错误原因)
             characters_info: 项目角色信息文本（用于角色名称匹配）
+            on_event: 实时过程事件回调，参数为 (级别, 事件描述, 进度百分比)
         
         Returns:
             分析结果字典,失败返回None
         """
+        self.last_error: Optional[str] = None
         logger.info(f"🔍 开始分析第{chapter_number}章: {title}")
+
+        async def emit(level: str, message: str, progress: Optional[int] = None) -> None:
+            """向监控端推送一条过程事件；回调异常不影响分析主流程。"""
+            logger.info(f"  · [{level}] {message}")
+            if not on_event:
+                return
+            try:
+                await on_event(level, message, progress)
+            except Exception as callback_error:
+                logger.warning(f"⚠️ 实时事件回调执行失败: {callback_error}")
         
         # 如果内容过长,截取前8000字(避免超token)
         analysis_content = content[:8000] if len(content) > 8000 else content
@@ -89,21 +107,110 @@ class PlotAnalyzer:
             existing_foreshadows=foreshadows_text,
             characters_info=characters_info if characters_info else "（暂无角色信息）"
         )
+
+        # 输出预算提示：推理型模型会把大量 token 花在思考上，
+        # 不约束体量时 JSON 很容易在 max_tokens 处被截断。
+        prompt = (
+            f"{prompt}\n\n"
+            "<output_budget>\n"
+            "严格控制输出体量，直接给最终 JSON，不要输出分析过程：\n"
+            "- hooks 最多 4 条，foreshadows 最多 3 条，plot_points 最多 4 条\n"
+            "- character_states 最多 3 个，scenes 最多 3 条，suggestions 最多 2 条\n"
+            "- 每个 content 不超过 80 字，description 不超过 60 字\n"
+            "- 必须输出完整闭合的 JSON，不要省略结尾括号\n"
+            "</output_budget>"
+        )
         
         last_error = None
         logger.debug(f"章节分析提示词完成: chapter_number={chapter_number}, prompt_length={len(prompt)}")
+        await emit("info", f"提示词已构建（{len(prompt)} 字符）", 25)
         for attempt in range(1, max_retries + 1):
+            current_prompt = prompt
+            if attempt > 1:
+                # 多数失败是输出触达 max_tokens 被截断，重试时要求模型压缩输出体量
+                current_prompt = (
+                    f"{prompt}\n\n"
+                    f"⚠️ 第{attempt}次尝试：上一次输出因超出长度限制被截断，JSON 不完整。"
+                    "本次只允许输出下面这个精简结构，不要输出流程说明或思考过程：\n"
+                    '{"hooks":[{"type":"","content":"","strength":7,"position":"","keyword":""}],'
+                    '"foreshadows":[],"conflict":{"types":[],"parties":[],"level":5,"description":""},'
+                    '"emotional_arc":{"primary_emotion":"","intensity":5,"curve":""},'
+                    '"character_states":[{"character_name":"","state_before":"","state_after":"","key_event":""}],'
+                    '"plot_points":[{"content":"","type":"","importance":0.5,"keyword":""}],'
+                    '"scenes":[{"location":"","description":""}],'
+                    '"scores":{"pacing":7.0,"engagement":7.0,"coherence":7.0,"overall":7.0},'
+                    '"suggestions":[]}\n'
+                    "数量上限：hooks/plot_points 各 2 条，character_states/scenes/foreshadows 各 1 条，"
+                    "suggestions 为空数组；每条 content 不超过 40 字；keyword 必须逐字取自原文。"
+                    "必须一次性输出完整、闭合的 JSON。"
+                )
             try:
                 # 调用AI进行分析
                 logger.info(f"  📡 调用AI分析(内容长度: {len(analysis_content)}字, 尝试 {attempt}/{max_retries})...")
+                # 推理模型会把思考 token 也算进输出预算，写死 16000 极易在 JSON 中途触顶。
+                # 跟随用户配置的 max_tokens，并留出解析余量。
+                analysis_max_tokens = max(
+                    16000,
+                    min(getattr(self.ai_service, "default_max_tokens", 0) or 0, 64000),
+                )
+                await emit(
+                    "info",
+                    f"第 {attempt}/{max_retries} 次调用 AI（正文 {len(analysis_content)} 字，"
+                    f"输出上限 {analysis_max_tokens}），等待首个响应…",
+                    30,
+                )
                 accumulated_text = ""
+                stream_started = False
+                last_reported_length = 0
+                last_event_at = asyncio.get_event_loop().time()
+                heartbeat_stop = asyncio.Event()
+
+                async def heartbeat() -> None:
+                    """等待首字/长间隔时定期汇报，避免监控面板长时间没有动静。"""
+                    nonlocal last_event_at
+                    waited = 0
+                    while not heartbeat_stop.is_set():
+                        try:
+                            await asyncio.wait_for(heartbeat_stop.wait(), timeout=15)
+                            return
+                        except asyncio.TimeoutError:
+                            waited += 15
+                            if asyncio.get_event_loop().time() - last_event_at < 15:
+                                continue
+                            stage = "已开始输出" if stream_started else "仍在等待模型响应"
+                            await emit(
+                                "info",
+                                f"{stage}…已等待 {waited}s，共接收 {len(accumulated_text)} 字符",
+                                32 if not stream_started else 45,
+                            )
+                            last_event_at = asyncio.get_event_loop().time()
+
+                heartbeat_task = asyncio.create_task(heartbeat())
                 
                 try:
                     async for chunk in self.ai_service.generate_text_stream(
-                        prompt=prompt,
-                        temperature=0.3  # 降低温度以获得更稳定的JSON输出
+                        prompt=current_prompt,
+                        temperature=0.3,  # 降低温度以获得更稳定的JSON输出
+                        max_tokens=analysis_max_tokens,
+                        tool_choice="none",
+                        auto_mcp=False,
                     ):
+                        if not chunk:
+                            continue
+                        if not stream_started:
+                            stream_started = True
+                            await emit("info", "AI 已开始返回内容（首字到达），正在生成 JSON", 35)
+                            last_event_at = asyncio.get_event_loop().time()
                         accumulated_text += chunk
+                        # 长时间生成时每约 1500 字回报一次，让监控面板看到实际进展
+                        if len(accumulated_text) - last_reported_length >= 1500:
+                            last_reported_length = len(accumulated_text)
+                            await emit(
+                                "info",
+                                f"AI 正在输出：已接收 {len(accumulated_text)} 字符",
+                                40,
+                            )
+                            last_event_at = asyncio.get_event_loop().time()
                 except asyncio.CancelledError:
                     raise
                 except GeneratorExit:
@@ -115,11 +222,17 @@ class PlotAnalyzer:
                 except Exception as stream_error:
                     logger.error(f"❌ 流式生成出错: {str(stream_error)}")
                     raise
+                finally:
+                    heartbeat_stop.set()
+                    heartbeat_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await heartbeat_task
                 
                 # 检查响应是否为空
                 if not accumulated_text or len(accumulated_text.strip()) < 10:
                     logger.warning(f"⚠️ AI响应为空或过短(长度: {len(accumulated_text)}), 尝试 {attempt}/{max_retries}")
                     last_error = "AI响应为空或过短"
+                    await emit("warn", "AI 返回内容为空或过短", 40)
                     if attempt < max_retries:
                         wait_time = min(2 ** attempt, 10)
                         logger.info(f"  ⏳ 等待 {wait_time} 秒后重试...")
@@ -132,18 +245,58 @@ class PlotAnalyzer:
                         await asyncio.sleep(wait_time)
                         continue
                     else:
+                        self.last_error = "AI响应为空，可能全部输出被用于推理"
                         logger.error(f"❌ 第{chapter_number}章分析失败: AI响应为空，已达最大重试次数")
                         return None
                 
                 # 提取内容
                 response_text = accumulated_text
                 logger.debug(f"  收到AI响应，长度: {len(response_text)} 字符")
+
+                # 服务商可能用 HTTP 200 + 一段审核话术代替 JSON。
+                # 这种情况重试无意义，必须直接把原因暴露给用户。
+                refusal = detect_policy_refusal(response_text)
+                if refusal:
+                    refusal_message = policy_refusal_error(refusal)
+                    self.last_error = refusal_message
+                    logger.error(
+                        f"❌ 第{chapter_number}章分析被服务商内容审核拦截: {refusal[:160]}"
+                    )
+                    await emit("error", refusal_message, None)
+                    return None
+
+                looks_truncated = not response_text.rstrip().endswith(("}", "]"))
+                if looks_truncated:
+                    await emit(
+                        "warn",
+                        f"AI 输出可能被长度上限截断（{len(response_text)} 字符），尝试按结构补齐解析",
+                        55,
+                    )
+                else:
+                    await emit("info", f"AI 输出完成，共 {len(response_text)} 字符，开始解析 JSON", 55)
                 
                 # 解析JSON结果
                 analysis_result = self._parse_analysis_response(response_text)
                 
                 if analysis_result:
                     logger.info(f"✅ 第{chapter_number}章分析完成 (尝试 {attempt}/{max_retries})")
+                    missing_fields = [
+                        field
+                        for field in ("hooks", "plot_points", "scores")
+                        if not analysis_result.get(field)
+                    ]
+                    if looks_truncated and missing_fields:
+                        # 输出触顶属于常态（推理模型会把预算耗在思考上）。
+                        # 既然已修补出可用结构，就直接落地，避免反复重试把任务拖到超时。
+                        # 缺失字段由后续补全逻辑处理，不再整章重跑。
+                        await emit(
+                            "warn",
+                            "输出被长度上限截断，已按完整部分落地；缺失字段："
+                            + "、".join(missing_fields),
+                            60,
+                        )
+                    else:
+                        await emit("info", "JSON 解析成功", 60)
                     logger.info(f"  - 钩子: {len(analysis_result.get('hooks', []))}个")
                     logger.info(f"  - 伏笔: {len(analysis_result.get('foreshadows', []))}个")
                     logger.info(f"  - 情节点: {len(analysis_result.get('plot_points', []))}个")
@@ -153,6 +306,11 @@ class PlotAnalyzer:
                     # JSON解析失败，重试
                     logger.warning(f"⚠️ JSON解析失败, 尝试 {attempt}/{max_retries}")
                     last_error = "JSON解析失败"
+                    await emit(
+                        "warn",
+                        f"JSON 解析失败（输出 {len(response_text)} 字符，可能被输出长度上限截断）",
+                        58,
+                    )
                     if attempt < max_retries:
                         wait_time = min(2 ** attempt, 10)
                         logger.info(f"  ⏳ 等待 {wait_time} 秒后重试...")
@@ -165,6 +323,7 @@ class PlotAnalyzer:
                         await asyncio.sleep(wait_time)
                         continue
                     else:
+                        self.last_error = "AI返回内容无法解析为有效JSON"
                         logger.error(f"❌ 第{chapter_number}章分析失败: JSON解析错误，已达最大重试次数")
                         return None
                     
@@ -173,6 +332,7 @@ class PlotAnalyzer:
             except Exception as e:
                 last_error = str(e)
                 logger.error(f"❌ 章节分析异常(尝试 {attempt}/{max_retries}): {last_error}")
+                await emit("error", f"分析异常：{last_error[:160]}", None)
                 
                 if attempt < max_retries:
                     wait_time = min(2 ** attempt, 10)
@@ -186,10 +346,12 @@ class PlotAnalyzer:
                     await asyncio.sleep(wait_time)
                     continue
                 else:
+                    self.last_error = last_error
                     logger.error(f"❌ 第{chapter_number}章分析失败: {last_error}，已达最大重试次数")
                     return None
         
         # 不应该到达这里，但作为安全措施
+        self.last_error = last_error or "未知分析错误"
         logger.error(f"❌ 第{chapter_number}章分析失败: {last_error}")
         return None
     
@@ -290,6 +452,24 @@ class PlotAnalyzer:
                 if field not in result:
                     logger.warning(f"⚠️ 分析结果缺少字段: {field}")
                     result[field] = [] if field != 'scores' else {}
+
+            # 推理模型偶尔会把对象字段返回成数组，后续保存逻辑统一按字典处理。
+            # 在入口处规范化，避免某个字段类型异常导致整章分析保存失败。
+            for field in ('conflict', 'emotional_arc', 'scores'):
+                if not isinstance(result.get(field), dict):
+                    logger.warning(f"⚠️ 分析字段 {field} 不是对象，已忽略")
+                    result[field] = {}
+
+            for field in ('hooks', 'foreshadows', 'plot_points', 'character_states', 'scenes'):
+                value = result.get(field)
+                if value is None:
+                    result[field] = []
+                    continue
+                if not isinstance(value, list):
+                    logger.warning(f"⚠️ 分析字段 {field} 不是数组，已忽略")
+                    result[field] = []
+                    continue
+                result[field] = [item for item in value if isinstance(item, dict)]
             
             logger.info("✅ 成功解析分析结果")
             return result
@@ -589,14 +769,3 @@ class PlotAnalyzer:
         except Exception as e:
             logger.error(f"❌ 生成摘要失败: {str(e)}")
             return "分析摘要生成失败"
-
-
-# 创建全局实例(需要时手动初始化)
-_plot_analyzer_instance = None
-
-def get_plot_analyzer(ai_service: AIService) -> PlotAnalyzer:
-    """获取剧情分析器实例"""
-    global _plot_analyzer_instance
-    if _plot_analyzer_instance is None:
-        _plot_analyzer_instance = PlotAnalyzer(ai_service)
-    return _plot_analyzer_instance
