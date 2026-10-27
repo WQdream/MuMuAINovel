@@ -1,20 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type React from 'react';
 import {
   Button,
-  Card,
-  Col,
   Empty,
-  Flex,
   Input,
   InputNumber,
-  List,
-  Row,
-  Space,
   Spin,
-  Statistic,
   Switch,
-  Tag,
-  Typography,
   Upload,
   message,
   theme,
@@ -25,22 +17,23 @@ import {
   InboxOutlined,
   ReloadOutlined,
   SearchOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import type { UploadProps } from 'antd';
 import { knowledgeApi } from '../services/api';
+import { useThemeMode } from '../theme/useThemeMode';
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeSearchHit } from '../types';
 import './KnowledgeBase.css';
 
 const { Dragger } = Upload;
-const { Text, Paragraph, Title } = Typography;
 
-const statusMap: Record<string, { label: string; color: string }> = {
-  pending: { label: '等待处理', color: 'default' },
-  parsing: { label: '正在解析', color: 'processing' },
-  embedding: { label: '正在生成向量', color: 'processing' },
-  ready: { label: '已完成', color: 'success' },
-  failed: { label: '处理失败', color: 'error' },
+const statusMap: Record<string, { label: string; tone: 'neutral' | 'processing' | 'success' | 'error' }> = {
+  pending: { label: '等待处理', tone: 'neutral' },
+  parsing: { label: '解析中', tone: 'processing' },
+  embedding: { label: '生成向量', tone: 'processing' },
+  ready: { label: '已索引', tone: 'success' },
+  failed: { label: '处理失败', tone: 'error' },
 };
 
 const parseHeadingPath = (value: unknown): string => {
@@ -57,6 +50,9 @@ const parseHeadingPath = (value: unknown): string => {
 export default function KnowledgeBasePage() {
   const { projectId } = useParams<{ projectId: string }>();
   const { token } = theme.useToken();
+  const { resolvedMode } = useThemeMode();
+  // 深色模式下主题色接近纯黑，主按钮需要提亮以保证对比度。
+  const isDark = resolvedMode === 'dark';
   const [base, setBase] = useState<KnowledgeBase | null>(null);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
   const [query, setQuery] = useState('');
@@ -68,6 +64,7 @@ export default function KnowledgeBasePage() {
   const [minScore, setMinScore] = useState(0.25);
   const [maxContextChars, setMaxContextChars] = useState(6000);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -182,154 +179,342 @@ export default function KnowledgeBasePage() {
     return <Spin size="large" style={{ display: 'block', margin: '80px auto' }} />;
   }
 
+  const isEmpty = documents.length === 0;
+
+
+  const primaryButtonBg = isDark ? '#EDEDE7' : token.colorPrimary;
+  const primaryButtonColor = isDark ? '#1F1F1B' : token.colorTextLightSolid;
+
+  const statusTone = (status: string) => {
+    const tone = statusMap[status]?.tone ?? 'neutral';
+    if (tone === 'success') return token.colorSuccess;
+    if (tone === 'error') return token.colorError;
+    if (tone === 'processing') return token.colorInfo;
+    return token.colorTextQuaternary;
+  };
+
+  const metrics = base
+    ? [
+        { key: 'documents', label: '文档', value: `${base.document_count}`, suffix: '份', text: false },
+        { key: 'chunks', label: '文本块', value: `${base.chunk_count}`, suffix: '块', text: false },
+        { key: 'index', label: '索引方式', value: '本地向量', suffix: '', text: true },
+      ]
+    : [];
+
+  const cssVars = {
+    '--kb-text': token.colorText,
+    '--kb-text-strong': token.colorTextSecondary,
+    '--kb-text-secondary': token.colorTextTertiary,
+    '--kb-text-tertiary': token.colorTextQuaternary,
+    '--kb-split': token.colorBorderSecondary,
+    '--kb-primary-btn-bg': primaryButtonBg,
+    '--kb-primary-btn-color': primaryButtonColor,
+  } as React.CSSProperties;
+
   return (
-    <div className="knowledge-base-page">
+    <div className="knowledge-base-page" style={cssVars}>
       <div
-        style={{
-          backgroundColor: token.colorBgContainer,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          flexShrink: 0,
-        }}
+        className="kb-header"
+        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
       >
-        <Flex justify="space-between" align="flex-start" gap={16} wrap="wrap">
-          <Flex align="center" gap={12} style={{ minWidth: 0 }}>
-            <DatabaseOutlined style={{ fontSize: 26, color: token.colorPrimary, flexShrink: 0 }} />
-            <div style={{ minWidth: 0 }}>
-              <Title level={2} style={{ margin: 0, lineHeight: 1.2 }}>
-                {base?.name || '本地知识库'}
-              </Title>
-              <Text type="secondary">
-                上传项目参考资料，AI 会在章节创作和检索时使用这些内容。
-              </Text>
-            </div>
-          </Flex>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-            刷新
-          </Button>
-        </Flex>
+        <div className="kb-header-main">
+          <DatabaseOutlined style={{ fontSize: 20, color: token.colorTextSecondary, marginTop: 2 }} />
+          <div style={{ minWidth: 0 }}>
+            <h2 className="kb-title">{base?.name || '项目知识库'}</h2>
+            <p className="kb-subtitle">
+              上传本作的设定与参考资料。
+            </p>
+          </div>
+        </div>
+        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
+          刷新
+        </Button>
       </div>
 
       <div className="knowledge-base-main">
         {base && (
-          <Card size="small" className="knowledge-base-summary">
-            <Row gutter={[16, 12]}>
-              <Col xs={12} sm={8}>
-                <Statistic title="文档数量" value={base.document_count} suffix="份" />
-              </Col>
-              <Col xs={12} sm={8}>
-                <Statistic title="文本块" value={base.chunk_count} suffix="块" />
-              </Col>
-              <Col xs={24} sm={8}>
-                <Statistic title="索引方式" value="本地向量" valueStyle={{ fontSize: 20, color: token.colorPrimary }} />
-              </Col>
-            </Row>
-          </Card>
+          <div
+            className="kb-metrics"
+            style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
+          >
+            {metrics.map((metric, index) => (
+              <div
+                key={metric.key}
+                className="kb-metric"
+                style={{ borderLeft: index === 0 ? 'none' : `1px solid ${token.colorBorderSecondary}` }}
+              >
+                <span className="kb-metric-label">{metric.label}</span>
+                <span
+                  className={`kb-metric-value${metric.text ? ' kb-metric-value--text' : ''}`}
+                  style={{ color: metric.text ? token.colorText : token.colorText }}
+                >
+                  {metric.value}
+                  {metric.suffix && <span className="kb-metric-suffix">{metric.suffix}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
 
         <div className="knowledge-base-panels">
-          <div className="knowledge-base-panel">
-            <Card
-              className="knowledge-base-panel-card"
-              title={<Space><InboxOutlined />文档管理<Tag>{documents.length}</Tag></Space>}
-              extra={<Button type="text" icon={<ReloadOutlined />} loading={loading} onClick={() => void load()} />}
+          <section
+            className="kb-panel"
+            style={{
+              background: token.colorBgContainer,
+              border: `1px solid ${token.colorBorderSecondary}`,
+            }}
+          >
+            <div
+              className="kb-panel-head"
+              style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
             >
-              <Dragger {...uploadProps} style={{ marginBottom: 18 }}>
-                <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-                <p className="ant-upload-text">点击或拖拽文件到这里上传</p>
-                <p className="ant-upload-hint">支持批量上传，单个文件最大 20MB</p>
-              </Dragger>
-              <List
-                className="knowledge-base-document-list"
-                dataSource={documents}
-                split
-                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有文档" /> }}
-                renderItem={(document) => {
-                  const status = statusMap[document.status] || statusMap.pending;
-                  return (
-                    <List.Item
-                      actions={[
-                        document.status === 'failed' || document.status === 'ready'
-                          ? <Button key="reindex" type="link" size="small" onClick={() => void reindex(document)}>重建索引</Button>
-                          : null,
-                        <Button key="delete" type="text" danger icon={<DeleteOutlined />} onClick={() => void remove(document)} />,
-                      ].filter(Boolean)}
-                    >
-                      <List.Item.Meta
-                        title={<Space wrap>{document.title}<Tag color={status.color}>{status.label}</Tag></Space>}
-                        description={(
-                          <Space direction="vertical" size={0}>
-                            <Text type="secondary">{document.original_filename}</Text>
-                            <Text type="secondary">
-                              {document.chunk_count} 个文本块 · {document.extracted_char_count.toLocaleString()} 字
-                            </Text>
-                            {document.error_message && <Text type="danger">{document.error_message}</Text>}
-                          </Space>
-                        )}
-                      />
-                    </List.Item>
-                  );
-                }}
+              <div className="kb-panel-title">
+                <InboxOutlined style={{ fontSize: 13, color: token.colorTextTertiary }} />
+                <span>文档</span>
+                <span
+                  className="kb-panel-count"
+                  style={{ background: token.colorFillTertiary, color: token.colorTextTertiary }}
+                >
+                  {documents.length}
+                </span>
+              </div>
+              <Button
+                type="text"
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={loading}
+                onClick={() => void load()}
+                aria-label="刷新文档列表"
               />
-            </Card>
-          </div>
+            </div>
 
-          <div className="knowledge-base-panel">
-            <Card
-              className="knowledge-base-panel-card"
-              title={<Space><SearchOutlined />知识检索</Space>}
+            <div className="kb-panel-body">
+              <Dragger
+                {...uploadProps}
+                className={`kb-dropzone${isEmpty ? '' : ' kb-dropzone--compact'}`}
+                style={{ borderColor: token.colorBorder }}
+              >
+                {isEmpty ? (
+                  <>
+                    <p className="ant-upload-drag-icon">
+                      <InboxOutlined style={{ color: token.colorTextQuaternary }} />
+                    </p>
+                    <p className="ant-upload-text">点击或拖拽文件到这里</p>
+                    <p className="ant-upload-hint">支持 TXT、Markdown、JSON，单文件最大 20MB</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="ant-upload-text kb-dropzone-compact-text">继续添加文件</p>
+                    <p className="ant-upload-hint">TXT / Markdown / JSON · 单文件 ≤ 20MB</p>
+                  </>
+                )}
+              </Dragger>
+
+              {!isEmpty && (
+                <div className="kb-doc-list">
+                  {documents.map((document) => {
+                    const status = statusMap[document.status] || statusMap.pending;
+                    return (
+                      <div
+                        key={document.id}
+                        className="kb-doc"
+                        style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
+                      >
+                        <div className="kb-doc-main">
+                          <div className="kb-doc-title">
+                            <span className="kb-doc-name">{document.title}</span>
+                            <span className="kb-status">
+                              <span
+                                className="kb-dot"
+                                style={{ background: statusTone(document.status) }}
+                              />
+                              {status.label}
+                            </span>
+                          </div>
+                          <div className="kb-doc-meta" style={{ color: token.colorTextTertiary }}>
+                            <span className="kb-doc-file">{document.original_filename}</span>
+                            <span>{document.chunk_count} 块</span>
+                            <span>{document.extracted_char_count.toLocaleString()} 字</span>
+                          </div>
+                          {document.error_message && (
+                            <div className="kb-doc-error" style={{ color: token.colorError }}>
+                              {document.error_message}
+                            </div>
+                          )}
+                        </div>
+                        <div className="kb-doc-actions">
+                          {(document.status === 'failed' || document.status === 'ready') && (
+                            <Button
+                              type="text"
+                              size="small"
+                              onClick={() => void reindex(document)}
+                              className="kb-doc-action"
+                            >
+                              重建
+                            </Button>
+                          )}
+                          <Button
+                            type="text"
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            onClick={() => void remove(document)}
+                            aria-label="删除文档"
+                            style={{ color: token.colorTextTertiary }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section
+            className="kb-panel"
+            style={{
+              background: token.colorBgContainer,
+              border: `1px solid ${token.colorBorderSecondary}`,
+            }}
+          >
+            <div
+              className="kb-panel-head"
+              style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}
             >
-              <Flex gap={8} wrap="wrap" align="center" style={{ marginBottom: 12 }}>
-                <Text type="secondary">自动注入</Text>
-                <Switch size="small" checked={retrievalEnabled} onChange={setRetrievalEnabled} />
-                <Text type="secondary">召回数量</Text>
-                <InputNumber min={1} max={30} value={topK} onChange={(value) => setTopK(value ?? 8)} />
-                <Text type="secondary">最低匹配度</Text>
-                <InputNumber min={0} max={1} step={0.05} precision={2} value={minScore} onChange={(value) => setMinScore(value ?? 0.25)} />
-                <Text type="secondary">上下文上限</Text>
-                <InputNumber min={1000} max={20000} step={500} value={maxContextChars} onChange={(value) => setMaxContextChars(value ?? 6000)} />
-                <Button size="small" loading={savingSettings} onClick={() => void saveRetrievalSettings()}>保存参数</Button>
-              </Flex>
+              <div className="kb-panel-title">
+                <SearchOutlined style={{ fontSize: 13, color: token.colorTextTertiary }} />
+                <span>检索</span>
+              </div>
+              <Button
+                type="text"
+                size="small"
+                icon={<SettingOutlined />}
+                onClick={() => setSettingsOpen((value) => !value)}
+                style={{ color: settingsOpen ? token.colorText : token.colorTextTertiary }}
+              >
+                参数
+              </Button>
+            </div>
+
+            <div className="kb-panel-body">
+              {settingsOpen && (
+                <div
+                  className="kb-settings"
+                  style={{ background: token.colorFillQuaternary }}
+                >
+                  <div className="kb-settings-grid">
+                    <label className="kb-field">
+                      <span className="kb-field-label">自动注入</span>
+                      <Switch size="small" checked={retrievalEnabled} onChange={setRetrievalEnabled} />
+                    </label>
+                    <label className="kb-field">
+                      <span className="kb-field-label">召回数量</span>
+                      <InputNumber
+                        size="small"
+                        min={1}
+                        max={30}
+                        value={topK}
+                        onChange={(value) => setTopK(value ?? 8)}
+                        style={{ width: '100%' }}
+                      />
+                    </label>
+                    <label className="kb-field">
+                      <span className="kb-field-label">最低匹配度</span>
+                      <InputNumber
+                        size="small"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        precision={2}
+                        value={minScore}
+                        onChange={(value) => setMinScore(value ?? 0.25)}
+                        style={{ width: '100%' }}
+                      />
+                    </label>
+                    <label className="kb-field">
+                      <span className="kb-field-label">上下文上限</span>
+                      <InputNumber
+                        size="small"
+                        min={1000}
+                        max={20000}
+                        step={500}
+                        value={maxContextChars}
+                        onChange={(value) => setMaxContextChars(value ?? 6000)}
+                        style={{ width: '100%' }}
+                      />
+                    </label>
+                  </div>
+                  <div className="kb-settings-foot">
+                    <span className="kb-settings-hint" style={{ color: token.colorTextTertiary }}>
+                      自动注入关闭后，仅保留手动检索
+                    </span>
+                    <Button size="small" loading={savingSettings} onClick={() => void saveRetrievalSettings()}>
+                      保存参数
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               <Input.Search
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onSearch={() => void handleSearch()}
                 loading={searching}
                 enterButton="搜索"
+                className="kb-search"
                 placeholder="例如：主角进入禁地需要遵守哪些规则？"
-                size="large"
               />
-              <List
-                className="knowledge-base-search-list"
-                itemLayout="vertical"
-                dataSource={hits}
-                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={query ? '暂无匹配内容' : '输入问题开始检索'} /> }}
-                renderItem={(hit) => {
-                  const metadata = hit.metadata || {};
-                  const heading = parseHeadingPath(metadata.heading_path);
-                  return (
-                    <List.Item style={{ paddingInline: 0 }}>
+
+              <div className="kb-hit-list">
+                {hits.length === 0 ? (
+                  <div className="kb-empty">
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description={
+                        isEmpty
+                          ? '先上传文档，再在这里验证检索效果'
+                          : query
+                            ? '没有匹配到内容，试试换个说法'
+                            : '输入问题，看看 AI 会读到哪些片段'
+                      }
+                    />
+                  </div>
+                ) : (
+                  hits.map((hit, index) => {
+                    const metadata = hit.metadata || {};
+                    const heading = parseHeadingPath(metadata.heading_path);
+                    return (
                       <div
-                        style={{
-                          width: '100%',
-                          padding: 14,
-                          background: token.colorFillAlter,
-                          border: `1px solid ${token.colorBorderSecondary}`,
-                          borderRadius: token.borderRadius,
-                        }}
+                        key={`${metadata.original_filename || 'hit'}-${index}`}
+                        className="kb-hit"
+                        style={{ background: token.colorFillQuaternary }}
                       >
-                        <Flex gap={8} wrap="wrap" align="center" style={{ marginBottom: 8 }}>
-                          <Tag color="blue">匹配度 {(hit.score * 100).toFixed(0)}%</Tag>
-                          <Text strong>{metadata.original_filename || metadata.title || '知识库文档'}</Text>
-                          {heading && <Text type="secondary">{heading}</Text>}
-                        </Flex>
-                        <Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>{hit.content}</Paragraph>
+                        <div className="kb-hit-head">
+                          <span
+                            className="kb-score"
+                            style={{ background: token.colorBgContainer, color: token.colorTextSecondary }}
+                          >
+                            {(hit.score * 100).toFixed(0)}%
+                          </span>
+                          <span className="kb-hit-source">
+                            {metadata.original_filename || metadata.title || '知识库文档'}
+                          </span>
+                          {heading && (
+                            <span className="kb-hit-heading" style={{ color: token.colorTextTertiary }}>
+                              {heading}
+                            </span>
+                          )}
+                        </div>
+                        <div className="kb-hit-body" style={{ color: token.colorTextSecondary }}>
+                          {hit.content}
+                        </div>
                       </div>
-                    </List.Item>
-                  );
-                }}
-              />
-            </Card>
-          </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </div>

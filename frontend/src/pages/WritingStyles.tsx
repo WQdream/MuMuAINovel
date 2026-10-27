@@ -1,19 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
+import type { CSSProperties } from 'react';
 import {
   Button,
+  Drawer,
   Modal,
   Form,
   Input,
   message,
-  Card,
-  Space,
-  Tag,
   Popconfirm,
   Empty,
-  Typography,
-  Row,
-  Col,
   theme,
+  Tooltip,
 } from 'antd';
 import {
   PlusOutlined,
@@ -21,13 +18,16 @@ import {
   DeleteOutlined,
   StarOutlined,
   StarFilled,
+  HighlightOutlined,
+  CloseOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { writingStyleApi } from '../services/api';
 import type { WritingStyle, WritingStyleCreate, WritingStyleUpdate } from '../types';
+import { useThemeMode } from '../theme/useThemeMode';
+import './WritingStyles.css';
 
 const { TextArea } = Input;
-const { Text, Paragraph } = Typography;
 
 export default function WritingStyles() {
   const { currentProject } = useStore();
@@ -36,22 +36,25 @@ export default function WritingStyles() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingStyle, setEditingStyle] = useState<WritingStyle | null>(null);
+  const [detailStyle, setDetailStyle] = useState<WritingStyle | null>(null);
   const [createForm] = Form.useForm();
   const [editForm] = Form.useForm();
 
   const { token } = theme.useToken();
+  const { resolvedMode } = useThemeMode();
 
   const isMobile = window.innerWidth <= 768;
-  
-  // 卡片网格配置
-  const gridConfig = {
-    gutter: isMobile ? 8 : 16, // 卡片之间的间距
-    xs: 24,
-    sm: 24,
-    md: 12,
-    lg: 8,
-    xl: 6,
-  };
+  // 深色模式下主题色接近纯黑，默认标识需要提亮才能看清。
+  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const themeVars = {
+    '--ws-text': token.colorText,
+    '--ws-secondary': token.colorTextSecondary,
+    '--ws-tertiary': token.colorTextTertiary,
+    '--ws-border': token.colorBorderSecondary,
+    '--ws-fill': token.colorFillQuaternary,
+    '--ws-accent': accentColor,
+    '--ws-card-bg': token.colorBgContainer,
+  } as CSSProperties;
 
   // 加载风格列表 - 如果有项目则加载项目风格（包含默认标记），否则加载用户风格
   useEffect(() => {
@@ -105,6 +108,7 @@ export default function WritingStyles() {
   };
 
   const handleEdit = (style: WritingStyle) => {
+    setDetailStyle(null);
     setEditingStyle(style);
     editForm.setFieldsValue({
       name: style.name,
@@ -159,163 +163,212 @@ export default function WritingStyles() {
     setIsCreateModalOpen(true);
   };
 
-  const getStyleTypeColor = (styleType: string) => {
-    return styleType === 'preset' ? 'blue' : 'purple';
-  };
-
   const getStyleTypeLabel = (styleType: string) => {
     return styleType === 'preset' ? '预设' : '自定义';
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 10,
-        backgroundColor: token.colorBgContainer,
-        padding: isMobile ? '12px 0' : '16px 0',
-        marginBottom: isMobile ? 12 : 16,
-        borderBottom: `1px solid ${token.colorBorderSecondary}`,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-      }}>
-        <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24 }}>
-          <EditOutlined style={{ marginRight: 8 }} />
-          写作风格管理
-        </h2>
+    <div
+      className="writing-styles-page"
+      style={themeVars}
+    >
+      <div className="ws-header">
+        <div className="ws-header-main">
+          <HighlightOutlined
+            style={{ fontSize: 20, color: token.colorTextSecondary, marginTop: 2 }}
+          />
+          <div style={{ minWidth: 0 }}>
+            <h2 className="ws-title">写作风格</h2>
+            <p className="ws-subtitle">
+              {styles.length > 0
+                ? `共 ${styles.length} 个风格 · 设为默认后，AI 生成新章节时优先使用`
+                : '为本作挑选叙事语气，或创建专属风格。'}
+            </p>
+          </div>
+        </div>
         <Button
           type="primary"
           icon={<PlusOutlined />}
           onClick={showCreateModal}
         >
-          创建自定义风格
+          创建风格
         </Button>
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div className="ws-scroll">
         {styles.length === 0 ? (
-          <Empty description="暂无风格数据" />
+          <div className="ws-empty">
+            <Empty description="还没有写作风格">
+              <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>
+                创建风格
+              </Button>
+            </Empty>
+          </div>
         ) : (
-          <Row
-            gutter={[0, gridConfig.gutter]}
-            style={{ marginLeft: 0, marginRight: 0 }}
-          >
+          <div className="ws-grid">
             {styles.map((style) => (
-              <Col
-                xs={gridConfig.xs}
-                sm={gridConfig.sm}
-                md={gridConfig.md}
-                lg={gridConfig.lg}
-                xl={gridConfig.xl}
+              <article
                 key={style.id}
-                style={{
-                  paddingLeft: 0,
-                  paddingRight: gridConfig.gutter / 2,
-                  marginBottom: gridConfig.gutter
+                className={`ws-card${style.is_default ? ' ws-card--default' : ''}`}
+                role="button"
+                tabIndex={0}
+                aria-label={`查看 ${style.name} 详情`}
+                onClick={() => setDetailStyle(style)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setDetailStyle(style);
+                  }
                 }}
               >
-                <Card
-                  hoverable
-                  style={{
-                    height: '100%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    borderRadius: 12,
-                    border: style.is_default ? `2px solid ${token.colorPrimary}` : `1px solid ${token.colorBorderSecondary}`,
-                  }}
-                  bodyStyle={{
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    padding: '16px',
-                  }}
-                  actions={[
-                    <span
-                      key="default"
-                      onClick={() => !style.is_default && handleSetDefault(style.id)}
-                      style={{ cursor: style.is_default ? 'default' : 'pointer' }}
-                    >
-                      {style.is_default ? (
-                        <StarFilled style={{ color: token.colorWarning, fontSize: 18 }} />
-                      ) : (
-                        <StarOutlined style={{ fontSize: 18 }} />
-                      )}
-                    </span>,
-                    <EditOutlined
-                      key="edit"
-                      onClick={() => style.user_id !== null && handleEdit(style)}
-                      style={{
-                        fontSize: 18,
-                        cursor: style.user_id === null ? 'not-allowed' : 'pointer',
-                        color: style.user_id === null ? token.colorTextQuaternary : undefined
-                      }}
-                    />,
+                <div className="ws-card-head">
+                  <div className="ws-card-title">
+                    <span className="ws-card-name" title={style.name}>{style.name}</span>
+                    {style.is_default && (
+                      <span className="ws-card-default">
+                        <StarFilled style={{ fontSize: 11 }} />
+                        默认
+                      </span>
+                    )}
+                  </div>
+                  <span className="ws-card-kind">{getStyleTypeLabel(style.style_type)}</span>
+                </div>
+
+                <p className={`ws-card-desc${style.description ? '' : ' ws-card-desc--empty'}`}>
+                  {style.description || '暂无简介'}
+                </p>
+
+                <p className="ws-card-prompt" title={style.prompt_content}>
+                  {style.prompt_content}
+                </p>
+
+                <div className="ws-card-foot" onClick={(event) => event.stopPropagation()}>
+                  <Button
+                    type="text"
+                    size="small"
+                    className="ws-default-btn"
+                    icon={style.is_default
+                      ? <StarFilled style={{ color: accentColor, fontSize: 12 }} />
+                      : <StarOutlined style={{ fontSize: 12 }} />}
+                    disabled={style.is_default}
+                    onClick={() => handleSetDefault(style.id)}
+                  >
+                    {style.is_default ? '默认风格' : '设为默认'}
+                  </Button>
+                  <div className="ws-card-actions">
+                    <Tooltip title={style.user_id === null ? '预设风格不可编辑' : '编辑'}>
+                      <Button
+                        type="text"
+                        size="small"
+                        aria-label="编辑风格"
+                        icon={<EditOutlined />}
+                        disabled={style.user_id === null}
+                        onClick={() => handleEdit(style)}
+                      />
+                    </Tooltip>
                     <Popconfirm
-                      key="delete"
-                      title="确定删除这个风格吗？"
-                      description={style.is_default ? '这是默认风格，删除后需要设置新的默认风格' : undefined}
+                      title="删除这个风格？"
+                      description={style.is_default ? '删除后需要重新设置默认风格' : undefined}
                       onConfirm={() => handleDelete(style.id)}
-                      okText="确定"
+                      okText="删除"
                       cancelText="取消"
                       disabled={style.user_id === null}
                     >
-                      <DeleteOutlined
-                        style={{
-                          fontSize: 18,
-                          color: style.user_id === null ? token.colorTextQuaternary : undefined,
-                          cursor: style.user_id === null ? 'not-allowed' : 'pointer'
-                        }}
-                      />
-                    </Popconfirm>,
-                  ]}
-                >
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                    <Space style={{ marginBottom: 12 }} wrap>
-                      <Text strong style={{ fontSize: 16 }}>{style.name}</Text>
-                      <Tag color={getStyleTypeColor(style.style_type)}>
-                        {getStyleTypeLabel(style.style_type)}
-                      </Tag>
-                      {style.is_default && <Tag color="gold">默认</Tag>}
-                    </Space>
-                    
-                    {style.description && (
-                      <Paragraph
-                        type="secondary"
-                        style={{ fontSize: 13, marginBottom: 12 }}
-                        ellipsis={{ rows: 2, tooltip: style.description }}
-                      >
-                        {style.description}
-                      </Paragraph>
-                    )}
-                    
-                    <Paragraph
-                      type="secondary"
-                      style={{
-                        fontSize: 12,
-                        marginBottom: 0,
-                        backgroundColor: token.colorFillAlter,
-                        padding: 8,
-                        borderRadius: 4,
-                        flex: 1,
-                        minHeight: 60,
-                      }}
-                      ellipsis={{ rows: 3, tooltip: style.prompt_content }}
-                    >
-                      {style.prompt_content}
-                    </Paragraph>
+                      <Tooltip title={style.user_id === null ? '预设风格不可删除' : '删除'}>
+                        <Button
+                          type="text"
+                          size="small"
+                          aria-label="删除风格"
+                          icon={<DeleteOutlined />}
+                          disabled={style.user_id === null}
+                        />
+                      </Tooltip>
+                    </Popconfirm>
                   </div>
-                </Card>
-              </Col>
+                </div>
+              </article>
             ))}
-          </Row>
+          </div>
         )}
       </div>
 
+      {/* 风格详情抽屉 */}
+      <Drawer
+        open={Boolean(detailStyle)}
+        onClose={() => setDetailStyle(null)}
+        closable={false}
+        width={isMobile ? '100%' : 520}
+        styles={{ body: { padding: 0 } }}
+      >
+        {detailStyle && (
+          <div className="ws-drawer" style={themeVars}>
+            <div className="ws-drawer-head">
+              <div className="ws-drawer-head-main">
+                <div className="ws-drawer-title-row">
+                  <span className="ws-drawer-title">{detailStyle.name}</span>
+                  {detailStyle.is_default && (
+                    <span className="ws-card-default">
+                      <StarFilled style={{ fontSize: 11 }} />
+                      默认
+                    </span>
+                  )}
+                  <span className="ws-card-kind">{getStyleTypeLabel(detailStyle.style_type)}</span>
+                </div>
+                <p className="ws-drawer-desc">
+                  {detailStyle.description || '暂无简介'}
+                </p>
+              </div>
+              <Button
+                type="text"
+                size="small"
+                icon={<CloseOutlined />}
+                aria-label="关闭详情"
+                onClick={() => setDetailStyle(null)}
+                style={{ flexShrink: 0, color: token.colorTextTertiary }}
+              />
+            </div>
+
+            <div className="ws-drawer-body">
+              <section>
+                <div className="ws-drawer-label">提示词内容</div>
+                <div className="ws-drawer-prompt">{detailStyle.prompt_content}</div>
+              </section>
+            </div>
+
+            <div className="ws-drawer-foot">
+              {!detailStyle.is_default && (
+                <Button
+                  icon={<StarOutlined />}
+                  onClick={() => {
+                    handleSetDefault(detailStyle.id);
+                    setDetailStyle(null);
+                  }}
+                >
+                  设为默认
+                </Button>
+              )}
+              {detailStyle.user_id !== null && (
+                <Button
+                  type="primary"
+                  icon={<EditOutlined />}
+                  onClick={() => handleEdit(detailStyle)}
+                >
+                  编辑
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Drawer>
+
       {/* 创建自定义风格 Modal */}
       <Modal
-        title="创建自定义风格"
+        title={(
+          <div className="ws-modal-head">
+            <span className="ws-modal-title">创建写作风格</span>
+            <span className="ws-modal-subtitle">描述语气与写法，AI 将按此风格生成正文。</span>
+          </div>
+        )}
         open={isCreateModalOpen}
         onCancel={() => {
           setIsCreateModalOpen(false);
@@ -323,14 +376,17 @@ export default function WritingStyles() {
         }}
         footer={null}
         centered
-        width={isMobile ? 'calc(100vw - 32px)' : 600}
-        style={isMobile ? { maxWidth: 'calc(100vw - 32px)', margin: '0 16px' } : undefined}
+        width={isMobile ? 'calc(100vw - 24px)' : 640}
+        className="ws-modal"
+        style={isMobile
+          ? { ...themeVars, maxWidth: 'calc(100vw - 24px)', margin: '0 12px' }
+          : themeVars}
       >
         <Form
           form={createForm}
           layout="vertical"
           onFinish={handleCreate}
-          style={{ marginTop: 16 }}
+          className="ws-form"
         >
           <Form.Item
             label="风格名称"
@@ -350,30 +406,34 @@ export default function WritingStyles() {
             rules={[{ required: true, message: '请输入提示词内容' }]}
           >
             <TextArea
-              rows={6}
+              className="ws-prompt-input"
+              rows={isMobile ? 10 : 14}
               placeholder="输入风格的提示词，用于引导AI生成符合该风格的内容..."
             />
           </Form.Item>
-          
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setIsCreateModalOpen(false);
-                createForm.resetFields();
-              }}>
-                取消
-              </Button>
-              <Button type="primary" htmlType="submit" loading={loading}>
-                创建
-              </Button>
-            </Space>
-          </Form.Item>
+
+          <div className="ws-modal-foot">
+            <Button onClick={() => {
+              setIsCreateModalOpen(false);
+              createForm.resetFields();
+            }}>
+              取消
+            </Button>
+            <Button type="primary" htmlType="submit" loading={loading}>
+              创建
+            </Button>
+          </div>
         </Form>
       </Modal>
 
       {/* 编辑风格 Modal */}
       <Modal
-        title="编辑写作风格"
+        title={(
+          <div className="ws-modal-head">
+            <span className="ws-modal-title">编辑写作风格</span>
+            <span className="ws-modal-subtitle">调整后仅影响之后生成的章节内容。</span>
+          </div>
+        )}
         open={isEditModalOpen}
         onCancel={() => {
           setIsEditModalOpen(false);
@@ -382,10 +442,13 @@ export default function WritingStyles() {
         }}
         footer={null}
         centered
-        width={isMobile ? 'calc(100vw - 32px)' : 600}
-        style={isMobile ? { maxWidth: 'calc(100vw - 32px)', margin: '0 16px' } : undefined}
+        width={isMobile ? 'calc(100vw - 24px)' : 640}
+        className="ws-modal"
+        style={isMobile
+          ? { ...themeVars, maxWidth: 'calc(100vw - 24px)', margin: '0 12px' }
+          : themeVars}
       >
-        <Form form={editForm} layout="vertical" onFinish={handleUpdate} style={{ marginTop: 16 }}>
+        <Form form={editForm} layout="vertical" onFinish={handleUpdate} className="ws-form">
           <Form.Item
             label="风格名称"
             name="name"
@@ -403,26 +466,25 @@ export default function WritingStyles() {
             name="prompt_content"
             rules={[{ required: true, message: '请输入提示词内容' }]}
           >
-            <TextArea 
-              rows={6} 
+            <TextArea
+              className="ws-prompt-input"
+              rows={isMobile ? 10 : 14}
               placeholder="输入风格的提示词..."
             />
           </Form.Item>
-          
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setIsEditModalOpen(false);
-                editForm.resetFields();
-                setEditingStyle(null);
-              }}>
-                取消
-              </Button>
-              <Button type="primary" htmlType="submit" loading={loading}>
-                保存
-              </Button>
-            </Space>
-          </Form.Item>
+
+          <div className="ws-modal-foot">
+            <Button onClick={() => {
+              setIsEditModalOpen(false);
+              editForm.resetFields();
+              setEditingStyle(null);
+            }}>
+              取消
+            </Button>
+            <Button type="primary" htmlType="submit" loading={loading}>
+              保存
+            </Button>
+          </div>
         </Form>
       </Modal>
     </div>

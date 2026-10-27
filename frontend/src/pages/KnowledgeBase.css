@@ -1,4 +1,4 @@
-/* 知识库页面使用独立的可伸缩布局，避免页面底部出现横向滚动条。 */
+/* 知识库：与项目其他管理页一致的轻量面板风格。 */
 .knowledge-base-page {
   display: flex;
   flex-direction: column;
@@ -8,150 +8,445 @@
   overflow: hidden;
 }
 
-.knowledge-base-header {
-  padding: 16px 0;
-  margin-bottom: 16px;
+.kb-header {
   flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 2px 16px;
+}
+
+.kb-header-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
   min-width: 0;
+}
+
+.kb-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.kb-subtitle {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--kb-text-secondary);
 }
 
 .knowledge-base-main {
   display: flex;
   flex: 1;
   flex-direction: column;
+  gap: 14px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding-bottom: 4px;
+  padding-bottom: 2px;
 }
 
-.knowledge-base-summary {
+/* 指标带 */
+.kb-metrics {
   flex-shrink: 0;
-  margin-bottom: 16px;
+  display: flex;
+  align-items: stretch;
+  padding: 2px 0 12px;
 }
 
-.knowledge-base-summary .ant-card-body {
-  padding: 14px 16px;
+.kb-metric {
+  flex: 0 1 180px;
+  min-width: 0;
+  padding: 2px 18px;
 }
 
+.kb-metric:first-child {
+  padding-left: 2px;
+}
+
+.kb-metric-label {
+  display: block;
+  font-size: 11.5px;
+  color: var(--kb-text-secondary);
+}
+
+.kb-metric-value {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  margin-top: 3px;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-metric-value--text {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.kb-metric-suffix {
+  margin-left: 3px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--kb-text-secondary);
+}
+
+/* 双栏面板 */
 .knowledge-base-panels {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 16px;
+  display: flex;
   flex: 1;
+  gap: 14px;
   min-width: 0;
   min-height: 0;
 }
 
-.knowledge-base-panel {
+.kb-panel {
   display: flex;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.knowledge-base-panel-card {
-  display: flex;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
-  width: 100%;
   min-width: 0;
   min-height: 0;
+  border-radius: 12px;
   overflow: hidden;
 }
 
-.knowledge-base-panel-card > .ant-card-head {
+.kb-panel-head {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
 }
 
-.knowledge-base-panel-card > .ant-card-body {
+.kb-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kb-text-strong);
+}
+
+.kb-panel-count {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-panel-body {
   display: flex;
   flex: 1;
   flex-direction: column;
+  gap: 12px;
   min-width: 0;
   min-height: 0;
+  padding: 14px;
   overflow: hidden;
 }
 
-.knowledge-base-document-list,
-.knowledge-base-search-list {
+/* 上传区 */
+.kb-dropzone.ant-upload-wrapper .ant-upload-drag {
+  flex-shrink: 0;
+  border-radius: 10px;
+  border-style: dashed;
+  background: transparent;
+}
+
+.kb-dropzone.ant-upload-wrapper .ant-upload-drag .ant-upload {
+  padding: 26px 16px;
+}
+
+.kb-dropzone.ant-upload-wrapper .ant-upload-drag .ant-upload-drag-icon {
+  margin-bottom: 8px;
+}
+
+.kb-dropzone.ant-upload-wrapper .ant-upload-drag .ant-upload-drag-icon .anticon {
+  font-size: 34px;
+}
+
+.kb-dropzone.ant-upload-wrapper .ant-upload-drag .ant-upload-text {
+  font-size: 13px;
+  color: var(--kb-text-strong);
+}
+
+.kb-dropzone.ant-upload-wrapper .ant-upload-drag .ant-upload-hint {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--kb-text-tertiary);
+}
+
+.kb-dropzone--compact.ant-upload-wrapper .ant-upload-drag .ant-upload {
+  padding: 12px;
+}
+
+.kb-dropzone-compact-text {
+  margin: 0 !important;
+}
+
+/* 文档列表 */
+.kb-doc-list {
   flex: 1;
-  min-width: 0;
   min-height: 0;
-  margin-top: 0;
-  padding-right: 4px;
+  margin: 0 -4px;
+  padding: 0 4px;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-.knowledge-base-document-list .ant-list-item,
-.knowledge-base-search-list .ant-list-item {
+.kb-doc {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 2px;
+}
+
+.kb-doc:last-child {
+  border-bottom: none;
+}
+
+.kb-doc-main {
+  flex: 1;
   min-width: 0;
 }
 
-.knowledge-base-document-list .ant-list-item-meta,
-.knowledge-base-document-list .ant-list-item-meta-content {
+.kb-doc-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
-.knowledge-base-document-list .ant-list-item-meta-title,
-.knowledge-base-document-list .ant-list-item-meta-description,
-.knowledge-base-search-list .ant-typography {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.knowledge-base-document-list .ant-list-item-action {
-  flex-shrink: 0;
-  margin-inline-start: 12px;
-}
-
-.knowledge-base-search-list .ant-list-item > div {
-  max-width: 100%;
+.kb-doc-name {
+  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--kb-text);
+}
+
+.kb-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--kb-text-secondary);
+}
+
+.kb-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.kb-doc-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-doc-file {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-doc-error {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.kb-doc-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  margin-top: -2px;
+}
+
+.kb-doc-action {
+  font-size: 12px;
+  color: var(--kb-text-secondary);
+}
+
+/* 检索参数 */
+.kb-settings {
+  flex-shrink: 0;
+  padding: 11px 12px;
+  border-radius: 10px;
+}
+
+.kb-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 10px 12px;
+}
+
+.kb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.kb-field-label {
+  font-size: 11px;
+  color: var(--kb-text-secondary);
+}
+
+.kb-settings-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.kb-settings-hint {
+  font-size: 11px;
+}
+
+/* 检索结果 */
+.kb-hit-list {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.kb-hit-list .ant-empty {
+  margin: 0;
+}
+
+.kb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 140px;
+}
+
+.kb-empty .ant-empty-description {
+  font-size: 12px;
+  color: var(--kb-text-tertiary);
+}
+
+.kb-hit {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.kb-hit:last-child {
+  margin-bottom: 0;
+}
+
+.kb-hit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.kb-score {
+  padding: 0 6px;
+  border-radius: 5px;
+  font-weight: 600;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.kb-hit-source {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--kb-text-strong);
+}
+
+.kb-hit-heading {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-hit-body {
+  font-size: 12.5px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 1199px) {
   .knowledge-base-main {
-    overflow-x: hidden;
     overflow-y: auto;
-    padding-bottom: 16px;
   }
 
   .knowledge-base-panels {
     flex: none;
-    grid-template-columns: minmax(0, 1fr);
+    flex-direction: column;
   }
 
-  .knowledge-base-panel {
-    min-height: 420px;
+  .kb-panel {
+    flex: none;
+    min-height: 380px;
   }
 }
 
 @media (max-width: 767px) {
-  .knowledge-base-header {
-    padding: 12px 0;
+  .kb-header {
+    padding-bottom: 12px;
   }
 
-  .knowledge-base-header .ant-typography-secondary {
-    display: block;
-    margin-top: 4px;
-    line-height: 1.5;
+  .kb-metric {
+    flex: 1 1 0;
+    padding: 2px 10px;
   }
 
-  .knowledge-base-summary .ant-card-body {
+  .kb-metric-value {
+    font-size: 18px;
+  }
+
+  .kb-panel-body {
     padding: 12px;
   }
 
-  .knowledge-base-panel-card > .ant-card-head {
-    padding-inline: 12px;
+  .kb-panel {
+    min-height: 340px;
   }
+}
 
-  .knowledge-base-panel-card > .ant-card-body {
-    padding: 12px;
-  }
+/* 深色模式下主题色接近纯黑，检索按钮改用高对比配色。 */
+.kb-search .ant-input-search-button {
+  background: var(--kb-primary-btn-bg);
+  border-color: var(--kb-primary-btn-bg);
+  color: var(--kb-primary-btn-color);
+}
 
-  .knowledge-base-panel {
-    min-height: 380px;
-  }
+.kb-search .ant-input-search-button:hover {
+  background: var(--kb-primary-btn-bg) !important;
+  border-color: var(--kb-primary-btn-bg) !important;
+  color: var(--kb-primary-btn-color) !important;
+  opacity: 0.88;
 }

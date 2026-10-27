@@ -1,16 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  Card, Table, Button, Tag, Space, Modal, Form, Input, Select,
-  InputNumber, Switch, message, Tooltip, Popconfirm, Statistic,
-  Row, Col, Empty, Divider, Badge, Alert, Pagination, Dropdown, theme
+  Table, Button, Tag, Space, Modal, Form, Input, Select,
+  InputNumber, Switch, message, Tooltip, Popconfirm,
+  Row, Col, Empty, Badge, Alert, Pagination, Dropdown, theme
 } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   PlusOutlined, SyncOutlined, EditOutlined, DeleteOutlined,
   CheckCircleOutlined, CloseCircleOutlined, ExclamationCircleOutlined,
   BulbOutlined, EyeOutlined, FlagOutlined, WarningOutlined,
-  ClockCircleOutlined, MoreOutlined, ReloadOutlined, InfoCircleOutlined
+  ClockCircleOutlined, MoreOutlined, ReloadOutlined, InfoCircleOutlined,
+  CloseOutlined, StarFilled,
 } from '@ant-design/icons';
 import { foreshadowApi, chapterApi, characterApi } from '../services/api';
 import type {
@@ -70,10 +71,13 @@ export default function Foreshadows() {
   const [plantForm] = Form.useForm();
   const [resolveForm] = Form.useForm();
   const [syncing, setSyncing] = useState(false);
+  const [syncHintVisible, setSyncHintVisible] = useState(true);
   
   // 表格容器引用，用于计算滚动高度
   const tableContainerRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
   const [tableScrollY, setTableScrollY] = useState<number>(400);
+  const [containerWidth, setContainerWidth] = useState<number>(window.innerWidth);
   const { token } = theme.useToken();
 
   // 加载伏笔列表
@@ -158,6 +162,18 @@ export default function Foreshadows() {
     eventBus.on(EventNames.BACKGROUND_TASK_SETTLED, handleTaskSettled);
     return () => eventBus.off(EventNames.BACKGROUND_TASK_SETTLED, handleTaskSettled);
   }, [loadForeshadows, loadStats, projectId]);
+
+  useEffect(() => {
+    const element = pageRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) setContainerWidth(width);
+    });
+    observer.observe(element);
+    setContainerWidth(element.clientWidth);
+    return () => observer.disconnect();
+  }, []);
 
   // 计算表格滚动高度
   useEffect(() => {
@@ -369,14 +385,30 @@ export default function Foreshadows() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: containerWidth >= 860 ? 100 : 72,
       sorter: (a: Foreshadow, b: Foreshadow) => statusOrder[a.status] - statusOrder[b.status],
       render: (status: ForeshadowStatus) => {
         const config = STATUS_CONFIG[status];
+        const dotColor =
+          status === 'planted'
+            ? token.colorSuccess
+            : status === 'resolved'
+              ? token.colorInfo
+              : status === 'partially_resolved'
+                ? token.colorWarning
+                : token.colorTextQuaternary;
         return (
-          <Tag color={config.color} icon={config.icon}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: 12.5,
+            color: status === 'abandoned' ? token.colorTextQuaternary : token.colorTextSecondary,
+            whiteSpace: 'nowrap',
+          }}>
+            <span style={{ width: 5, height: 5, borderRadius: 3, background: dotColor }} />
             {config.label}
-          </Tag>
+          </span>
         );
       },
     },
@@ -387,15 +419,43 @@ export default function Foreshadows() {
       ellipsis: true,
       sorter: (a: Foreshadow, b: Foreshadow) => a.title.localeCompare(b.title, 'zh-CN'),
       render: (title: string, record: Foreshadow) => (
-        <Space direction="vertical" size={0}>
-          <Space>
-            <a onClick={() => openDetailModal(record)}>{title}</a>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <span
+              onClick={() => openDetailModal(record)}
+              title={title}
+              style={{
+                minWidth: 0,
+                fontSize: 13.5,
+                color: token.colorText,
+                cursor: 'pointer',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {title}
+            </span>
             {record.is_long_term && (
-              <Tag color="purple" style={{ marginLeft: 4 }}>长线</Tag>
+              <Tag
+                style={{
+                  flexShrink: 0,
+                  margin: 0,
+                  padding: '0 6px',
+                  fontSize: 10.5,
+                  lineHeight: '17px',
+                  borderRadius: 4,
+                  color: token.colorTextSecondary,
+                  background: token.colorFillTertiary,
+                  border: 'none',
+                }}
+              >
+                长线
+              </Tag>
             )}
-          </Space>
+          </div>
           {getUrgencyBadge(record)}
-        </Space>
+        </div>
       ),
     },
     {
@@ -409,16 +469,32 @@ export default function Foreshadows() {
         return catA.localeCompare(catB, 'zh-CN');
       },
       render: (category?: ForeshadowCategory) => {
-        if (!category) return '-';
+        if (!category) return <span style={{ color: token.colorTextQuaternary }}>-</span>;
         const config = CATEGORY_CONFIG[category];
-        return config ? <Tag color={config.color}>{config.label}</Tag> : category;
+        if (!config) return category;
+        return (
+          <Tag
+            style={{
+              margin: 0,
+              padding: '0 7px',
+              fontSize: 11,
+              lineHeight: '18px',
+              borderRadius: 5,
+              border: 'none',
+              background: token.colorFillTertiary,
+              color: token.colorTextSecondary,
+            }}
+          >
+            {config.label}
+          </Tag>
+        );
       },
     },
     {
-      title: '埋入章节',
+      title: '埋入',
       dataIndex: 'plant_chapter_number',
       key: 'plant_chapter_number',
-      width: 120,
+      width: containerWidth >= 860 ? 110 : 64,
       sorter: (a: Foreshadow, b: Foreshadow) => {
         const valA = a.plant_chapter_number ?? 999999;
         const valB = b.plant_chapter_number ?? 999999;
@@ -431,7 +507,7 @@ export default function Foreshadows() {
       title: '计划回收',
       dataIndex: 'target_resolve_chapter_number',
       key: 'target_resolve_chapter_number',
-      width: 120,
+      width: 104,
       sorter: (a: Foreshadow, b: Foreshadow) => {
         const valA = a.target_resolve_chapter_number ?? 999999;
         const valB = b.target_resolve_chapter_number ?? 999999;
@@ -443,11 +519,31 @@ export default function Foreshadows() {
       title: '重要性',
       dataIndex: 'importance',
       key: 'importance',
-      width: 100,
+      width: containerWidth >= 860 ? 108 : 84,
       sorter: (a: Foreshadow, b: Foreshadow) => a.importance - b.importance,
       render: (importance: number) => {
         const stars = Math.round(importance * 5);
-        return '★'.repeat(stars) + '☆'.repeat(5 - stars);
+        return (
+          <span
+            title={`${stars} / 5`}
+            style={{
+              display: 'inline-flex',
+              gap: 1,
+              whiteSpace: 'nowrap',
+              fontSize: 13,
+              lineHeight: 1,
+              letterSpacing: 0,
+              color: token.colorWarning,
+            }}
+          >
+            {Array.from({ length: 5 }).map((_, index) => (
+              <StarFilled
+                key={index}
+                style={{ color: index < stars ? token.colorWarning : token.colorBorder, fontSize: 12 }}
+              />
+            ))}
+          </span>
+        );
       },
     },
     {
@@ -461,17 +557,21 @@ export default function Foreshadows() {
         return srcA.localeCompare(srcB);
       },
       render: (source?: string) => (
-        <Tag color={source === 'analysis' ? 'blue' : 'green'}>
+        <span style={{
+          fontSize: 12.5,
+          color: source === 'analysis' ? token.colorTextSecondary : token.colorTextTertiary,
+          whiteSpace: 'nowrap',
+        }}>
           {source === 'analysis' ? '分析' : '手动'}
-        </Tag>
+        </span>
       ),
     },
     {
       title: '操作',
       key: 'actions',
-      width: 200,
+      width: containerWidth >= 860 ? 168 : 140,
       render: (_: unknown, record: Foreshadow) => (
-        <Space size="small">
+        <Space size={2}>
           <Tooltip title="查看详情">
             <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => openDetailModal(record)} />
           </Tooltip>
@@ -511,47 +611,97 @@ export default function Foreshadows() {
     },
   ];
 
+  const statColumns = containerWidth >= 700 ? 6 : 3;
+
+  const modalFooterStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 8,
+  };
+  const footerButtonStyle: React.CSSProperties = { height: 32, paddingInline: 16, fontSize: 13 };
+  const sectionLabelStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    margin: '18px 0 10px',
+    fontSize: 11.5,
+    fontWeight: 600,
+    color: token.colorTextTertiary,
+    letterSpacing: '0.03em',
+  };
+  const sectionLineStyle: React.CSSProperties = {
+    flex: 1,
+    height: 1,
+    background: token.colorBorderSecondary,
+  };
+  const showCategoryColumn = containerWidth >= 720;
+  const showSourceColumn = containerWidth >= 860;
+  const showPlanColumn = containerWidth >= 620;
+  const visibleColumns = columns.filter((column) => {
+    if (column.key === 'category') return showCategoryColumn;
+    if (column.key === 'source_type') return showSourceColumn;
+    if (column.key === 'target_resolve_chapter_number') return showPlanColumn;
+    return true;
+  });
+
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      {/* 统计卡片 */}
+    <div
+      ref={pageRef}
+      style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}
+    >
+      {/* 统计概览 */}
       {stats && (
-        <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={3}>
-            <Card size="small">
-              <Statistic title="总计" value={stats.total} />
-            </Card>
-          </Col>
-          <Col span={3}>
-            <Card size="small">
-              <Statistic title="待埋入" value={stats.pending} valueStyle={{ color: token.colorTextSecondary }} />
-            </Card>
-          </Col>
-          <Col span={3}>
-            <Card size="small">
-              <Statistic title="已埋入" value={stats.planted} valueStyle={{ color: token.colorSuccess }} />
-            </Card>
-          </Col>
-          <Col span={3}>
-            <Card size="small">
-              <Statistic title="已回收" value={stats.resolved} valueStyle={{ color: token.colorPrimary }} />
-            </Card>
-          </Col>
-          <Col span={3}>
-            <Card size="small">
-              <Statistic title="长线伏笔" value={stats.long_term_count} valueStyle={{ color: token.colorInfo }} />
-            </Card>
-          </Col>
-          <Col span={3}>
-            <Card size="small">
-              <Statistic 
-                title="超期未回收" 
-                value={stats.overdue_count} 
-                valueStyle={{ color: stats.overdue_count > 0 ? token.colorError : token.colorTextSecondary }}
-                prefix={stats.overdue_count > 0 ? <WarningOutlined /> : null}
-              />
-            </Card>
-          </Col>
-        </Row>
+        <div style={{
+          flexShrink: 0,
+          display: 'grid',
+          gridTemplateColumns: `repeat(${statColumns}, minmax(0, 1fr))`,
+          marginBottom: 14,
+          padding: '4px 2px',
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        }}>
+          {[
+            { label: '总计', value: stats.total, color: token.colorText },
+            { label: '待埋入', value: stats.pending, color: token.colorTextSecondary },
+            { label: '已埋入', value: stats.planted, color: token.colorSuccess },
+            { label: '已回收', value: stats.resolved, color: token.colorPrimary },
+            { label: '长线伏笔', value: stats.long_term_count, color: token.colorInfo },
+            {
+              label: '超期未回收',
+              value: stats.overdue_count,
+              color: stats.overdue_count > 0 ? token.colorError : token.colorTextSecondary,
+            },
+          ].map((item, index) => (
+            <div
+              key={item.label}
+              style={{
+                minWidth: 0,
+                padding: '2px 10px 10px',
+                borderLeft: index % statColumns === 0 ? 'none' : `1px solid ${token.colorBorderSecondary}`,
+              }}
+            >
+              <div style={{ fontSize: 11.5, color: token.colorTextTertiary, whiteSpace: 'nowrap' }}>
+                {item.label}
+              </div>
+              <div style={{
+                marginTop: 3,
+                fontSize: 21,
+                fontWeight: 600,
+                lineHeight: 1.25,
+                color: item.color,
+                fontVariantNumeric: 'tabular-nums',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+              }}>
+                {item.value}
+                {item.label === '超期未回收' && stats.overdue_count > 0 && (
+                  <WarningOutlined style={{ fontSize: 12 }} />
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* 超期提醒 */}
@@ -566,26 +716,46 @@ export default function Foreshadows() {
       )}
 
       {/* 自动同步提示 */}
-      <Alert
-        message={
-          <Space>
-            <InfoCircleOutlined />
-            <span>伏笔数据会在章节分析完成后自动同步，无需手动操作</span>
-          </Space>
-        }
-        type="info"
-        showIcon={false}
-        style={{ marginBottom: 16 }}
-        closable
-      />
+      {syncHintVisible && (
+        <div style={{
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          marginBottom: 12,
+          padding: '7px 10px',
+          borderRadius: 8,
+          background: token.colorFillQuaternary,
+          fontSize: 12,
+          color: token.colorTextTertiary,
+        }}>
+          <InfoCircleOutlined style={{ fontSize: 12 }} />
+          <span style={{ flex: 1, minWidth: 0 }}>伏笔会在章节分析完成后自动同步，无需手动操作</span>
+          <Button
+            type="text"
+            size="small"
+            icon={<CloseOutlined />}
+            onClick={() => setSyncHintVisible(false)}
+            style={{ width: 20, height: 20, minHeight: 20, padding: 0, fontSize: 10 }}
+            aria-label="关闭提示"
+          />
+        </div>
+      )}
 
       {/* 工具栏 */}
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Space>
+      <div style={{
+        marginBottom: 14,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+      }}>
+        <Space wrap size={8}>
           <Select
             placeholder="状态筛选"
             allowClear
-            style={{ width: 120 }}
+            style={{ width: 118 }}
             value={statusFilter}
             onChange={setStatusFilter}
           >
@@ -615,7 +785,7 @@ export default function Foreshadows() {
             <Option value="manual">手动</Option>
           </Select>
         </Space>
-        <Space>
+        <Space size={8} style={{ marginLeft: 'auto' }}>
           <Tooltip title="刷新列表">
             <Button
               icon={<ReloadOutlined spin={loading} />}
@@ -660,13 +830,20 @@ export default function Foreshadows() {
       >
         <Table
           dataSource={foreshadows}
-          columns={columns}
+          columns={visibleColumns}
           rowKey="id"
           loading={loading}
           pagination={false}
           scroll={{ y: tableScrollY }}
+          tableLayout={containerWidth >= 860 ? 'fixed' : 'auto'}
+          size="middle"
+          rowClassName="foreshadow-row"
           locale={{
-            emptyText: <Empty description="暂无伏笔，点击右上角添加" />,
+            emptyText: (
+              <div style={{ padding: '48px 0' }}>
+                <Empty description="暂无伏笔，点击右上角添加" />
+              </div>
+            ),
           }}
         />
       </div>
@@ -708,13 +885,23 @@ export default function Foreshadows() {
           form.resetFields();
         }}
         onOk={() => form.submit()}
-        width={800}
+        okText={currentForeshadow ? '保存修改' : '创建伏笔'}
+        width={720}
         destroyOnClose
+        styles={{
+          body: { paddingTop: 4, maxHeight: 'min(72vh, 680px)', overflowY: 'auto', overflowX: 'hidden' },
+          footer: {
+            padding: '12px 24px',
+            margin: 0,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+          },
+        }}
       >
         <Form
           form={form}
           layout="vertical"
           onFinish={handleSave}
+          requiredMark={false}
           initialValues={{
             importance: 0.5,
             strength: 5,
@@ -725,13 +912,18 @@ export default function Foreshadows() {
             include_in_context: true,
           }}
         >
+          <div style={{ ...sectionLabelStyle, marginTop: 6 }}>
+            基础信息
+            <span style={sectionLineStyle} />
+          </div>
+
           <Row gutter={16}>
-            <Col span={16}>
+            <Col xs={24} sm={16}>
               <Form.Item name="title" label="伏笔标题" rules={[{ required: true, message: '请输入标题' }]}>
-                <Input placeholder="简洁描述伏笔内容" maxLength={200} />
+                <Input placeholder="一句话概括这条伏笔" maxLength={200} />
               </Form.Item>
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <Form.Item name="category" label="分类">
                 <Select placeholder="选择分类" allowClear>
                   {Object.entries(CATEGORY_CONFIG).map(([key, config]) => (
@@ -741,29 +933,34 @@ export default function Foreshadows() {
               </Form.Item>
             </Col>
           </Row>
-          
+
           <Form.Item name="content" label="伏笔内容" rules={[{ required: true, message: '请输入内容' }]}>
-            <TextArea rows={3} placeholder="详细描述伏笔的内容和意图" />
+            <TextArea rows={3} placeholder="详细描述伏笔埋了什么、后续如何影响剧情" />
           </Form.Item>
-          
+
+          <div style={sectionLabelStyle}>
+            章节与人物
+            <span style={sectionLineStyle} />
+          </div>
+
           <Row gutter={16}>
-            <Col span={6}>
+            <Col xs={12} sm={6}>
               <Form.Item name="plant_chapter_number" label="计划埋入">
                 <InputNumber min={1} placeholder="章节号" style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col span={6}>
+            <Col xs={12} sm={6}>
               <Form.Item name="target_resolve_chapter_number" label="计划回收">
                 <InputNumber min={1} placeholder="章节号" style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="related_characters" label="关联角色">
                 <Select
                   mode="multiple"
                   placeholder="选择关联角色"
                   optionFilterProp="children"
-                  maxTagCount={3}
+                  maxTagCount={2}
                 >
                   {characters
                     .filter(char => !char.is_organization)
@@ -776,175 +973,428 @@ export default function Foreshadows() {
               </Form.Item>
             </Col>
           </Row>
-          
+
+          <div style={sectionLabelStyle}>
+            伏笔设计
+            <span style={sectionLineStyle} />
+          </div>
+
           <Row gutter={16}>
-            <Col span={6}>
-              <Form.Item name="importance" label="重要性 (0-1)">
+            <Col xs={12} sm={5}>
+              <Form.Item
+                name="importance"
+                label="重要性"
+                extra={<span style={{ fontSize: 11, color: token.colorTextQuaternary }}>0 - 1</span>}
+              >
                 <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col span={6}>
-              <Form.Item name="strength" label="强度 (1-10)">
+            <Col xs={12} sm={5}>
+              <Form.Item
+                name="strength"
+                label="强度"
+                extra={<span style={{ fontSize: 11, color: token.colorTextQuaternary }}>1 - 10</span>}
+              >
                 <InputNumber min={1} max={10} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col span={6}>
-              <Form.Item name="subtlety" label="隐藏度 (1-10)">
+            <Col xs={12} sm={5}>
+              <Form.Item
+                name="subtlety"
+                label="隐藏度"
+                extra={<span style={{ fontSize: 11, color: token.colorTextQuaternary }}>1 - 10</span>}
+              >
                 <InputNumber min={1} max={10} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col span={6}>
+            <Col xs={12} sm={9}>
               <Form.Item name="is_long_term" label="长线伏笔" valuePropName="checked">
                 <Switch checkedChildren="是" unCheckedChildren="否" />
               </Form.Item>
             </Col>
           </Row>
-          
+
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="hint_text" label="暗示文本">
-                <TextArea rows={2} placeholder="埋伏笔时使用的暗示性描写" />
+                <TextArea rows={2} placeholder="正文中用来暗示的描写" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="notes" label="备注">
-                <TextArea rows={2} placeholder="创作备注（仅作者可见）" />
+                <TextArea rows={2} placeholder="仅作者可见的创作备注" />
               </Form.Item>
             </Col>
           </Row>
-          
-          <Divider style={{ margin: '12px 0' }}>AI辅助设置</Divider>
-          
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="auto_remind" label="自动提醒" valuePropName="checked" style={{ marginBottom: 0 }}>
-                <Switch checkedChildren="开" unCheckedChildren="关" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="include_in_context" label="包含在生成上下文" valuePropName="checked" style={{ marginBottom: 0 }}>
-                <Switch checkedChildren="是" unCheckedChildren="否" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="remind_before_chapters" label="提前几章提醒" style={{ marginBottom: 0 }}>
-                <InputNumber min={1} max={20} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
+
+          <div style={sectionLabelStyle}>
+            AI 辅助
+            <span style={sectionLineStyle} />
+          </div>
+
+          <div style={{
+            padding: '12px 16px 2px',
+            borderRadius: 10,
+            background: token.colorFillQuaternary,
+          }}>
+            <Row gutter={16}>
+              <Col xs={12} sm={8}>
+                <Form.Item name="auto_remind" label="自动提醒" valuePropName="checked" style={{ marginBottom: 12 }}>
+                  <Switch checkedChildren="开" unCheckedChildren="关" />
+                </Form.Item>
+              </Col>
+              <Col xs={12} sm={8}>
+                <Form.Item name="include_in_context" label="写入生成上下文" valuePropName="checked" style={{ marginBottom: 12 }}>
+                  <Switch checkedChildren="是" unCheckedChildren="否" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item name="remind_before_chapters" label="提前几章提醒" style={{ marginBottom: 12 }}>
+                  <InputNumber min={1} max={20} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
         </Form>
       </Modal>
 
       {/* 详情模态框 */}
       <Modal
-        title="伏笔详情"
         open={detailModalVisible}
         centered
         onCancel={() => {
           setDetailModalVisible(false);
           setCurrentForeshadow(null);
         }}
-        footer={[
-          <Button key="close" onClick={() => setDetailModalVisible(false)}>
-            关闭
-          </Button>,
-          <Button key="edit" type="primary" onClick={() => {
-            setDetailModalVisible(false);
-            openEditModal(currentForeshadow!);
-          }}>
-            编辑
-          </Button>,
-        ]}
-        width={600}
-      >
-        {currentForeshadow && (
-          <div>
-            <Row gutter={[16, 16]}>
-              <Col span={24}>
-                <h3>{currentForeshadow.title}</h3>
-                <Space>
-                  <Tag color={STATUS_CONFIG[currentForeshadow.status].color}>
-                    {STATUS_CONFIG[currentForeshadow.status].label}
-                  </Tag>
-                  {currentForeshadow.is_long_term && <Tag color="purple">长线伏笔</Tag>}
-                  {currentForeshadow.category && CATEGORY_CONFIG[currentForeshadow.category] && (
-                    <Tag color={CATEGORY_CONFIG[currentForeshadow.category].color}>
-                      {CATEGORY_CONFIG[currentForeshadow.category].label}
-                    </Tag>
-                  )}
-                </Space>
-              </Col>
-              
-              <Col span={24}>
-                <strong>伏笔内容：</strong>
-                <p style={{ marginTop: 8, whiteSpace: 'pre-wrap' }}>{currentForeshadow.content}</p>
-              </Col>
-              
-              {currentForeshadow.hint_text && (
-                <Col span={24}>
-                  <strong>暗示文本：</strong>
-                  <p style={{ marginTop: 8, whiteSpace: 'pre-wrap', color: token.colorTextSecondary }}>
-                    {currentForeshadow.hint_text}
-                  </p>
-                </Col>
-              )}
-              
-              {currentForeshadow.resolution_text && (
-                <Col span={24}>
-                  <strong>揭示文本：</strong>
-                  <p style={{ marginTop: 8, whiteSpace: 'pre-wrap', color: token.colorTextSecondary }}>
-                    {currentForeshadow.resolution_text}
-                  </p>
-                </Col>
-              )}
-              
-              <Col span={12}>
-                <strong>埋入章节：</strong> {currentForeshadow.plant_chapter_number ? `第${currentForeshadow.plant_chapter_number}章` : '未设定'}
-              </Col>
-              <Col span={12}>
-                <strong>计划回收：</strong> {currentForeshadow.target_resolve_chapter_number ? `第${currentForeshadow.target_resolve_chapter_number}章` : '未设定'}
-              </Col>
-              
-              {currentForeshadow.actual_resolve_chapter_number && (
-                <Col span={24}>
-                  <strong>实际回收：</strong> 第{currentForeshadow.actual_resolve_chapter_number}章
-                </Col>
-              )}
-              
-              <Col span={8}>
-                <strong>重要性：</strong> {'★'.repeat(Math.round(currentForeshadow.importance * 5))}
-              </Col>
-              <Col span={8}>
-                <strong>强度：</strong> {currentForeshadow.strength}/10
-              </Col>
-              <Col span={8}>
-                <strong>隐藏度：</strong> {currentForeshadow.subtlety}/10
-              </Col>
-              
-              {currentForeshadow.related_characters && currentForeshadow.related_characters.length > 0 && (
-                <Col span={24}>
-                  <strong>关联角色：</strong>
-                  <div style={{ marginTop: 4 }}>
-                    {currentForeshadow.related_characters.map((name, idx) => (
-                      <Tag key={idx}>{name}</Tag>
-                    ))}
-                  </div>
-                </Col>
-              )}
-              
-              {currentForeshadow.notes && (
-                <Col span={24}>
-                  <strong>备注：</strong>
-                  <p style={{ marginTop: 8, color: token.colorTextSecondary }}>{currentForeshadow.notes}</p>
-                </Col>
-              )}
-              
-              <Col span={24}>
-                <strong>来源：</strong> {currentForeshadow.source_type === 'analysis' ? '章节分析提取' : '手动添加'}
-              </Col>
-            </Row>
+        footer={
+          <div style={modalFooterStyle}>
+            <Button style={footerButtonStyle} onClick={() => setDetailModalVisible(false)}>
+              关闭
+            </Button>
+            <Button
+              type="primary"
+              style={footerButtonStyle}
+              onClick={() => {
+                setDetailModalVisible(false);
+                openEditModal(currentForeshadow!);
+              }}
+            >
+              编辑
+            </Button>
           </div>
-        )}
+        }
+        width={620}
+        title={null}
+        styles={{
+          body: { padding: 0 },
+          content: { padding: 0, overflow: 'hidden' },
+          footer: {
+            padding: '12px 20px',
+            margin: 0,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+            background: token.colorBgContainer,
+          },
+        }}
+        closable={false}
+      >
+        {currentForeshadow && (() => {
+          const statusConfig = STATUS_CONFIG[currentForeshadow.status];
+          const urgencyBadge = getUrgencyBadge(currentForeshadow);
+
+          const metaItems = [
+            {
+              label: '埋入章节',
+              value: currentForeshadow.plant_chapter_number
+                ? `第 ${currentForeshadow.plant_chapter_number} 章`
+                : '未设定',
+            },
+            {
+              label: '计划回收',
+              value: currentForeshadow.target_resolve_chapter_number
+                ? `第 ${currentForeshadow.target_resolve_chapter_number} 章`
+                : '未设定',
+            },
+            ...(currentForeshadow.actual_resolve_chapter_number
+              ? [{ label: '实际回收', value: `第 ${currentForeshadow.actual_resolve_chapter_number} 章` }]
+              : []),
+            {
+              label: '来源',
+              value: currentForeshadow.source_type === 'analysis' ? '章节分析提取' : '手动添加',
+            },
+          ];
+
+          const metricItems = [
+            { label: '重要性', value: Math.round(currentForeshadow.importance * 5), max: 5 },
+            { label: '强度', value: currentForeshadow.strength, max: 10 },
+            { label: '隐藏度', value: currentForeshadow.subtlety, max: 10 },
+          ];
+
+          return (
+            <div>
+              <div style={{ padding: '18px 20px 14px', borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        fontSize: 11.5,
+                        color: token.colorTextSecondary,
+                      }}>
+                        <span style={{
+                          width: 5,
+                          height: 5,
+                          borderRadius: 3,
+                          background: currentForeshadow.status === 'resolved'
+                            ? token.colorInfo
+                            : currentForeshadow.status === 'partially_resolved'
+                              ? token.colorWarning
+                              : currentForeshadow.status === 'planted'
+                                ? token.colorSuccess
+                                : token.colorTextQuaternary,
+                        }} />
+                        {statusConfig.label}
+                      </span>
+                      {currentForeshadow.is_long_term && (
+                        <span style={{
+                          padding: '0 6px',
+                          borderRadius: 4,
+                          background: token.colorFillTertiary,
+                          color: token.colorTextSecondary,
+                          fontSize: 10.5,
+                          lineHeight: '17px',
+                        }}>
+                          长线伏笔
+                        </span>
+                      )}
+                      {currentForeshadow.category && CATEGORY_CONFIG[currentForeshadow.category] && (
+                        <span style={{
+                          padding: '0 6px',
+                          borderRadius: 4,
+                          background: token.colorFillTertiary,
+                          color: token.colorTextSecondary,
+                          fontSize: 10.5,
+                          lineHeight: '17px',
+                        }}>
+                          {CATEGORY_CONFIG[currentForeshadow.category].label}
+                        </span>
+                      )}
+                      {urgencyBadge && <span style={{ fontSize: 11.5 }}>{urgencyBadge}</span>}
+                    </div>
+                    <h3 style={{
+                      margin: 0,
+                      fontSize: 17,
+                      fontWeight: 600,
+                      lineHeight: 1.45,
+                      color: token.colorText,
+                      wordBreak: 'break-word',
+                    }}>
+                      {currentForeshadow.title}
+                    </h3>
+                  </div>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CloseOutlined />}
+                    onClick={() => {
+                      setDetailModalVisible(false);
+                      setCurrentForeshadow(null);
+                    }}
+                    aria-label="关闭"
+                    style={{ flexShrink: 0, marginTop: -2 }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ padding: '16px 20px 18px', maxHeight: 'min(62vh, 560px)', overflowY: 'auto' }}>
+                <div style={{ fontSize: 11.5, color: token.colorTextTertiary, marginBottom: 6 }}>伏笔内容</div>
+                <div style={{
+                  fontSize: 13.5,
+                  lineHeight: 1.8,
+                  color: token.colorText,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}>
+                  {currentForeshadow.content || '—'}
+                </div>
+
+                {(currentForeshadow.hint_text || currentForeshadow.resolution_text) && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 18 }}>
+                    {currentForeshadow.hint_text && (
+                      <div style={{
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        background: token.colorFillQuaternary,
+                      }}>
+                        <div style={{ fontSize: 11, color: token.colorTextTertiary, marginBottom: 4 }}>暗示文本</div>
+                        <div style={{
+                          fontSize: 12.5,
+                          lineHeight: 1.7,
+                          color: token.colorTextSecondary,
+                          whiteSpace: 'pre-wrap',
+                        }}>
+                          {currentForeshadow.hint_text}
+                        </div>
+                      </div>
+                    )}
+                    {currentForeshadow.resolution_text && (
+                      <div style={{
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        background: token.colorFillQuaternary,
+                      }}>
+                        <div style={{ fontSize: 11, color: token.colorTextTertiary, marginBottom: 4 }}>揭示文本</div>
+                        <div style={{
+                          fontSize: 12.5,
+                          lineHeight: 1.7,
+                          color: token.colorTextSecondary,
+                          whiteSpace: 'pre-wrap',
+                        }}>
+                          {currentForeshadow.resolution_text}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div style={{
+                  marginTop: 20,
+                  paddingTop: 16,
+                  borderTop: `1px solid ${token.colorBorderSecondary}`,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))',
+                  gap: '12px 14px',
+                }}>
+                  {metaItems.map((item) => (
+                    <div key={item.label} style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: token.colorTextTertiary }}>{item.label}</div>
+                      <div style={{
+                        marginTop: 2,
+                        fontSize: 13,
+                        color: token.colorText,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {item.value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{
+                  marginTop: 16,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))',
+                  gap: '12px 14px',
+                }}>
+                  {metricItems.map((item) => (
+                    <div key={item.label} style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 11, color: token.colorTextTertiary }}>{item.label}</div>
+                      <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {item.max === 5 ? (
+                          <span style={{ display: 'inline-flex', gap: 1 }}>
+                            {Array.from({ length: 5 }).map((_, index) => (
+                              <StarFilled
+                                key={index}
+                                style={{
+                                  fontSize: 11,
+                                  color: index < item.value ? token.colorWarning : token.colorBorder,
+                                }}
+                              />
+                            ))}
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: token.colorText,
+                            fontVariantNumeric: 'tabular-nums',
+                          }}>
+                            {item.value}
+                            <span style={{ fontSize: 11, fontWeight: 400, color: token.colorTextTertiary }}> / 10</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {(currentForeshadow.related_characters?.length ||
+                  currentForeshadow.tags?.length ||
+                  currentForeshadow.notes) && (
+                  <div style={{
+                    marginTop: 18,
+                    paddingTop: 16,
+                    borderTop: `1px solid ${token.colorBorderSecondary}`,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                  }}>
+                    {currentForeshadow.related_characters && currentForeshadow.related_characters.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 11, color: token.colorTextTertiary, marginBottom: 5 }}>关联角色</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {currentForeshadow.related_characters.map((name, idx) => (
+                            <span
+                              key={idx}
+                              style={{
+                                padding: '1px 8px',
+                                borderRadius: 5,
+                                background: token.colorFillTertiary,
+                                color: token.colorTextSecondary,
+                                fontSize: 11.5,
+                                lineHeight: '19px',
+                              }}
+                            >
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentForeshadow.tags && currentForeshadow.tags.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 11, color: token.colorTextTertiary, marginBottom: 5 }}>标签</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                          {currentForeshadow.tags.map((tag, idx) => (
+                            <span
+                              key={idx}
+                              style={{
+                                padding: '1px 8px',
+                                borderRadius: 5,
+                                background: token.colorFillQuaternary,
+                                color: token.colorTextTertiary,
+                                fontSize: 11.5,
+                                lineHeight: '19px',
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentForeshadow.notes && (
+                      <div>
+                        <div style={{ fontSize: 11, color: token.colorTextTertiary, marginBottom: 4 }}>备注</div>
+                        <div style={{
+                          fontSize: 12.5,
+                          lineHeight: 1.7,
+                          color: token.colorTextSecondary,
+                          whiteSpace: 'pre-wrap',
+                        }}>
+                          {currentForeshadow.notes}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
 
       {/* 标记埋入模态框 */}
@@ -958,10 +1408,47 @@ export default function Foreshadows() {
           plantForm.resetFields();
         }}
         onOk={() => plantForm.submit()}
+        okText="确认埋入"
+        width={480}
         destroyOnClose
+        styles={{
+          footer: {
+            padding: '12px 24px',
+            margin: 0,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+          },
+        }}
       >
-        <Form form={plantForm} layout="vertical" onFinish={handlePlant}>
-          <Form.Item name="chapter_id" label="选择埋入章节" rules={[{ required: true, message: '请选择章节' }]}>
+        {currentForeshadow && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 8,
+            margin: '2px 0 16px',
+            fontSize: 12,
+            color: token.colorTextTertiary,
+          }}>
+            <span style={{ flexShrink: 0 }}>当前伏笔</span>
+            <span style={{
+              minWidth: 0,
+              fontSize: 13,
+              fontWeight: 600,
+              color: token.colorText,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {currentForeshadow.title}
+            </span>
+          </div>
+        )}
+        <Form form={plantForm} layout="vertical" onFinish={handlePlant} requiredMark={false}>
+          <Form.Item
+            name="chapter_id"
+            label="埋入章节"
+            rules={[{ required: true, message: '请选择章节' }]}
+            extra="选择这条伏笔实际出现在正文中的章节"
+          >
             <Select placeholder="选择章节">
               {chapters.map(chapter => (
                 <Option key={chapter.id} value={chapter.id}>
@@ -970,8 +1457,13 @@ export default function Foreshadows() {
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="hint_text" label="暗示文本（可选）">
-            <TextArea rows={3} placeholder="记录埋伏笔时使用的暗示性描写" />
+          <Form.Item
+            name="hint_text"
+            label="暗示文本（可选）"
+            extra="记录正文中用来暗示这条伏笔的描写，便于后续回收时对照"
+            style={{ marginBottom: 0 }}
+          >
+            <TextArea rows={3} placeholder="例如：他盯着信封上的邮戳，忽然觉得日期不对" />
           </Form.Item>
         </Form>
       </Modal>
@@ -987,10 +1479,65 @@ export default function Foreshadows() {
           resolveForm.resetFields();
         }}
         onOk={() => resolveForm.submit()}
+        okText="确认回收"
+        width={480}
         destroyOnClose
+        styles={{
+          footer: {
+            padding: '12px 24px',
+            margin: 0,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+          },
+        }}
       >
-        <Form form={resolveForm} layout="vertical" onFinish={handleResolve}>
-          <Form.Item name="chapter_id" label="选择回收章节" rules={[{ required: true, message: '请选择章节' }]}>
+        <div style={{
+          display: 'flex',
+          gap: 8,
+          margin: '4px 0 16px',
+          padding: '10px 12px',
+          borderRadius: 8,
+          background: token.colorFillQuaternary,
+          fontSize: 12,
+          lineHeight: 1.65,
+          color: token.colorTextTertiary,
+        }}>
+          <InfoCircleOutlined style={{ marginTop: 2, flexShrink: 0 }} />
+          <span>
+            回收后，这条伏笔会从「已埋入」变为「已回收」，并记录实际回收章节与揭示内容，供后续创作参考。
+          </span>
+        </div>
+
+        {currentForeshadow && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 8,
+            margin: '0 0 16px',
+            fontSize: 12,
+            color: token.colorTextTertiary,
+          }}>
+            <span style={{ flexShrink: 0 }}>当前伏笔</span>
+            <span style={{
+              minWidth: 0,
+              fontSize: 13,
+              fontWeight: 600,
+              color: token.colorText,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {currentForeshadow.title}
+            </span>
+          </div>
+        )}
+
+        <Form form={resolveForm} layout="vertical" onFinish={handleResolve} requiredMark={false}>
+          <Form.Item
+            name="chapter_id"
+            label="回收章节"
+            rules={[{ required: true, message: '请选择章节' }]}
+            extra="选择这条伏笔被揭开或兑现的章节"
+          >
             <Select placeholder="选择章节">
               {chapters.map(chapter => (
                 <Option key={chapter.id} value={chapter.id}>
@@ -999,11 +1546,25 @@ export default function Foreshadows() {
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="resolution_text" label="揭示文本（可选）">
-            <TextArea rows={3} placeholder="记录回收伏笔时的揭示内容" />
+          <Form.Item
+            name="resolution_text"
+            label="揭示文本（可选）"
+            extra="写下这条伏笔最终如何被揭晓，便于回看时快速回忆"
+          >
+            <TextArea rows={3} placeholder="例如：那通电话来自保险公司，中奖信息正是他们泄露的" />
           </Form.Item>
-          <Form.Item name="is_partial" label="是否部分回收" valuePropName="checked">
-            <Switch checkedChildren="部分" unCheckedChildren="完全" />
+          <Form.Item
+            name="is_partial"
+            label="部分回收"
+            valuePropName="checked"
+            extra="开启后状态会标记为「部分回收」，表示这条伏笔还有内容留待后续揭示"
+            style={{ marginBottom: 0 }}
+          >
+            <Switch
+              checkedChildren="部分"
+              unCheckedChildren="完全"
+              style={{ minHeight: 22, minWidth: 44, height: 22 }}
+            />
           </Form.Item>
         </Form>
       </Modal>

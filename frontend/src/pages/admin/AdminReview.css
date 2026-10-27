@@ -1,0 +1,213 @@
+/* 管理后台 · 内容审阅（页面骨架/表格/工具条样式统一在 AdminLayout.css） */
+
+/* 阅读区 */
+.adm-review-reader {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 560px;
+}
+
+.adm-review-chapters {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--adm-border);
+  border-radius: 12px;
+  background: var(--adm-panel);
+  overflow: hidden;
+  max-height: 74vh;
+}
+
+.adm-review-chapters-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--adm-border);
+  color: var(--adm-text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.adm-review-chapter-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.adm-review-chapter-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.adm-review-chapter-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--adm-text) 14%, transparent);
+}
+
+.adm-review-chapter-list::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--adm-text) 24%, transparent);
+}
+
+.adm-review-chapter-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.adm-review-chapter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+
+.adm-review-chapter-item:hover {
+  background: color-mix(in srgb, var(--adm-text) 3.5%, transparent);
+}
+
+.adm-review-chapter-item.is-active {
+  background: color-mix(in srgb, var(--adm-text) 7%, transparent);
+}
+
+.adm-review-chapter-no {
+  color: var(--adm-tertiary);
+  font-size: 10.5px;
+}
+
+.adm-review-chapter-title {
+  overflow: hidden;
+  color: var(--adm-text);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adm-review-chapter-item.is-active .adm-review-chapter-title {
+  font-weight: 600;
+}
+
+.adm-review-chapter-meta {
+  color: var(--adm-tertiary);
+  font-size: 10.5px;
+}
+
+.adm-review-chapters-loading,
+.adm-review-chapters-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 12px;
+  color: var(--adm-tertiary);
+  font-size: 12px;
+}
+
+.adm-review-body {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--adm-border);
+  border-radius: 12px;
+  background: var(--adm-panel);
+  overflow: hidden;
+  max-height: 74vh;
+}
+
+.adm-review-body-center {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.adm-review-chapter-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 16px 22px 13px;
+  border-bottom: 1px solid var(--adm-border);
+}
+
+.adm-review-chapter-headno {
+  color: var(--adm-tertiary);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.adm-review-chapter-headtitle {
+  margin: 0;
+  color: var(--adm-text);
+  font-size: 16px;
+  font-weight: 620;
+  line-height: 1.45;
+}
+
+.adm-review-chapter-headmeta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--adm-tertiary);
+  font-size: 11px;
+}
+
+.adm-review-dot {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.adm-review-text {
+  flex: 1;
+  padding: 22px 26px 40px;
+  color: var(--adm-text);
+  font-size: 14px;
+  line-height: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+}
+
+.adm-review-text::-webkit-scrollbar {
+  width: 8px;
+}
+
+.adm-review-text::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+  background-color: color-mix(in srgb, var(--adm-text) 14%, transparent);
+}
+
+.adm-review-text::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--adm-text) 24%, transparent);
+}
+
+.adm-review-text::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-width: 992px) {
+  .adm-review-reader {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adm-review-chapters {
+    max-height: 240px;
+  }
+
+  .adm-review-body {
+    max-height: none;
+  }
+
+}

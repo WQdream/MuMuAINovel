@@ -1,0 +1,503 @@
+/* Skill 工具箱：轻量卡片 + 对话视图，与项目其他管理页保持同一套语言。 */
+.sk-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sk-header {
+  flex-shrink: 0;
+  padding: 0 2px 14px;
+}
+
+.sk-header-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.sk-header-icon {
+  margin-top: 2px;
+  color: var(--sk-secondary);
+  font-size: 19px;
+}
+
+.sk-title {
+  margin: 0;
+  color: var(--sk-text);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.sk-subtitle {
+  margin: 4px 0 0;
+  color: var(--sk-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.sk-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 分类 Tabs */
+.sk-tabs-row {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--sk-border);
+}
+
+.sk-tabs.ant-tabs {
+  margin-bottom: 0;
+}
+
+.sk-tabs .ant-tabs-nav {
+  margin-bottom: 0;
+}
+
+.sk-tabs .ant-tabs-nav::before {
+  border-bottom: none;
+}
+
+.sk-tabs .ant-tabs-tab {
+  padding: 10px 0 12px;
+  font-size: 13px;
+}
+
+.sk-tabs .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 22px;
+}
+
+.sk-page .sk-tabs.ant-tabs .ant-tabs-tab .ant-tabs-tab-btn {
+  color: var(--sk-secondary);
+  transition: color 0.18s ease;
+}
+
+.sk-page .sk-tabs.ant-tabs .ant-tabs-tab:hover .ant-tabs-tab-btn {
+  color: var(--sk-text);
+}
+
+.sk-page .sk-tabs.ant-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--sk-text);
+  font-weight: 600;
+}
+
+.sk-page .sk-tabs.ant-tabs .ant-tabs-ink-bar {
+  background: var(--sk-text);
+}
+
+.sk-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sk-tab-count {
+  color: var(--sk-tertiary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-page .sk-tabs.ant-tabs .ant-tabs-content-holder {
+  display: none;
+}
+
+.sk-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.sk-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 2px 8px;
+}
+
+.sk-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  color: var(--sk-tertiary);
+  font-size: 12.5px;
+}
+
+/* 卡片网格 */
+.sk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(272px, 340px));
+  justify-content: start;
+  gap: 16px;
+}
+
+.sk-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 15px 16px 0;
+  border: 1px solid var(--sk-border);
+  border-radius: 12px;
+  background: var(--sk-card-bg);
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.sk-card:hover {
+  border-color: color-mix(in srgb, var(--sk-text) 22%, var(--sk-border));
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--sk-text) 7%, transparent);
+}
+
+.sk-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--sk-text) 35%, transparent);
+  outline-offset: 2px;
+}
+
+.sk-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.sk-card-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 1px;
+  border-radius: 8px;
+  background: var(--sk-fill);
+  font-size: 14px;
+}
+
+.sk-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sk-card-name {
+  overflow: hidden;
+  color: var(--sk-text);
+  font-size: 14.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sk-row-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--sk-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.sk-card-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  height: 60px;
+  margin: 10px 0 0;
+  color: var(--sk-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.sk-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding: 9px 0;
+  border-top: 1px solid var(--sk-border);
+}
+
+.sk-card-triggers {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sk-chip {
+  flex-shrink: 0;
+  max-width: 96px;
+  overflow: hidden;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: var(--sk-fill);
+  color: var(--sk-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sk-chip--more {
+  color: var(--sk-tertiary);
+}
+
+.sk-chip--action {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  transition: color 0.16s ease, background-color 0.16s ease;
+}
+
+.sk-chip--action:hover {
+  background: color-mix(in srgb, var(--sk-text) 8%, var(--sk-fill));
+  color: var(--sk-text);
+}
+
+.sk-card-go {
+  flex-shrink: 0;
+  color: var(--sk-tertiary);
+  font-size: 12px;
+  transition: color 0.16s ease;
+}
+
+.sk-card:hover .sk-card-go {
+  color: var(--sk-text);
+}
+
+/* 对话视图 */
+.sk-chat-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0 2px 14px;
+  border-bottom: 1px solid var(--sk-border);
+}
+
+.sk-back.ant-btn {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 0 6px;
+  color: var(--sk-secondary);
+  font-size: 12.5px;
+}
+
+.sk-back.ant-btn:hover {
+  color: var(--sk-text);
+  background: var(--sk-fill);
+}
+
+.sk-chat-head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.sk-chat-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sk-chat-title {
+  color: var(--sk-text);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.sk-chat-subtitle {
+  margin: 3px 0 0;
+  color: var(--sk-tertiary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.sk-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 2px;
+}
+
+.sk-chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 100%;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.sk-chat-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  background: var(--sk-fill);
+  color: var(--sk-tertiary);
+  font-size: 20px;
+}
+
+.sk-chat-empty-title {
+  margin: 0;
+  color: var(--sk-text);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.sk-chat-empty-desc {
+  max-width: 380px;
+  margin: 4px 0 0;
+  color: var(--sk-tertiary);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.sk-trigger-list {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 13px;
+}
+
+.sk-msg {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.sk-msg--user {
+  flex-direction: row-reverse;
+}
+
+.sk-avatar {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: var(--sk-fill);
+  color: var(--sk-secondary);
+  font-size: 13px;
+}
+
+.sk-msg--user .sk-avatar {
+  background: color-mix(in srgb, var(--sk-text) 88%, transparent);
+  color: var(--sk-card-bg);
+}
+
+.sk-bubble {
+  max-width: 74%;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--sk-fill);
+  color: var(--sk-text);
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+
+.sk-msg--user .sk-bubble {
+  background: color-mix(in srgb, var(--sk-text) 88%, transparent);
+  color: var(--sk-card-bg);
+}
+
+.sk-markdown {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sk-thinking {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 0;
+  color: var(--sk-tertiary);
+  font-size: 12px;
+}
+
+.sk-composer {
+  flex-shrink: 0;
+  padding: 12px 2px 4px;
+  border-top: 1px solid var(--sk-border);
+}
+
+.sk-composer-input.ant-input {
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  resize: none;
+}
+
+.sk-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+}
+
+.sk-composer-hint {
+  overflow: hidden;
+  color: var(--sk-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sk-send.ant-btn {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .sk-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .sk-subtitle {
+    display: none;
+  }
+
+  .sk-chat-subtitle {
+    display: none;
+  }
+
+  .sk-bubble {
+    max-width: 84%;
+  }
+
+  .sk-composer-hint {
+    display: none;
+  }
+
+  .sk-composer-foot {
+    justify-content: flex-end;
+  }
+}

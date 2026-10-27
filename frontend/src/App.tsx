@@ -22,9 +22,13 @@ import UserManagement from './pages/UserManagement';
 import PromptTemplates from './pages/PromptTemplates';
 import SkillChat from './pages/SkillChat';
 import SkillManage from './pages/SkillManage';
-import Sponsor from './pages/Sponsor';
 import KnowledgeBase from './pages/KnowledgeBase';
-// import Polish from './pages/Polish';
+import Polish from './pages/Polish';
+import AdminLayout from './pages/admin/AdminLayout';
+import AdminReview from './pages/admin/AdminReview';
+import AdminApiConfig from './pages/admin/AdminApiConfig';
+import AdminAudit from './pages/admin/AdminAudit';
+import SystemSettingsPage from './pages/SystemSettings';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -52,9 +56,17 @@ function App() {
           <Route path="/prompt-templates" element={<ProtectedRoute><><PromptTemplates /><AppFooter /></></ProtectedRoute>} />
           <Route path="/mcp-plugins" element={<ProtectedRoute><MCPPlugins /></ProtectedRoute>} />
           <Route path="/user-management" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
+            <Route index element={<Navigate to="users" replace />} />
+            <Route path="users" element={<UserManagement embedded />} />
+            <Route path="api-config" element={<AdminApiConfig />} />
+            <Route path="review" element={<AdminReview />} />
+            <Route path="audit" element={<AdminAudit />} />
+            <Route path="system" element={<SystemSettingsPage />} />
+          </Route>
           <Route path="/chapters/:chapterId/reader" element={<ProtectedRoute><ChapterReader /></ProtectedRoute>} />
           <Route path="/project/:projectId" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>}>
-            <Route index element={<Navigate to="sponsor" replace />} />
+            <Route index element={<Navigate to="outline" replace />} />
             <Route path="world-setting" element={<WorldSetting />} />
             <Route path="knowledge-base" element={<KnowledgeBase />} />
             <Route path="careers" element={<Careers />} />
@@ -70,8 +82,7 @@ function App() {
             <Route path="prompt-workshop" element={<PromptWorkshop />} />
             <Route path="skill-chat" element={<SkillChat />} />
             <Route path="skill-manage" element={<SkillManage />} />
-            <Route path="sponsor" element={<Sponsor />} />
-            {/* <Route path="polish" element={<Polish />} /> */}
+            <Route path="polish" element={<Polish />} />
           </Route>
         </Routes>
       </BrowserRouter>

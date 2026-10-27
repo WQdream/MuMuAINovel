@@ -1,0 +1,264 @@
+/* AI 去味工作台：左右对照 + 分数条 + 命中明细，配色全部走 antd token 注入的变量。 */
+.polish-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.polish-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.polish-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--pl-text);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.polish-subtitle {
+  max-width: 640px;
+  margin: 5px 0 0;
+  color: var(--pl-secondary);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.polish-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pl-secondary);
+  font-size: 12.5px;
+}
+
+.polish-alert.ant-alert {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.polish-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 14px;
+}
+
+@media (max-width: 1100px) {
+  .polish-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.polish-col {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--pl-border);
+  border-radius: 12px;
+  background: var(--pl-card-bg);
+}
+
+.polish-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.polish-count {
+  color: var(--pl-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.polish-textarea.ant-input {
+  flex: 1;
+  min-height: 300px !important;
+  padding: 11px 12px;
+  border-radius: 9px;
+  font-size: 13px;
+  line-height: 1.9;
+  resize: vertical;
+}
+
+.polish-col-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.polish-scoreboard {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.polish-arrow {
+  color: var(--pl-tertiary);
+  font-size: 14px;
+}
+
+.polish-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid var(--pl-border);
+  border-radius: 999px;
+  background: var(--pl-fill);
+}
+
+.polish-chip-label {
+  color: var(--pl-tertiary);
+  font-size: 11.5px;
+}
+
+.polish-chip-score {
+  color: var(--pl-text);
+  font-size: 17px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.polish-chip-note {
+  color: var(--pl-secondary);
+  font-size: 11.5px;
+}
+
+.polish-chip--clean { border-color: rgba(56, 158, 13, 0.42); }
+.polish-chip--rough { border-color: rgba(212, 136, 6, 0.45); }
+.polish-chip--heavy { border-color: rgba(207, 19, 34, 0.45); }
+
+.polish-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .polish-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.polish-diff-half {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.polish-diff-label {
+  color: var(--pl-tertiary);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+}
+
+.polish-pane {
+  overflow-y: auto;
+  max-height: 420px;
+  min-height: 220px;
+  padding: 11px 12px;
+  border: 1px solid var(--pl-border);
+  border-radius: 9px;
+  background: var(--pl-fill);
+  color: var(--pl-text);
+  font-size: 13px;
+  line-height: 1.95;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.polish-pane--result {
+  background: color-mix(in srgb, var(--pl-accent) 4%, var(--pl-card-bg));
+}
+
+.polish-pane--full {
+  min-height: 420px;
+  max-height: 560px;
+}
+
+.polish-findings {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid var(--pl-border);
+  border-radius: 12px;
+  background: var(--pl-card-bg);
+}
+
+.polish-findings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.polish-findings-empty {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--pl-secondary);
+  font-size: 12.5px;
+}
+
+.polish-findings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.polish-findings-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 7px;
+  border-bottom: 1px dashed var(--pl-border);
+  font-size: 12.5px;
+}
+
+.polish-findings-list li:last-child {
+  border-bottom: none;
+}
+
+.polish-findings-loc {
+  color: var(--pl-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.polish-findings-msg {
+  color: var(--pl-text);
+}
+
+.polish-findings-quote {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--pl-fill);
+  color: var(--pl-secondary);
+  font-size: 12px;
+}

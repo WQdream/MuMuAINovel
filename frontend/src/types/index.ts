@@ -78,6 +78,8 @@ export interface Settings {
   api_key: string;
   api_base_url: string;
   llm_model: string;
+  /** 公共配置生效时的显示名；普通配置为空 */
+  model_display_name?: string | null;
   temperature: number;
   max_tokens: number;
   system_prompt?: string;
@@ -88,6 +90,8 @@ export interface Settings {
   cover_image_model?: string;
   cover_enabled?: boolean;
   preferences?: string;
+  /** 当前生效的是管理员公共配置：api_key / api_base_url 已被服务端清空 */
+  shared_config_active?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -97,6 +101,7 @@ export interface SettingsUpdate {
   api_key?: string;
   api_base_url?: string;
   llm_model?: string;
+  model_display_name?: string | null;
   temperature?: number;
   max_tokens?: number;
   system_prompt?: string;
@@ -109,44 +114,192 @@ export interface SettingsUpdate {
   preferences?: string;
 }
 
-// API预设相关类型定义
-export interface APIKeyPresetConfig {
+// 文本模型配置
+export interface TextModelConfigPayload {
   api_provider: string;
   api_key: string;
   api_base_url?: string;
   llm_model: string;
+  model_display_name?: string | null;
   temperature: number;
   max_tokens: number;
   system_prompt?: string;
+  disable_thinking?: boolean;
 }
 
-export interface APIKeyPreset {
+export interface TextModelConfig extends TextModelConfigPayload {
   id: string;
   name: string;
-  description?: string;
+  note?: string;
   is_active: boolean;
+  /** 引用管理员公共配置时的来源 ID；存在即为公共配置卡片 */
+  shared_config_id?: string;
+  /** 公共配置是否仍在开放状态（自动下发后恒为 true） */
+  shared_available?: boolean;
+  /** 管理员设置的对外显示名；为空时 llm_model 本身就是可展示名称 */
+  model_display_name?: string | null;
+  quota_daily_limit?: number | null;
+  quota_daily_used?: number | null;
+  quota_daily_remaining?: number | null;
+  quota_total_limit?: number | null;
+  quota_total_used?: number | null;
+  quota_total_remaining?: number | null;
   created_at: string;
-  config: APIKeyPresetConfig;
 }
 
-export interface PresetCreateRequest {
+export interface TextModelConfigCreateRequest extends TextModelConfigPayload {
   name: string;
-  description?: string;
-  config: APIKeyPresetConfig;
+  note?: string;
 }
 
-export interface PresetUpdateRequest {
+export interface TextModelConfigUpdateRequest extends Partial<TextModelConfigPayload> {
   name?: string;
-  description?: string;
-  config?: APIKeyPresetConfig;
+  note?: string;
 }
 
-export interface PresetListResponse {
-  presets: APIKeyPreset[];
+export interface TextModelConfigListResponse {
+  configs: TextModelConfig[];
   total: number;
-  active_preset_id?: string;
-  chapter_analysis_preset_id?: string;
+  active_config_id?: string;
+  chapter_analysis_config_id?: string;
 }
+
+/** 用户端可见的公共配置摘要（不含密钥） */
+export interface SharedApiConfigSummary {
+  id: string;
+  name: string;
+  note?: string;
+  api_provider: string;
+  api_base_url?: string;
+  llm_model: string;
+  /** 管理员设置的对外显示名；留空则显示真实模型名 */
+  model_display_name?: string | null;
+  temperature?: number;
+  max_tokens?: number;
+  disable_thinking?: boolean;
+  already_imported: boolean;
+}
+
+/** 管理端公共配置（含密钥） */
+export interface SharedApiConfig {
+  id: string;
+  name: string;
+  note?: string;
+  api_provider: string;
+  api_key?: string;
+  api_base_url?: string;
+  llm_model: string;
+  model_display_name?: string | null;
+  temperature?: number;
+  max_tokens?: number;
+  system_prompt?: string;
+  disable_thinking: boolean;
+  daily_call_limit?: number | null;
+  total_call_limit?: number | null;
+  is_enabled: boolean;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SharedApiConfigCreateRequest {
+  name: string;
+  note?: string;
+  api_provider: string;
+  api_key: string;
+  api_base_url?: string;
+  llm_model: string;
+  model_display_name?: string | null;
+  temperature: number;
+  max_tokens: number;
+  system_prompt?: string;
+  disable_thinking: boolean;
+  daily_call_limit?: number | null;
+  total_call_limit?: number | null;
+  is_enabled: boolean;
+}
+
+export type SharedApiConfigUpdateRequest = Partial<SharedApiConfigCreateRequest> & {
+  sort_order?: number;
+};
+
+// 图片模型配置
+export interface ImageModelConfigPayload {
+  api_provider: string;
+  api_key: string;
+  api_base_url?: string;
+  image_model: string;
+  model_display_name?: string | null;
+}
+
+export interface ImageModelConfig extends ImageModelConfigPayload {
+  id: string;
+  name: string;
+  note?: string;
+  is_active: boolean;
+  shared_config_id?: string;
+  shared_available?: boolean;
+  shared_config_name?: string | null;
+  quota_daily_limit?: number | null;
+  quota_daily_used?: number | null;
+  quota_daily_remaining?: number | null;
+  quota_total_limit?: number | null;
+  quota_total_used?: number | null;
+  quota_total_remaining?: number | null;
+  created_at: string;
+}
+
+export interface ImageModelConfigCreateRequest extends ImageModelConfigPayload {
+  name: string;
+  note?: string;
+}
+
+export type ImageModelConfigUpdateRequest = Partial<ImageModelConfigPayload> & {
+  name?: string;
+  note?: string;
+};
+
+export interface ImageModelConfigListResponse {
+  configs: ImageModelConfig[];
+  total: number;
+  active_config_id?: string;
+}
+
+/** 管理端公共图片配置（含密钥） */
+export interface SharedImageApiConfig {
+  id: string;
+  name: string;
+  note?: string;
+  api_provider: string;
+  api_key?: string;
+  api_base_url?: string;
+  image_model: string;
+  model_display_name?: string | null;
+  daily_call_limit?: number | null;
+  total_call_limit?: number | null;
+  is_enabled: boolean;
+  sort_order: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SharedImageApiConfigCreateRequest {
+  name: string;
+  note?: string;
+  api_provider: string;
+  api_key: string;
+  api_base_url?: string;
+  image_model: string;
+  model_display_name?: string | null;
+  daily_call_limit?: number | null;
+  total_call_limit?: number | null;
+  is_enabled: boolean;
+}
+
+export type SharedImageApiConfigUpdateRequest =
+  Partial<SharedImageApiConfigCreateRequest> & {
+    sort_order?: number;
+  };
 
 // LinuxDO 授权 URL 响应
 export interface AuthUrlResponse {
@@ -538,6 +691,22 @@ export interface GenerateOutlineRequest {
   keep_existing?: boolean;
 }
 
+export interface OutlineDirectionSuggestion {
+  title: string;
+  description: string;
+  conflict?: string;
+}
+
+export interface GenerateOutlineDirectionsRequest {
+  project_id: string;
+  plot_stage: 'development' | 'climax' | 'ending';
+  requirements?: string;
+  current_direction?: string;
+  exclude_directions?: string[];
+  model?: string;
+  provider?: string;
+}
+
 // 大纲重排序请求类型
 export interface OutlineReorderItem {
   id: string;
@@ -625,8 +794,60 @@ export interface GenerateCharacterRequest {
 }
 
 export interface PolishTextRequest {
-  text: string;
-  style?: string;
+  original_text: string;
+  project_id?: string;
+  provider?: string;
+  model?: string;
+  temperature?: number;
+  /** 改写后仍有「必须改」项时是否自动复改（最多两轮） */
+  refine_until_clean?: boolean;
+}
+
+/** 确定性检测单条命中（来自上游 check-ai-patterns / check-degeneration 脚本） */
+export interface PolishFinding {
+  line?: number;
+  column?: number;
+  type?: string;
+  severity?: string;
+  message?: string;
+  excerpt?: string;
+}
+
+/** 仅检测接口 /api/polish/check 的返回 */
+export interface PolishCheckResult {
+  available: boolean;
+  blocking: number;
+  advisory: number;
+  score: number;
+  findings: PolishFinding[];
+  truncated?: boolean;
+  error?: string | null;
+}
+
+/** /api/polish 改写返回 */
+export interface PolishResult {
+  original_text: string;
+  polished_text: string;
+  word_count_before: number;
+  word_count_after: number;
+  score_before: number;
+  score_after: number;
+  blocking_before: number;
+  blocking_after: number;
+  findings: PolishFinding[];
+  rounds: number;
+  checker_available: boolean;
+  check_error?: string | null;
+  punctuation_fixed?: number;
+}
+
+/** /api/polish/normalize-punctuation 仅整理标点的返回 */
+export interface PolishNormalizeResult {
+  available: boolean;
+  normalized: string;
+  changed: boolean;
+  count: number;
+  error?: string | null;
 }
 
 // 向导API响应类型
@@ -735,6 +956,24 @@ export interface BatchAnalysisStatusResponse {
   project_id: string;
   total: number;
   items: Record<string, AnalysisTask>;
+}
+
+// 章节分析过程监控（内存日志，不落库）
+export interface AnalysisMonitorEvent {
+  ts: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  progress?: number | null;
+}
+
+export interface AnalysisMonitorTask {
+  task_id: string;
+  project_id: string;
+  chapter_id: string;
+  chapter_number?: number | null;
+  chapter_title?: string | null;
+  status: 'running' | 'completed' | 'failed';
+  events: AnalysisMonitorEvent[];
 }
 
 export interface BatchAnalyzeUnanalyzedRequest {
@@ -1409,4 +1648,95 @@ export interface KnowledgeSearchHit {
     heading_path?: string | string[];
     [key: string]: unknown;
   };
+}
+
+// ========== 管理员作品审阅 ==========
+
+export interface AdminUserSummary {
+  user_id: string;
+  username: string;
+  display_name: string;
+}
+
+export interface AdminProjectSummary {
+  id: string;
+  title: string;
+  genre?: string | null;
+  status: string;
+  chapter_count: number;
+  current_words: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminProjectListResponse {
+  total: number;
+  page: number;
+  limit: number;
+  user: AdminUserSummary;
+  items: AdminProjectSummary[];
+}
+
+export interface AdminProjectDetail {
+  id: string;
+  title: string;
+  description?: string | null;
+  genre?: string | null;
+  theme?: string | null;
+  status: string;
+  chapter_count: number;
+  current_words: number;
+  target_words: number;
+  created_at: string;
+  updated_at: string;
+  owner: {
+    user_id: string;
+    username?: string | null;
+    display_name?: string | null;
+  };
+}
+
+export interface AdminChapterSummary {
+  id: string;
+  chapter_number: number;
+  title: string;
+  word_count: number;
+  status: string;
+  updated_at: string;
+}
+
+export interface AdminChapterListResponse {
+  total: number;
+  items: AdminChapterSummary[];
+}
+
+export interface AdminChapterDetail {
+  id: string;
+  project_id: string;
+  chapter_number: number;
+  title: string;
+  content: string;
+  word_count: number;
+  status: string;
+  updated_at: string;
+}
+
+export interface AdminAccessLogItem {
+  id: string;
+  admin_id: string;
+  admin_name?: string | null;
+  target_user_id: string;
+  target_username?: string | null;
+  project_id: string;
+  project_title?: string | null;
+  action: string;
+  ip?: string | null;
+  created_at: string;
+}
+
+export interface AdminAccessLogListResponse {
+  total: number;
+  page: number;
+  limit: number;
+  items: AdminAccessLogItem[];
 }

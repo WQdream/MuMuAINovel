@@ -291,7 +291,15 @@ export function useChapterSync() {
     narrativePerspective?: string,
     skillKey?: string
   ) => {
+    const controller = new AbortController();
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => controller.abort(), 180000);
+    };
+
     try {
+      resetIdleTimer();
       // 使用fetch处理流式响应
       const response = await fetch(`/api/chapters/${chapterId}/generate-stream`, {
         method: 'POST',
@@ -305,10 +313,19 @@ export function useChapterSync() {
           narrative_perspective: narrativePerspective,
           skill_key: skillKey
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorBody = await response.text().catch(() => '');
+        let detail = errorBody;
+        try {
+          const parsed = JSON.parse(errorBody);
+          detail = parsed.detail || parsed.message || errorBody;
+        } catch {
+          // 保留原始响应文本
+        }
+        throw new Error(detail || `请求失败（${response.status}）`);
       }
 
       const reader = response.body?.getReader();
@@ -321,76 +338,94 @@ export function useChapterSync() {
       let buffer = '';
       let fullContent = '';
       let analysisTaskId: string | undefined;
+      let doneReceived = false;
+
+      const handleEvent = async (rawEvent: string) => {
+        if (rawEvent.trim() === '' || rawEvent.trimStart().startsWith(':')) {
+          return;
+        }
+
+        let eventName = '';
+        const dataLines: string[] = [];
+        for (const line of rawEvent.split(/\r?\n/)) {
+          if (line.startsWith('event:')) {
+            eventName = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trimStart());
+          }
+        }
+        if (dataLines.length === 0) return;
+
+        let message: Record<string, unknown>;
+        try {
+          message = JSON.parse(dataLines.join('\n')) as Record<string, unknown>;
+        } catch (parseError) {
+          throw new Error(`AI响应格式异常：${parseError instanceof Error ? parseError.message : '无法解析'}`);
+        }
+        if (!message.type && eventName) {
+          message.type = eventName;
+        }
+        const messageType = typeof message.type === 'string' ? message.type : '';
+        const messageContent = typeof message.content === 'string' ? message.content : '';
+        const messageError = typeof message.error === 'string' ? message.error : '生成失败';
+
+        if (messageType === 'start') {
+          onProgressUpdate?.(typeof message.message === 'string' ? message.message : '开始生成...', 0);
+        } else if (messageType === 'progress') {
+          onProgressUpdate?.(
+            typeof message.message === 'string' ? message.message : '生成中...',
+            typeof message.progress === 'number' ? message.progress : 0,
+          );
+        } else if ((messageType === 'content' || messageType === 'chunk') && messageContent) {
+          fullContent += messageContent;
+          onProgress?.(fullContent);
+        } else if (messageType === 'error') {
+          throw new Error(messageError);
+        } else if (messageType === 'result') {
+          const resultData = message.data as { analysis_task_id?: string } | undefined;
+          if (resultData?.analysis_task_id) {
+            analysisTaskId = resultData.analysis_task_id;
+          }
+          onProgressUpdate?.('生成完成', 100);
+        } else if (messageType === 'done') {
+          doneReceived = true;
+          await refreshChapters();
+        } else if (messageType === 'analysis_started') {
+          if (typeof message.task_id === 'string') analysisTaskId = message.task_id;
+          onProgressUpdate?.('章节分析已开始...', 100);
+        } else if (messageType === 'analysis_queued') {
+          if (typeof message.task_id === 'string') analysisTaskId = message.task_id;
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
+          buffer += decoder.decode();
+          if (buffer.trim()) {
+            await handleEvent(buffer);
+            buffer = '';
+          }
           break;
         }
 
+        resetIdleTimer();
         buffer += decoder.decode(value, { stream: true });
-        
-        // 处理缓冲区中的完整消息
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
 
-        for (const line of lines) {
-          if (line.trim() === '' || line.startsWith(':')) {
-            continue;
-          }
-
-          try {
-            const dataMatch = line.match(/^data: (.+)$/m);
-            if (dataMatch) {
-              const message = JSON.parse(dataMatch[1]);
-              
-              if (message.type === 'start') {
-                // 开始生成
-                if (onProgressUpdate) {
-                  onProgressUpdate(message.message || '开始生成...', 0);
-                }
-              } else if (message.type === 'progress') {
-                // 进度更新
-                if (onProgressUpdate) {
-                  onProgressUpdate(
-                    message.message || '生成中...',
-                    message.progress || 0
-                  );
-                }
-              } else if ((message.type === 'content' || message.type === 'chunk') && message.content) {
-                fullContent += message.content;
-                if (onProgress) {
-                  onProgress(fullContent);
-                }
-              } else if (message.type === 'error') {
-                throw new Error(message.error || '生成失败');
-              } else if (message.type === 'result') {
-                // 结果消息，包含分析任务ID
-                if (message.data?.analysis_task_id) {
-                  analysisTaskId = message.data.analysis_task_id;
-                }
-                if (onProgressUpdate) {
-                  onProgressUpdate('生成完成', 100);
-                }
-              } else if (message.type === 'done') {
-                // 生成完成，刷新章节数据
-                await refreshChapters();
-              } else if (message.type === 'analysis_started') {
-                // 分析已开始
-                analysisTaskId = message.task_id;
-                if (onProgressUpdate) {
-                  onProgressUpdate('章节分析已开始...', 100);
-                }
-              } else if (message.type === 'analysis_queued') {
-                // 分析任务已加入队列
-                analysisTaskId = message.task_id;
-              }
-            }
-          } catch (error) {
-            console.error('解析SSE消息失败:', error);
-          }
+        const events = buffer.split(/\r?\n\r?\n/);
+        buffer = events.pop() || '';
+        for (const event of events) {
+          await handleEvent(event);
         }
+      }
+
+      if (!doneReceived) {
+        throw new Error(
+          fullContent
+            ? `AI生成意外中断（已生成 ${fullContent.length} 字，未保存）。请检查模型服务后重试`
+            : 'AI生成意外中断，未收到完成信号。请检查模型服务后重试',
+        );
       }
 
       return {
@@ -399,7 +434,12 @@ export function useChapterSync() {
       };
     } catch (error) {
       console.error('AI流式生成章节内容失败:', error);
-      throw error;
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('AI生成超时，请检查模型服务是否正常响应');
+      }
+      throw error instanceof Error ? error : new Error(String(error));
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
     }
   }, [refreshChapters]);
 

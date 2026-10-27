@@ -1,12 +1,18 @@
-import { Card, Descriptions, Empty, Typography, Button, Modal, Form, Input, message, Flex, InputNumber, Select, theme } from 'antd';
-import { GlobalOutlined, EditOutlined, SyncOutlined, FormOutlined } from '@ant-design/icons';
+import { Typography, Button, Modal, Form, Input, message, InputNumber, Select, Grid, theme } from 'antd';
+import {
+  GlobalOutlined,
+  EditOutlined,
+  SyncOutlined,
+  ClockCircleOutlined,
+  EnvironmentOutlined,
+  CloudOutlined,
+  SafetyCertificateOutlined,
+} from '@ant-design/icons';
 import { useState } from 'react';
 import { useStore } from '../store';
-import { worldSettingCardStyles } from '../components/CardStyles';
 import { projectApi, wizardStreamApi } from '../services/api';
 import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 
-const { Title, Paragraph } = Typography;
 const { TextArea } = Input;
 
 export default function WorldSetting() {
@@ -28,8 +34,11 @@ export default function WorldSetting() {
     rules: string;
   } | null>(null);
   const [isSavingPreview, setIsSavingPreview] = useState(false);
+  const [activeWorldKey, setActiveWorldKey] = useState<string | null>(null);
   const [modal, contextHolder] = Modal.useModal();
+  const screens = Grid.useBreakpoint();
   const { token } = theme.useToken();
+  const isNarrow = !screens.md;
 
   // AI重新生成世界观
   const handleRegenerate = async () => {
@@ -128,237 +137,296 @@ export default function WorldSetting() {
   if (!currentProject) return null;
 
   // 检查是否有世界设定信息
-  const hasWorldSetting = currentProject.world_time_period ||
+  const hasWorldSetting = Boolean(
+    currentProject.world_time_period ||
     currentProject.world_location ||
     currentProject.world_atmosphere ||
-    currentProject.world_rules;
+    currentProject.world_rules
+  );
 
-  if (!hasWorldSetting) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        {/* 固定头部 */}
-        <div style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-          backgroundColor: token.colorBgContainer,
-          padding: '16px 0',
-          marginBottom: 16,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          display: 'flex',
-          alignItems: 'center'
-        }}>
-          <GlobalOutlined style={{ fontSize: 24, marginRight: 12, color: token.colorPrimary }} />
-          <h2 style={{ margin: 0 }}>世界设定</h2>
-        </div>
+  const openEditWorldModal = () => {
+    editForm.setFieldsValue({
+      world_time_period: currentProject.world_time_period || '',
+      world_location: currentProject.world_location || '',
+      world_atmosphere: currentProject.world_atmosphere || '',
+      world_rules: currentProject.world_rules || '',
+    });
+    setIsEditModalVisible(true);
+  };
 
-        {/* 可滚动内容区域 */}
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          <Empty
-            description="暂无世界设定信息"
-            style={{ marginTop: 60 }}
-          >
-            <Paragraph type="secondary">
-              世界设定信息在创建项目向导中生成，用于构建小说的世界观背景。
-            </Paragraph>
-          </Empty>
-        </div>
-      </div>
-    );
-  }
+  const openEditProjectModal = () => {
+    editProjectForm.setFieldsValue({
+      title: currentProject.title || '',
+      description: currentProject.description || '',
+      theme: currentProject.theme || '',
+      genre: currentProject.genre || '',
+      narrative_perspective: currentProject.narrative_perspective || '',
+      target_words: currentProject.target_words || 0,
+    });
+    setIsEditProjectModalVisible(true);
+  };
+
+  const metaLine = [
+    currentProject.genre,
+    currentProject.narrative_perspective,
+    currentProject.target_words ? `目标 ${currentProject.target_words.toLocaleString()} 字` : null,
+  ].filter(Boolean).join(' · ');
+
+  const worldBlocks = [
+    { key: 'time', label: '时间设定', icon: <ClockCircleOutlined />, value: currentProject.world_time_period },
+    { key: 'location', label: '地点设定', icon: <EnvironmentOutlined />, value: currentProject.world_location },
+    { key: 'atmosphere', label: '氛围设定', icon: <CloudOutlined />, value: currentProject.world_atmosphere },
+    { key: 'rules', label: '规则设定', icon: <SafetyCertificateOutlined />, value: currentProject.world_rules },
+  ].filter((block) => Boolean(block.value));
+  const selectedWorldKey = worldBlocks.some((block) => block.key === activeWorldKey)
+    ? activeWorldKey
+    : worldBlocks[0]?.key;
+  const activeWorldBlock = worldBlocks.find((block) => block.key === selectedWorldKey);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {contextHolder}
-      {/* 固定头部 */}
-      <div style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 10,
-        backgroundColor: token.colorBgContainer,
-        padding: '16px 0',
-        marginBottom: 24,
-        borderBottom: `1px solid ${token.colorBorderSecondary}`
-      }}>
-        <Flex
-          justify="space-between"
-          align="flex-start"
-          gap={12}
-          wrap="wrap"
-        >
-          <div style={{ display: 'flex', alignItems: 'center', minWidth: 'fit-content' }}>
-            <GlobalOutlined style={{ fontSize: 24, marginRight: 12, color: token.colorPrimary }} />
-            <h2 style={{ margin: 0, whiteSpace: 'nowrap' }}>世界设定</h2>
+
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 16,
+          flexWrap: 'wrap',
+          marginBottom: 26,
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <GlobalOutlined style={{ fontSize: 18, color: token.colorTextSecondary }} />
+            <h2 style={{ margin: 0, fontSize: 19, fontWeight: 600, color: token.colorText }}>世界设定</h2>
           </div>
-          <Flex gap={8} wrap="wrap" style={{ flex: '0 1 auto' }}>
-            <Button
-              icon={<SyncOutlined />}
-              onClick={handleRegenerate}
-              disabled={isRegenerating}
-              style={{
-                minWidth: 'fit-content',
-                flex: '1 1 auto'
-              }}
-            >
-              <span className="button-text-mobile">AI重新生成</span>
-            </Button>
-            <Button
-              type="primary"
-              icon={<FormOutlined />}
-              onClick={() => {
-                editProjectForm.setFieldsValue({
-                  title: currentProject.title || '',
-                  description: currentProject.description || '',
-                  theme: currentProject.theme || '',
-                  genre: currentProject.genre || '',
-                  narrative_perspective: currentProject.narrative_perspective || '',
-                  target_words: currentProject.target_words || 0,
-                });
-                setIsEditProjectModalVisible(true);
-              }}
-              style={{
-                minWidth: 'fit-content',
-                flex: '1 1 auto'
-              }}
-            >
-              <span className="button-text-mobile">编辑基础信息</span>
-            </Button>
-            <Button
-              type="primary"
-              icon={<EditOutlined />}
-              onClick={() => {
-                editForm.setFieldsValue({
-                  world_time_period: currentProject.world_time_period || '',
-                  world_location: currentProject.world_location || '',
-                  world_atmosphere: currentProject.world_atmosphere || '',
-                  world_rules: currentProject.world_rules || '',
-                });
-                setIsEditModalVisible(true);
-              }}
-              style={{
-                minWidth: 'fit-content',
-                flex: '1 1 auto'
-              }}
-            >
-              <span className="button-text-mobile">编辑世界观</span>
-            </Button>
-          </Flex>
-        </Flex>
+          <div style={{ marginTop: 5, fontSize: 12, color: token.colorTextTertiary }}>
+            故事发生的时代、地点、氛围与规则
+          </div>
+        </div>
+        {hasWorldSetting && (
+          <Button icon={<SyncOutlined />} onClick={handleRegenerate} loading={isRegenerating}>
+            AI 重新生成
+          </Button>
+        )}
       </div>
 
-      {/* 可滚动内容区域 */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
-        <Card
-          style={{
-            ...worldSettingCardStyles.sectionCard,
-            marginBottom: 16
-          }}
-          title={
-            <span style={{ fontSize: 18, fontWeight: 500 }}>
-              基础信息
-            </span>
-          }
-        >
-          <Descriptions bordered column={1} styles={{ label: { width: 120, fontWeight: 500 } }}>
-            <Descriptions.Item label="小说名称">{currentProject.title}</Descriptions.Item>
-            {currentProject.description && (
-              <Descriptions.Item label="小说简介">{currentProject.description}</Descriptions.Item>
-            )}
-            <Descriptions.Item label="小说主题">{currentProject.theme || '未设定'}</Descriptions.Item>
-            <Descriptions.Item label="小说类型">{currentProject.genre || '未设定'}</Descriptions.Item>
-            <Descriptions.Item label="叙事视角">{currentProject.narrative_perspective || '未设定'}</Descriptions.Item>
-            <Descriptions.Item label="目标字数">
-              {currentProject.target_words ? `${currentProject.target_words.toLocaleString()} 字` : '未设定'}
-            </Descriptions.Item>
-          </Descriptions>
-        </Card>
-
-        <Card
-          style={{
-            ...worldSettingCardStyles.sectionCard,
-            marginBottom: 16
-          }}
-          title={
-            <span style={{ fontSize: 18, fontWeight: 500 }}>
-              <GlobalOutlined style={{ marginRight: 8 }} />
-              小说世界观
-            </span>
-          }
-        >
-          <div style={{ padding: '16px 0' }}>
-            {currentProject.world_time_period && (
-              <div style={{ marginBottom: 24 }}>
-                <Title level={5} style={{ color: token.colorPrimary, marginBottom: 12 }}>
-                  时间设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
-                  lineHeight: 1.8,
-                  padding: 16,
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {!hasWorldSetting ? (
+          <div
+            style={{
+              height: '100%',
+              display: 'grid',
+              placeItems: 'center',
+              padding: '24px',
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <div
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 14,
                   background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorPrimary}`
-                }}>
-                  {currentProject.world_time_period}
-                </Paragraph>
+                  color: token.colorTextSecondary,
+                  display: 'grid',
+                  placeItems: 'center',
+                  fontSize: 22,
+                  marginBottom: 16,
+                }}
+              >
+                <GlobalOutlined />
               </div>
-            )}
-
-            {currentProject.world_location && (
-              <div style={{ marginBottom: 24 }}>
-                <Title level={5} style={{ color: token.colorSuccess, marginBottom: 12 }}>
-                  地点设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
+              <div style={{ fontSize: 16, fontWeight: 600, color: token.colorText }}>还没有世界设定</div>
+              <div
+                style={{
+                  marginTop: 6,
+                  maxWidth: 400,
+                  fontSize: 13,
                   lineHeight: 1.8,
-                  padding: 16,
-                  background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorSuccess}`
-                }}>
-                  {currentProject.world_location}
-                </Paragraph>
+                  color: token.colorTextSecondary,
+                }}
+              >
+                可以让 AI 根据小说简介生成时代、地点、氛围与规则，也可以手动填写。
               </div>
-            )}
-
-            {currentProject.world_atmosphere && (
-              <div style={{ marginBottom: 24 }}>
-                <Title level={5} style={{ color: token.colorWarning, marginBottom: 12 }}>
-                  氛围设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
-                  lineHeight: 1.8,
-                  padding: 16,
-                  background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorWarning}`
-                }}>
-                  {currentProject.world_atmosphere}
-                </Paragraph>
+              <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap', justifyContent: 'center' }}>
+                <Button type="primary" icon={<SyncOutlined />} onClick={handleRegenerate} loading={isRegenerating}>
+                  AI 生成世界观
+                </Button>
+                <Button icon={<EditOutlined />} onClick={openEditWorldModal}>
+                  手动填写
+                </Button>
               </div>
-            )}
-
-            {currentProject.world_rules && (
-              <div style={{ marginBottom: 0 }}>
-                <Title level={5} style={{ color: token.colorError, marginBottom: 12 }}>
-                  规则设定
-                </Title>
-                <Paragraph style={{
-                  fontSize: 15,
-                  lineHeight: 1.8,
-                  padding: 16,
-                  background: token.colorBgLayout,
-                  borderRadius: 8,
-                  borderLeft: `4px solid ${token.colorError}`
-                }}>
-                  {currentProject.world_rules}
-                </Paragraph>
-              </div>
-            )}
+            </div>
           </div>
-        </Card>
+        ) : (
+          <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: 14,
+                lineHeight: 1.9,
+                color: currentProject.description ? token.colorTextSecondary : token.colorTextTertiary,
+              }}
+            >
+              {currentProject.description || '还没有填写小说简介。'}
+            </p>
+
+            <div
+              style={{
+                marginTop: 5,
+                fontSize: 13,
+                lineHeight: 1.8,
+                color: currentProject.theme ? token.colorTextSecondary : token.colorTextTertiary,
+              }}
+            >
+              <span style={{ marginRight: 8, fontWeight: 500, color: token.colorText }}>主题</span>
+              {currentProject.theme || '还没有填写小说主题。'}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+                marginTop: 10,
+                fontSize: 12,
+                color: token.colorTextTertiary,
+              }}
+            >
+              <span>{metaLine || '尚未设置类型与视角'}</span>
+              <Button
+                type="text"
+                size="small"
+                onClick={openEditProjectModal}
+                style={{ padding: '0 4px', height: 20, fontSize: 12, color: token.colorTextTertiary }}
+              >
+                编辑信息
+              </Button>
+            </div>
+
+            <div style={{ height: 1, margin: '24px 0 0', background: token.colorBorderSecondary }} />
+
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: isNarrow ? 'column' : 'row',
+              }}
+            >
+              <nav
+                aria-label="世界设定目录"
+                style={{
+                  width: isNarrow ? '100%' : 184,
+                  flexShrink: 0,
+                  padding: isNarrow ? '10px 0' : '18px 18px 18px 0',
+                  borderRight: isNarrow ? 0 : `1px solid ${token.colorBorderSecondary}`,
+                  borderBottom: isNarrow ? `1px solid ${token.colorBorderSecondary}` : 0,
+                  display: 'flex',
+                  flexDirection: isNarrow ? 'row' : 'column',
+                  gap: 4,
+                  overflowX: isNarrow ? 'auto' : 'visible',
+                }}
+              >
+                {worldBlocks.map((block) => {
+                  const active = block.key === selectedWorldKey;
+                  return (
+                    <button
+                      key={block.key}
+                      type="button"
+                      onClick={() => setActiveWorldKey(block.key)}
+                      aria-current={active ? 'page' : undefined}
+                      style={{
+                        width: isNarrow ? 'auto' : '100%',
+                        flexShrink: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 9,
+                        padding: '9px 10px',
+                        border: 0,
+                        borderRadius: 7,
+                        background: active ? token.colorFillSecondary : 'transparent',
+                        color: active ? token.colorText : token.colorTextSecondary,
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        font: 'inherit',
+                        fontSize: 13,
+                        fontWeight: active ? 600 : 400,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <span style={{ display: 'flex', fontSize: 13, color: active ? token.colorText : token.colorTextTertiary }}>
+                        {block.icon}
+                      </span>
+                      {block.label}
+                    </button>
+                  );
+                })}
+              </nav>
+
+              <section
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  minHeight: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: isNarrow ? '20px 0 0' : '18px 0 0 28px',
+                }}
+              >
+                <div
+                  style={{
+                    flexShrink: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                    marginBottom: 14,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+                    <span style={{ display: 'flex', color: token.colorTextTertiary, fontSize: 15 }}>
+                      {activeWorldBlock?.icon}
+                    </span>
+                    <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: token.colorText }}>
+                      {activeWorldBlock?.label}
+                    </h3>
+                  </div>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={openEditWorldModal}
+                    style={{ color: token.colorTextSecondary, flexShrink: 0 }}
+                  >
+                    编辑
+                  </Button>
+                </div>
+
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                    paddingRight: 8,
+                    fontSize: 14,
+                    lineHeight: 2,
+                    color: token.colorText,
+                    whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  {activeWorldBlock?.value}
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 编辑世界观模态框 */}
@@ -623,69 +691,40 @@ export default function WorldSetting() {
               </Typography.Text>
             </div>
 
-            <div style={{ marginBottom: 24 }}>
-              <Title level={5} style={{ color: token.colorPrimary, marginBottom: 12 }}>
-                时间设定
-              </Title>
-              <Paragraph style={{
-                fontSize: 15,
-                lineHeight: 1.8,
-                padding: 16,
-                background: token.colorBgLayout,
-                borderRadius: 8,
-                borderLeft: `4px solid ${token.colorPrimary}`
-              }}>
-                {newWorldData.time_period}
-              </Paragraph>
-            </div>
-
-            <div style={{ marginBottom: 24 }}>
-              <Title level={5} style={{ color: token.colorSuccess, marginBottom: 12 }}>
-                地点设定
-              </Title>
-              <Paragraph style={{
-                fontSize: 15,
-                lineHeight: 1.8,
-                padding: 16,
-                background: token.colorBgLayout,
-                borderRadius: 8,
-                borderLeft: `4px solid ${token.colorSuccess}`
-              }}>
-                {newWorldData.location}
-              </Paragraph>
-            </div>
-
-            <div style={{ marginBottom: 24 }}>
-              <Title level={5} style={{ color: token.colorWarning, marginBottom: 12 }}>
-                氛围设定
-              </Title>
-              <Paragraph style={{
-                fontSize: 15,
-                lineHeight: 1.8,
-                padding: 16,
-                background: token.colorBgLayout,
-                borderRadius: 8,
-                borderLeft: `4px solid ${token.colorWarning}`
-              }}>
-                {newWorldData.atmosphere}
-              </Paragraph>
-            </div>
-
-            <div style={{ marginBottom: 0 }}>
-              <Title level={5} style={{ color: token.colorError, marginBottom: 12 }}>
-                规则设定
-              </Title>
-              <Paragraph style={{
-                fontSize: 15,
-                lineHeight: 1.8,
-                padding: 16,
-                background: token.colorBgLayout,
-                borderRadius: 8,
-                borderLeft: `4px solid ${token.colorError}`
-              }}>
-                {newWorldData.rules}
-              </Paragraph>
-            </div>
+            {[
+              { label: '时间设定', icon: <ClockCircleOutlined />, value: newWorldData.time_period },
+              { label: '地点设定', icon: <EnvironmentOutlined />, value: newWorldData.location },
+              { label: '氛围设定', icon: <CloudOutlined />, value: newWorldData.atmosphere },
+              { label: '规则设定', icon: <SafetyCertificateOutlined />, value: newWorldData.rules },
+            ].map((block, index, blocks) => (
+              <div
+                key={block.label}
+                style={{
+                  marginBottom: index === blocks.length - 1 ? 0 : 14,
+                  padding: '14px 16px',
+                  borderRadius: 10,
+                  background: token.colorBgLayout,
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginBottom: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: token.colorTextSecondary,
+                  }}
+                >
+                  <span style={{ color: token.colorTextTertiary, fontSize: 13 }}>{block.icon}</span>
+                  {block.label}
+                </div>
+                <div style={{ fontSize: 14, lineHeight: 1.85, color: token.colorText, whiteSpace: 'pre-wrap' }}>
+                  {block.value}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </Modal>

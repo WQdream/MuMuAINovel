@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Modal, Spin, Alert, Tabs, Card, Tag, List, Empty, Statistic, Row, Col, Button, theme } from 'antd';
+import type { ReactNode } from 'react';
+import { Modal, Spin, Alert, Tabs, Tag, Empty, Button, Dropdown, theme } from 'antd';
 import {
   ThunderboltOutlined,
   BulbOutlined,
@@ -7,11 +8,14 @@ import {
   HeartOutlined,
   TeamOutlined,
   TrophyOutlined,
+  FundOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
   ReloadOutlined,
-  EditOutlined
+  EditOutlined,
+  FileTextOutlined,
+  DownOutlined
 } from '@ant-design/icons';
 import type { AnalysisTask, ChapterAnalysisResponse } from '../types';
 import ChapterRegenerationModal from './ChapterRegenerationModal';
@@ -35,6 +39,7 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
   const [isMobile, setIsMobile] = useState(isMobileDevice());
   const [regenerationModalVisible, setRegenerationModalVisible] = useState(false);
   const [comparisonModalVisible, setComparisonModalVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
   const [chapterInfo, setChapterInfo] = useState<{ title: string; chapter_number: number; content: string } | null>(null);
   const [newGeneratedContent, setNewGeneratedContent] = useState('');
   const [newContentWordCount, setNewContentWordCount] = useState(0);
@@ -242,13 +247,13 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
 
     switch (task.status) {
       case 'pending':
-        return <ClockCircleOutlined style={{ color: 'var(--color-warning)' }} />;
+        return <ClockCircleOutlined style={{ fontSize: 22, color: token.colorWarning }} />;
       case 'running':
-        return <Spin />;
+        return <Spin size="default" />;
       case 'completed':
-        return <CheckCircleOutlined style={{ color: 'var(--color-success)' }} />;
+        return <CheckCircleOutlined style={{ fontSize: 22, color: token.colorSuccess }} />;
       case 'failed':
-        return <CloseCircleOutlined style={{ color: 'var(--color-error)' }} />;
+        return <CloseCircleOutlined style={{ fontSize: 22, color: token.colorError }} />;
       default:
         return null;
     }
@@ -259,24 +264,24 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
 
     return (
       <div style={{
-        padding: '40px',
+        padding: isMobile ? '32px 12px' : '44px 24px',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        minHeight: '300px'
+        minHeight: 320,
       }}>
         {/* 标题和图标 */}
         <div style={{
           textAlign: 'center',
-          marginBottom: 32
+          marginBottom: 26
         }}>
           {renderStatusIcon()}
           <div style={{
-            fontSize: 20,
-            fontWeight: 'bold',
-            marginTop: 16,
-            color: task.status === 'failed' ? 'var(--color-error)' : 'var(--color-text-primary)'
+            fontSize: 17,
+            fontWeight: 600,
+            marginTop: 12,
+            color: task.status === 'failed' ? token.colorError : token.colorText,
           }}>
             {task.status === 'pending' && '等待分析...'}
             {task.status === 'running' && 'AI正在分析中...'}
@@ -291,36 +296,34 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
           marginBottom: 16
         }}>
           <div style={{
-            height: 12,
-            background: 'var(--color-bg-layout)',
-            borderRadius: 6,
+            height: 6,
+            background: token.colorFillSecondary,
+            borderRadius: 3,
             overflow: 'hidden',
-            marginBottom: 12
+            marginBottom: 10
           }}>
             <div style={{
               height: '100%',
               background: task.status === 'failed'
-                ? 'var(--color-error)'
+                ? token.colorError
                 : task.progress === 100
-                  ? 'var(--color-success)'
-                  : 'var(--color-primary)',
+                  ? token.colorSuccess
+                  : token.colorPrimary,
               width: `${task.progress}%`,
               transition: 'all 0.3s ease',
-              borderRadius: 6,
-              boxShadow: task.progress > 0 && task.status !== 'failed'
-                ? `0 0 10px color-mix(in srgb, ${token.colorPrimary} 30%, transparent)`
-                : 'none'
+              borderRadius: 3,
             }} />
           </div>
 
           {/* 进度百分比 */}
           <div style={{
             textAlign: 'center',
-            fontSize: 32,
-            fontWeight: 'bold',
-            color: task.status === 'failed' ? 'var(--color-error)' :
-              task.progress === 100 ? 'var(--color-success)' : 'var(--color-primary)',
-            marginBottom: 8
+            fontSize: 26,
+            fontWeight: 600,
+            color: task.status === 'failed' ? token.colorError :
+              task.progress === 100 ? token.colorSuccess : token.colorText,
+            marginBottom: 4,
+            fontVariantNumeric: 'tabular-nums',
           }}>
             {task.progress}%
           </div>
@@ -329,10 +332,10 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         {/* 状态消息 */}
         <div style={{
           textAlign: 'center',
-          fontSize: 16,
-          color: 'var(--color-text-secondary)',
+          fontSize: 13,
+          color: token.colorTextSecondary,
           minHeight: 24,
-          marginBottom: 16
+          marginBottom: 8
         }}>
           {task.status === 'pending' && '分析任务已创建，正在队列中...'}
           {task.status === 'running' && '正在提取关键信息和记忆片段...'}
@@ -357,9 +360,9 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
         {task.status !== 'failed' && (
           <div style={{
             textAlign: 'center',
-            fontSize: 13,
-            color: 'var(--color-text-tertiary)',
-            marginTop: 16
+            fontSize: 12,
+            color: token.colorTextTertiary,
+            marginTop: 12
           }}>
             分析过程需要一定时间，请耐心等待
           </div>
@@ -379,10 +382,147 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
     }));
   };
 
+  const renderScoreCard = (label: string, score: number) => (
+    <div
+      key={label}
+      style={{
+        padding: isMobile ? '11px 12px' : '13px 15px',
+        border: `1px solid ${token.colorBorderSecondary}`,
+        borderRadius: 8,
+        background: 'transparent',
+      }}
+    >
+      <div style={{ fontSize: 11, color: token.colorTextTertiary }}>{label}</div>
+      <div style={{
+        marginTop: 4,
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 3,
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        <span style={{ fontSize: 21, fontWeight: 600, lineHeight: 1.1, color: token.colorText }}>
+          {score}
+        </span>
+        <span style={{ fontSize: 11, color: token.colorTextTertiary }}>/ 10</span>
+      </div>
+    </div>
+  );
+
+  const renderAnalysisReport = (report: string) => {
+    const lines = report.split('\n');
+    const blocks: Array<{ heading: string | null; lines: string[] }> = [];
+    let current: { heading: string | null; lines: string[] } = { heading: null, lines: [] };
+
+    lines.forEach((rawLine) => {
+      const line = rawLine.trimEnd();
+      const headingMatch = line.match(/^【(.+)】\s*(.*)$/);
+      if (headingMatch) {
+        if (current.heading || current.lines.some((item) => item.trim())) {
+          blocks.push(current);
+        }
+        current = { heading: headingMatch[1], lines: headingMatch[2] ? [headingMatch[2]] : [] };
+        return;
+      }
+      if (line.startsWith('===')) return;
+      if (!line.trim() && current.lines.length === 0) return;
+      current.lines.push(line);
+    });
+    if (current.heading || current.lines.some((item) => item.trim())) blocks.push(current);
+
+    const visibleBlocks = blocks.filter((block) => (
+      block.heading !== '整体评分' && block.heading !== '改进建议'
+    ));
+
+    return (
+      <div style={{ display: 'grid', gap: 14 }}>
+        {visibleBlocks.map((block, blockIndex) => (
+          <div key={`${block.heading || 'body'}-${blockIndex}`}>
+            {block.heading && (
+              <div style={{
+                marginBottom: 5,
+                fontSize: 12,
+                fontWeight: 600,
+                color: token.colorTextSecondary,
+              }}>
+                {block.heading}
+              </div>
+            )}
+            <div style={{ display: 'grid', gap: 4 }}>
+              {block.lines.map((line, lineIndex) => {
+                const content = line.replace(/^\s*[•·]\s*/, '').trim();
+                if (!content) return null;
+                const isListItem = /^\s*([•·]|\d+[.、])/.test(line);
+                return (
+                  <div
+                    key={lineIndex}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: isListItem ? 7 : 0,
+                      fontSize: 13,
+                      lineHeight: 1.7,
+                      color: token.colorTextSecondary,
+                    }}
+                  >
+                    {isListItem && (
+                      <span style={{
+                        width: 3,
+                        height: 3,
+                        marginTop: 9,
+                        borderRadius: '50%',
+                        background: token.colorTextTertiary,
+                        flexShrink: 0,
+                      }} />
+                    )}
+                    <span style={{ overflowWrap: 'anywhere' }}>{content}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderSectionTitle = (icon: ReactNode, title: string, extra?: ReactNode) => (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      marginBottom: 10,
+      fontSize: 13,
+      fontWeight: 600,
+      color: token.colorText,
+    }}>
+      <span style={{ color: token.colorTextTertiary, display: 'inline-flex' }}>{icon}</span>
+      <span>{title}</span>
+      {extra && <span style={{ marginLeft: 'auto', fontWeight: 400 }}>{extra}</span>}
+    </div>
+  );
+
   const renderAnalysisResult = () => {
     if (!analysis) return null;
 
     const { analysis: analysis_data, memories, entity_changes } = analysis;
+    const tabPanelStyle = {
+      display: 'grid',
+      gap: 20,
+      paddingTop: 2,
+      paddingBottom: 8,
+      paddingRight: isMobile ? 0 : 4,
+    } as const;
+    const sectionStyle = {
+      padding: isMobile ? '14px 14px 15px' : '17px 18px 18px',
+      border: `1px solid ${token.colorBorderSecondary}`,
+      borderRadius: 10,
+      background: token.colorBgContainer,
+    } as const;
+    const listItemStyle = {
+      padding: isMobile ? '11px 0' : '12px 0',
+      borderBottom: `1px solid ${token.colorBorderSecondary}`,
+    } as const;
+    const metaTagStyle = { marginInlineEnd: 6, marginBottom: 4 } as const;
     const hasEntityChanges = Boolean(
       entity_changes && (
         (entity_changes.careers?.changes?.length || 0) > 0 ||
@@ -391,386 +531,542 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
       )
     );
 
-    return (
-      <Tabs
-        defaultActiveKey="overview"
-        style={{ height: '100%' }}
-        items={[
-          {
-            key: 'overview',
-            label: '概览',
-            icon: <TrophyOutlined />,
-            children: (
-              <div style={{ height: isMobile ? 'calc(80vh - 180px)' : 'calc(90vh - 220px)', overflowY: 'auto', paddingRight: '8px' }}>
-                {/* 根据建议重新生成按钮 */}
-                {analysis_data.suggestions && analysis_data.suggestions.length > 0 && (
-                  <Alert
-                    message="发现改进建议"
-                    description={
-                      <div>
-                        <p style={{ marginBottom: 12 }}>AI已分析出 {analysis_data.suggestions.length} 条改进建议，您可以根据这些建议重新生成章节内容。</p>
-                        <Button
-                          type="primary"
-                          icon={<EditOutlined />}
-                          onClick={() => setRegenerationModalVisible(true)}
-                          size={isMobile ? 'small' : 'middle'}
-                        >
-                          根据建议重新生成
-                        </Button>
-                      </div>
-                    }
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                  />
-                )}
-
-                <Card title="整体评分" style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
-                  <Row gutter={isMobile ? 8 : 16}>
-                    <Col span={isMobile ? 12 : 6}>
-                      <Statistic
-                        title="整体质量"
-                        value={analysis_data.overall_quality_score || 0}
-                        suffix="/ 10"
-                        valueStyle={{ color: 'var(--color-success)' }}
-                      />
-                    </Col>
-                    <Col span={isMobile ? 12 : 6}>
-                      <Statistic
-                        title="节奏把控"
-                        value={analysis_data.pacing_score || 0}
-                        suffix="/ 10"
-                      />
-                    </Col>
-                    <Col span={isMobile ? 12 : 6}>
-                      <Statistic
-                        title="吸引力"
-                        value={analysis_data.engagement_score || 0}
-                        suffix="/ 10"
-                      />
-                    </Col>
-                    <Col span={isMobile ? 12 : 6}>
-                      <Statistic
-                        title="连贯性"
-                        value={analysis_data.coherence_score || 0}
-                        suffix="/ 10"
-                      />
-                    </Col>
-                  </Row>
-                </Card>
-
-                {analysis_data.analysis_report && (
-                  <Card title="分析摘要" style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
-                    <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: isMobile ? 13 : 14 }}>
-                      {analysis_data.analysis_report}
-                    </pre>
-                  </Card>
-                )}
-
-                {hasEntityChanges && entity_changes && (
-                  <Card title="实体联动更新" style={{ marginBottom: 16 }} size={isMobile ? 'small' : 'default'}>
-                    <Row gutter={isMobile ? 8 : 16} style={{ marginBottom: 16 }}>
-                      <Col span={isMobile ? 24 : 8}>
-                        <Statistic
-                          title="职业更新"
-                          value={entity_changes.careers?.updated_count || 0}
-                        />
-                      </Col>
-                      <Col span={isMobile ? 24 : 8}>
-                        <Statistic
-                          title="角色状态/关系更新"
-                          value={
-                            (entity_changes.character_states?.state_updated_count || 0) +
-                            (entity_changes.character_states?.relationship_created_count || 0) +
-                            (entity_changes.character_states?.relationship_updated_count || 0) +
-                            (entity_changes.character_states?.org_updated_count || 0)
-                          }
-                        />
-                      </Col>
-                      <Col span={isMobile ? 24 : 8}>
-                        <Statistic
-                          title="组织状态更新"
-                          value={entity_changes.organization_states?.updated_count || 0}
-                        />
-                      </Col>
-                    </Row>
-
-                    {entity_changes.careers?.changes?.length ? (
-                      <div style={{ marginBottom: 12 }}>
-                        <strong>职业变化：</strong>
-                        <div style={{ marginTop: 8 }}>
-                          {entity_changes.careers.changes.map((change, index) => (
-                            <Tag key={`career-${index}`} color="blue" style={{ marginBottom: 8 }}>
-                              {change}
-                            </Tag>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {entity_changes.character_states?.changes?.length ? (
-                      <div style={{ marginBottom: 12 }}>
-                        <strong>角色/关系变化：</strong>
-                        <List
-                          size="small"
-                          dataSource={entity_changes.character_states.changes}
-                          renderItem={(item) => <List.Item>{item}</List.Item>}
-                        />
-                      </div>
-                    ) : null}
-
-                    {entity_changes.organization_states?.changes?.length ? (
-                      <div>
-                        <strong>组织状态变化：</strong>
-                        <List
-                          size="small"
-                          dataSource={entity_changes.organization_states.changes}
-                          renderItem={(item) => <List.Item>{item}</List.Item>}
-                        />
-                      </div>
-                    ) : null}
-                  </Card>
-                )}
-
-                {analysis_data.suggestions && analysis_data.suggestions.length > 0 && (
-                  <Card title={<><BulbOutlined /> 改进建议</>} size={isMobile ? 'small' : 'default'}>
-                    <List
-                      dataSource={analysis_data.suggestions}
-                      renderItem={(item, index) => (
-                        <List.Item>
-                          <span>{index + 1}. {item}</span>
-                        </List.Item>
-                      )}
-                    />
-                  </Card>
-                )}
+    const tabItems = [
+      {
+        key: 'overview',
+        label: '概览',
+        icon: <TrophyOutlined />,
+        children: (
+          <div style={tabPanelStyle}>
+            {analysis_data.suggestions && analysis_data.suggestions.length > 0 && (
+              <div style={{
+                ...sectionStyle,
+                padding: isMobile ? '12px 14px' : '13px 16px',
+                display: 'flex',
+                alignItems: isMobile ? 'flex-start' : 'center',
+                flexDirection: isMobile ? 'column' : 'row',
+                gap: 10,
+                background: token.colorFillQuaternary,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
+                    {analysis_data.suggestions.length} 条改进建议
+                  </div>
+                  <div style={{ marginTop: 3, fontSize: 12, lineHeight: 1.6, color: token.colorTextSecondary }}>
+                    可以按建议重写本章，或先查看下方建议再决定。
+                  </div>
+                </div>
+                <Button
+                  icon={<EditOutlined />}
+                  onClick={() => setRegenerationModalVisible(true)}
+                  size="small"
+                  style={{ flexShrink: 0 }}
+                >
+                  按建议重写
+                </Button>
               </div>
-            )
-          },
-          {
-            key: 'hooks',
-            label: `钩子 (${analysis_data.hooks?.length || 0})`,
-            icon: <ThunderboltOutlined />,
-            children: (
-              <div style={{ height: isMobile ? 'calc(80vh - 180px)' : 'calc(90vh - 220px)', overflowY: 'auto', paddingRight: '8px' }}>
-                <Card size={isMobile ? 'small' : 'default'}>
-                  {analysis_data.hooks && analysis_data.hooks.length > 0 ? (
-                    <List
-                      dataSource={analysis_data.hooks}
-                      renderItem={(hook) => (
-                        <List.Item>
-                          <List.Item.Meta
-                            title={
-                              <div>
-                                <Tag color="blue">{hook.type}</Tag>
-                                <Tag color="orange">{hook.position}</Tag>
-                                <Tag color="red">强度: {hook.strength}/10</Tag>
-                              </div>
-                            }
-                            description={hook.content}
-                          />
-                        </List.Item>
-                      )}
-                    />
-                  ) : (
-                    <Empty description="暂无钩子" />
-                  )}
-                </Card>
+            )}
+
+            <section style={sectionStyle}>
+              {renderSectionTitle(<TrophyOutlined />, '整体评分')}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
+                gap: isMobile ? 8 : 10,
+              }}>
+                {renderScoreCard('整体质量', analysis_data.overall_quality_score || 0)}
+                {renderScoreCard('节奏把控', analysis_data.pacing_score || 0)}
+                {renderScoreCard('吸引力', analysis_data.engagement_score || 0)}
+                {renderScoreCard('连贯性', analysis_data.coherence_score || 0)}
               </div>
-            )
-          },
-          {
-            key: 'foreshadows',
-            label: `伏笔 (${analysis_data.foreshadows?.length || 0})`,
-            icon: <FireOutlined />,
-            children: (
-              <div style={{ height: isMobile ? 'calc(80vh - 180px)' : 'calc(90vh - 220px)', overflowY: 'auto', paddingRight: '8px' }}>
-                <Card size={isMobile ? 'small' : 'default'}>
-                  {analysis_data.foreshadows && analysis_data.foreshadows.length > 0 ? (
-                    <List
-                      dataSource={analysis_data.foreshadows}
-                      renderItem={(foreshadow) => (
-                        <List.Item>
-                          <List.Item.Meta
-                            title={
-                              <div>
-                                <Tag color={foreshadow.type === 'planted' ? 'green' : 'purple'}>
-                                  {foreshadow.type === 'planted' ? '已埋下' : '已回收'}
-                                </Tag>
-                                <Tag>强度: {foreshadow.strength}/10</Tag>
-                                <Tag>隐藏度: {foreshadow.subtlety}/10</Tag>
-                                {foreshadow.reference_chapter && (
-                                  <Tag color="cyan">呼应第{foreshadow.reference_chapter}章</Tag>
-                                )}
-                              </div>
-                            }
-                            description={foreshadow.content}
-                          />
-                        </List.Item>
-                      )}
-                    />
-                  ) : (
-                    <Empty description="暂无伏笔" />
-                  )}
-                </Card>
-              </div>
-            )
-          },
-          {
-            key: 'emotion',
-            label: '情感曲线',
-            icon: <HeartOutlined />,
-            children: (
-              <div style={{ height: isMobile ? 'calc(80vh - 180px)' : 'calc(90vh - 220px)', overflowY: 'auto', paddingRight: '8px' }}>
-                <Card size={isMobile ? 'small' : 'default'}>
-                  {analysis_data.emotional_tone ? (
-                    <div>
-                      <Row gutter={isMobile ? 8 : 16} style={{ marginBottom: isMobile ? 16 : 24 }}>
-                        <Col span={isMobile ? 24 : 12}>
-                          <Statistic
-                            title="主导情绪"
-                            value={analysis_data.emotional_tone}
-                          />
-                        </Col>
-                        <Col span={isMobile ? 24 : 12}>
-                          <Statistic
-                            title="情感强度"
-                            value={(analysis_data.emotional_intensity * 10).toFixed(1)}
-                            suffix="/ 10"
-                          />
-                        </Col>
-                      </Row>
-                      <Card type="inner" title="剧情阶段" size="small">
-                        <p><strong>阶段：</strong>{analysis_data.plot_stage}</p>
-                        <p><strong>冲突等级：</strong>{analysis_data.conflict_level} / 10</p>
-                        {analysis_data.conflict_types && analysis_data.conflict_types.length > 0 && (
-                          <div style={{ marginTop: 8 }}>
-                            <strong>冲突类型：</strong>
-                            {analysis_data.conflict_types.map((type, idx) => (
-                              <Tag key={idx} color="red" style={{ margin: 4 }}>
-                                {type}
-                              </Tag>
-                            ))}
+            </section>
+
+            {analysis_data.analysis_report && (
+              <section style={sectionStyle}>
+                {renderSectionTitle(<FileTextOutlined />, '分析摘要')}
+                {renderAnalysisReport(analysis_data.analysis_report)}
+              </section>
+            )}
+
+            {hasEntityChanges && entity_changes && (
+              <section style={sectionStyle}>
+                {renderSectionTitle(<ReloadOutlined />, '实体联动更新')}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
+                  gap: 8,
+                  marginBottom: 14,
+                }}>
+                  {[
+                    { label: '职业更新', value: entity_changes.careers?.updated_count || 0 },
+                    {
+                      label: '角色 / 关系更新',
+                      value:
+                        (entity_changes.character_states?.state_updated_count || 0) +
+                        (entity_changes.character_states?.relationship_created_count || 0) +
+                        (entity_changes.character_states?.relationship_updated_count || 0) +
+                        (entity_changes.character_states?.org_updated_count || 0),
+                    },
+                    { label: '组织状态更新', value: entity_changes.organization_states?.updated_count || 0 },
+                  ].map((item) => (
+                    <div key={item.label} style={{
+                      display: 'flex',
+                      alignItems: 'baseline',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      padding: '8px 10px',
+                      borderRadius: 7,
+                      background: token.colorFillQuaternary,
+                      fontSize: 12,
+                      color: token.colorTextSecondary,
+                    }}>
+                      <span>{item.label}</span>
+                      <strong style={{ fontSize: 15, color: token.colorText }}>{item.value}</strong>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {[
+                    { label: '职业变化', changes: entity_changes.careers?.changes || [] },
+                    { label: '角色 / 关系变化', changes: entity_changes.character_states?.changes || [] },
+                    { label: '组织状态变化', changes: entity_changes.organization_states?.changes || [] },
+                  ].filter((item) => item.changes.length > 0).map((item) => (
+                    <div key={item.label}>
+                      <div style={{ marginBottom: 5, fontSize: 12, fontWeight: 500, color: token.colorTextSecondary }}>
+                        {item.label}
+                      </div>
+                      <div style={{ display: 'grid', gap: 4 }}>
+                        {item.changes.map((change, index) => (
+                          <div key={index} style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 7,
+                            fontSize: 13,
+                            lineHeight: 1.65,
+                            color: token.colorTextSecondary,
+                          }}>
+                            <span style={{
+                              width: 3,
+                              height: 3,
+                              marginTop: 8,
+                              borderRadius: '50%',
+                              background: token.colorTextTertiary,
+                              flexShrink: 0,
+                            }} />
+                            <span style={{ overflowWrap: 'anywhere' }}>{change}</span>
                           </div>
-                        )}
-                      </Card>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {analysis_data.suggestions && analysis_data.suggestions.length > 0 && (
+              <section style={sectionStyle}>
+                {renderSectionTitle(<BulbOutlined />, '改进建议')}
+                <div style={{ display: 'grid', gap: 0 }}>
+                  {analysis_data.suggestions.map((suggestion, index) => (
+                    <div key={index} style={{
+                      ...listItemStyle,
+                      borderBottom: index < analysis_data.suggestions.length - 1
+                        ? `1px solid ${token.colorBorderSecondary}`
+                        : 'none',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 9,
+                    }}>
+                      <span style={{
+                        flexShrink: 0,
+                        minWidth: 18,
+                        fontSize: 11,
+                        lineHeight: '22px',
+                        color: token.colorTextTertiary,
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {String(index + 1).padStart(2, '0')}
+                      </span>
+                      <span style={{ fontSize: 13, lineHeight: 1.7, color: token.colorTextSecondary }}>
+                        {suggestion}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: 'hooks',
+        label: `钩子 (${analysis_data.hooks?.length || 0})`,
+        icon: <ThunderboltOutlined />,
+        children: (
+              <div style={tabPanelStyle}>
+                <section style={sectionStyle}>
+                  {renderSectionTitle(
+                    <ThunderboltOutlined />,
+                    '叙事钩子',
+                    <span style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                      {analysis_data.hooks?.length || 0} 个
+                    </span>,
+                  )}
+                  {analysis_data.hooks && analysis_data.hooks.length > 0 ? (
+                    <div>
+                      {analysis_data.hooks.map((hook, index) => (
+                        <div key={index} style={{
+                          ...listItemStyle,
+                          borderBottom: index < analysis_data.hooks.length - 1
+                            ? `1px solid ${token.colorBorderSecondary}`
+                            : 'none',
+                        }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                            <Tag color="blue" style={metaTagStyle}>{hook.type}</Tag>
+                            <Tag color="orange" style={metaTagStyle}>{hook.position}</Tag>
+                            <Tag style={metaTagStyle}>强度 {hook.strength}/10</Tag>
+                          </div>
+                          <div style={{ fontSize: 13, lineHeight: 1.7, color: token.colorTextSecondary }}>
+                            {hook.content}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ) : (
-                    <Empty description="暂无情感分析" />
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无钩子" />
                   )}
-                </Card>
+                </section>
               </div>
             )
           },
-          {
-            key: 'characters',
-            label: `角色 (${analysis_data.character_states?.length || 0})`,
-            icon: <TeamOutlined />,
-            children: (
-              <div style={{ height: isMobile ? 'calc(80vh - 180px)' : 'calc(90vh - 220px)', overflowY: 'auto', paddingRight: '8px' }}>
-                <Card size={isMobile ? 'small' : 'default'}>
+      {
+        key: 'foreshadows',
+        label: `伏笔 (${analysis_data.foreshadows?.length || 0})`,
+        icon: <FireOutlined />,
+        children: (
+              <div style={tabPanelStyle}>
+                <section style={sectionStyle}>
+                  {renderSectionTitle(
+                    <FireOutlined />,
+                    '伏笔',
+                    <span style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                      {analysis_data.foreshadows?.length || 0} 个
+                    </span>,
+                  )}
+                  {analysis_data.foreshadows && analysis_data.foreshadows.length > 0 ? (
+                    <div>
+                      {analysis_data.foreshadows.map((foreshadow, index) => (
+                        <div key={index} style={{
+                          ...listItemStyle,
+                          borderBottom: index < analysis_data.foreshadows.length - 1
+                            ? `1px solid ${token.colorBorderSecondary}`
+                            : 'none',
+                        }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                            <Tag
+                              color={foreshadow.type === 'planted' ? 'green' : 'purple'}
+                              style={metaTagStyle}
+                            >
+                              {foreshadow.type === 'planted' ? '已埋下' : '已回收'}
+                            </Tag>
+                            <Tag style={metaTagStyle}>强度 {foreshadow.strength}/10</Tag>
+                            <Tag style={metaTagStyle}>隐藏度 {foreshadow.subtlety}/10</Tag>
+                            {foreshadow.reference_chapter && (
+                              <Tag color="cyan" style={metaTagStyle}>呼应第{foreshadow.reference_chapter}章</Tag>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 13, lineHeight: 1.7, color: token.colorTextSecondary }}>
+                            {foreshadow.content}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无伏笔" />
+                  )}
+                </section>
+              </div>
+            )
+          },
+      {
+        key: 'emotion',
+        label: '情感曲线',
+        icon: <HeartOutlined />,
+        children: (
+              <div style={tabPanelStyle}>
+                <section style={sectionStyle}>
+                  {renderSectionTitle(<HeartOutlined />, '情绪与冲突')}
+                  {analysis_data.emotional_tone ? (
+                    <>
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+                        gap: 8,
+                        marginBottom: 14,
+                      }}>
+                        <div style={{ padding: '10px 12px', borderRadius: 7, background: token.colorFillQuaternary }}>
+                          <div style={{ fontSize: 11, color: token.colorTextTertiary }}>主导情绪</div>
+                          <div style={{ marginTop: 3, fontSize: 16, fontWeight: 600, color: token.colorText }}>
+                            {analysis_data.emotional_tone}
+                          </div>
+                        </div>
+                        <div style={{ padding: '10px 12px', borderRadius: 7, background: token.colorFillQuaternary }}>
+                          <div style={{ fontSize: 11, color: token.colorTextTertiary }}>情感强度</div>
+                          <div style={{ marginTop: 3, fontSize: 16, fontWeight: 600, color: token.colorText }}>
+                            {(analysis_data.emotional_intensity * 10).toFixed(1)}
+                            <span style={{ marginLeft: 3, fontSize: 11, fontWeight: 400, color: token.colorTextTertiary }}>
+                              / 10
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{
+                        display: 'grid',
+                        gap: 8,
+                        paddingTop: 13,
+                        borderTop: `1px solid ${token.colorBorderSecondary}`,
+                      }}>
+                        {[
+                          { label: '剧情阶段', value: analysis_data.plot_stage },
+                          { label: '冲突等级', value: `${analysis_data.conflict_level} / 10` },
+                        ].map((item) => (
+                          <div key={item.label} style={{ display: 'flex', alignItems: 'baseline', gap: 14, fontSize: 13 }}>
+                            <span style={{ width: 60, flexShrink: 0, color: token.colorTextTertiary }}>{item.label}</span>
+                            <span style={{ color: token.colorText }}>{item.value}</span>
+                          </div>
+                        ))}
+                        {analysis_data.conflict_types && analysis_data.conflict_types.length > 0 && (
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, fontSize: 13 }}>
+                            <span style={{ width: 60, flexShrink: 0, lineHeight: '22px', color: token.colorTextTertiary }}>
+                              冲突类型
+                            </span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                              {analysis_data.conflict_types.map((type, idx) => (
+                                <Tag key={idx} style={metaTagStyle}>{type}</Tag>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无情感分析" />
+                  )}
+                </section>
+              </div>
+            )
+          },
+      {
+        key: 'characters',
+        label: `角色 (${analysis_data.character_states?.length || 0})`,
+        icon: <TeamOutlined />,
+        children: (
+              <div style={tabPanelStyle}>
+                <section style={sectionStyle}>
+                  {renderSectionTitle(
+                    <TeamOutlined />,
+                    '角色状态',
+                    <span style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                      {analysis_data.character_states?.length || 0} 个
+                    </span>,
+                  )}
                   {analysis_data.character_states && analysis_data.character_states.length > 0 ? (
-                    <List
-                      dataSource={analysis_data.character_states}
-                      renderItem={(char) => (
-                        <List.Item>
-                          <Card
-                            type="inner"
-                            title={char.character_name}
-                            size="small"
-                            style={{ width: '100%' }}
-                          >
-                            <p><strong>状态变化：</strong>{char.state_before} → {char.state_after}</p>
-                            <p><strong>心理变化：</strong>{char.psychological_change}</p>
-                            <p><strong>关键事件：</strong>{char.key_event}</p>
-                            {char.relationship_changes && Object.keys(char.relationship_changes).length > 0 && (
-                              <div>
-                                <strong>关系变化：</strong>
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      {analysis_data.character_states.map((char, index) => (
+                        <div key={index} style={{
+                          padding: isMobile ? '11px 12px' : '12px 14px',
+                          border: `1px solid ${token.colorBorderSecondary}`,
+                          borderRadius: 8,
+                        }}>
+                          <div style={{ marginBottom: 8, fontSize: 13, fontWeight: 600, color: token.colorText }}>
+                            {char.character_name}
+                          </div>
+                          <div style={{ display: 'grid', gap: 5, fontSize: 13, lineHeight: 1.65 }}>
+                            {[
+                              { label: '状态变化', value: `${char.state_before} → ${char.state_after}` },
+                              { label: '心理变化', value: char.psychological_change },
+                              { label: '关键事件', value: char.key_event },
+                            ].map((item) => (
+                              <div key={item.label} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                <span style={{ width: 56, flexShrink: 0, color: token.colorTextTertiary }}>{item.label}</span>
+                                <span style={{ color: token.colorTextSecondary }}>{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {char.relationship_changes && Object.keys(char.relationship_changes).length > 0 && (
+                            <div style={{
+                              marginTop: 9,
+                              paddingTop: 8,
+                              borderTop: `1px solid ${token.colorBorderSecondary}`,
+                            }}>
+                              <div style={{ marginBottom: 5, fontSize: 11, color: token.colorTextTertiary }}>关系变化</div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                                 {Object.entries(char.relationship_changes).map(([name, change]) => (
-                                  <Tag key={name} color="blue" style={{ margin: 4 }}>
-                                    与{name}: {change}
+                                  <Tag key={name} style={metaTagStyle}>
+                                    与{name}：{change}
                                   </Tag>
                                 ))}
                               </div>
-                            )}
-                          </Card>
-                        </List.Item>
-                      )}
-                    />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   ) : (
-                    <Empty description="暂无角色分析" />
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无角色分析" />
                   )}
-                </Card>
+                </section>
               </div>
             )
           },
-          {
-            key: 'memories',
-            label: `记忆 (${memories?.length || 0})`,
-            icon: <FireOutlined />,
-            children: (
-              <div style={{ height: isMobile ? 'calc(80vh - 180px)' : 'calc(90vh - 220px)', overflowY: 'auto', paddingRight: '8px' }}>
-                <Card size={isMobile ? 'small' : 'default'}>
-                  {memories && memories.length > 0 ? (
-                    <List
-                      dataSource={memories}
-                      renderItem={(memory) => (
-                        <List.Item>
-                          <List.Item.Meta
-                            title={
-                              <div>
-                                <Tag color="blue">{memory.type}</Tag>
-                                <Tag color="orange">重要性: {memory.importance.toFixed(1)}</Tag>
-                                {memory.is_foreshadow === 1 && <Tag color="green">已埋下伏笔</Tag>}
-                                {memory.is_foreshadow === 2 && <Tag color="purple">已回收伏笔</Tag>}
-                                <span style={{ marginLeft: 8 }}>{memory.title}</span>
-                              </div>
-                            }
-                            description={
-                              <div>
-                                <p>{memory.content}</p>
-                                <div>
-                                  {memory.tags.map((tag, idx) => (
-                                    <Tag key={idx} style={{ margin: 2 }}>{tag}</Tag>
-                                  ))}
-                                </div>
-                              </div>
-                            }
-                          />
-                        </List.Item>
-                      )}
-                    />
-                  ) : (
-                    <Empty description="暂无记忆片段" />
+      {
+        key: 'memories',
+        label: `记忆 (${memories?.length || 0})`,
+        icon: <FireOutlined />,
+        children: (
+              <div style={tabPanelStyle}>
+                <section style={sectionStyle}>
+                  {renderSectionTitle(
+                    <FileTextOutlined />,
+                    '记忆片段',
+                    <span style={{ fontSize: 11, color: token.colorTextTertiary }}>
+                      {memories?.length || 0} 条
+                    </span>,
                   )}
-                </Card>
+                  {memories && memories.length > 0 ? (
+                    <div>
+                      {memories.map((memory, index) => (
+                        <div key={memory.id || index} style={{
+                          ...listItemStyle,
+                          borderBottom: index < memories.length - 1
+                            ? `1px solid ${token.colorBorderSecondary}`
+                            : 'none',
+                        }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginBottom: 5 }}>
+                            <Tag color="blue" style={metaTagStyle}>{memory.type}</Tag>
+                            <Tag style={metaTagStyle}>重要性 {memory.importance.toFixed(1)}</Tag>
+                            {memory.is_foreshadow === 1 && <Tag color="green" style={metaTagStyle}>已埋下伏笔</Tag>}
+                            {memory.is_foreshadow === 2 && <Tag color="purple" style={metaTagStyle}>已回收伏笔</Tag>}
+                            <span style={{ marginLeft: 2, fontSize: 13, fontWeight: 500, color: token.colorText }}>
+                              {memory.title}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 13, lineHeight: 1.7, color: token.colorTextSecondary }}>
+                            {memory.content}
+                          </div>
+                          {memory.tags.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 7 }}>
+                              {memory.tags.map((tag, idx) => (
+                                <Tag key={idx} style={metaTagStyle}>{tag}</Tag>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无记忆片段" />
+                  )}
+                </section>
               </div>
             )
-          }
-        ]}
+      },
+    ];
+
+    const renderTabContent = () => {
+      const current = tabItems.find((item) => item.key === activeTab) || tabItems[0];
+      return current.children;
+    };
+
+    if (isMobile) {
+      return (
+        <div>
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: tabItems.map((item) => ({ key: item.key, icon: item.icon, label: item.label })),
+              selectable: true,
+              selectedKeys: [activeTab],
+              onClick: ({ key }) => setActiveTab(key),
+            }}
+          >
+            <Button block style={{ marginBottom: 12 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                {tabItems.find((item) => item.key === activeTab)?.icon}
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'left' }}>
+                  {tabItems.find((item) => item.key === activeTab)?.label || '概览'}
+                </span>
+                <DownOutlined style={{ fontSize: 10, color: token.colorTextTertiary }} />
+              </span>
+            </Button>
+          </Dropdown>
+          {renderTabContent()}
+        </div>
+      );
+    }
+
+    return (
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={tabItems}
       />
     );
   };
 
   return (
     <Modal
-      title="章节分析"
+      title={(
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
+          <div style={{
+            width: 28,
+            height: 28,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 7,
+            background: token.colorFillTertiary,
+            color: token.colorTextSecondary,
+            fontSize: 14,
+          }}>
+            <FundOutlined />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.4, color: token.colorText }}>
+              章节分析
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 400, lineHeight: 1.4, color: token.colorTextTertiary }}>
+              节奏、情绪、角色与伏笔
+            </div>
+          </div>
+        </div>
+      )}
       open={visible}
       onCancel={onClose}
-      width={isMobile ? 'calc(100vw - 32px)' : '90%'}
+      width={isMobile ? 'calc(100vw - 24px)' : 860}
       centered
       style={{
-        maxWidth: isMobile ? 'calc(100vw - 32px)' : '1400px',
-        margin: isMobile ? '0 auto' : undefined,
-        padding: isMobile ? '0 16px' : undefined
+        maxWidth: isMobile ? 'calc(100vw - 24px)' : 'calc(100vw - 48px)',
       }}
       styles={{
+        header: {
+          padding: isMobile ? '13px 16px' : '16px 22px',
+          marginBottom: 0,
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        },
         body: {
-          padding: isMobile ? '12px' : '24px',
-          paddingBottom: 0,
-          maxHeight: isMobile ? 'calc(100vh - 200px)' : 'calc(90vh - 150px)',
-          overflowY: 'auto'
-        }
+          padding: isMobile ? '10px 14px 16px' : '14px 22px 20px',
+          maxHeight: isMobile ? 'calc(100vh - 180px)' : 'calc(100vh - 200px)',
+          overflowY: 'auto',
+        },
+        footer: {
+          marginTop: 0,
+          padding: isMobile ? '10px 14px' : '12px 22px',
+          borderTop: `1px solid ${token.colorBorderSecondary}`,
+        },
       }}
       footer={[
         <Button key="close" onClick={onClose} size={isMobile ? 'small' : 'middle'}>
@@ -816,18 +1112,21 @@ export default function ChapterAnalysis({ chapterId, visible, onClose }: Chapter
       ].filter(Boolean)}
     >
       {loading && !task && (
-        <div style={{ textAlign: 'center', padding: '48px' }}>
+        <div style={{ textAlign: 'center', padding: '44px 16px' }}>
           <Spin size="large" />
-          <p style={{ marginTop: 16 }}>加载中...</p>
+          <p style={{ marginTop: 12, marginBottom: 0, fontSize: 13, color: token.colorTextTertiary }}>
+            正在读取分析结果…
+          </p>
         </div>
       )}
 
       {error && (
         <Alert
-          message="错误"
+          message="暂时无法读取分析"
           description={error}
           type="error"
           showIcon
+          style={{ marginBottom: task ? 16 : 0 }}
         />
       )}
 

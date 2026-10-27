@@ -2,6 +2,11 @@ import axios from 'axios';
 import { message } from 'antd';
 import { ssePost } from '../utils/sseClient';
 import type { SSEClientOptions } from '../utils/sseClient';
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    skipErrorToast?: boolean;
+  }
+}
 import type {
   User,
   AuthUrlResponse,
@@ -26,8 +31,13 @@ import type {
   ChapterCreate,
   ChapterUpdate,
   GenerateOutlineRequest,
+  GenerateOutlineDirectionsRequest,
+  OutlineDirectionSuggestion,
   GenerateCharacterRequest,
   PolishTextRequest,
+  PolishCheckResult,
+  PolishResult,
+  PolishNormalizeResult,
   GenerateCharactersResponse,
   GenerateOutlineResponse,
   Settings,
@@ -53,10 +63,14 @@ import type {
   MCPTool,
   MCPToolCallRequest,
   MCPToolCallResponse,
-  APIKeyPreset,
-  PresetCreateRequest,
-  PresetUpdateRequest,
-  PresetListResponse,
+  TextModelConfig,
+  TextModelConfigCreateRequest,
+  TextModelConfigUpdateRequest,
+  TextModelConfigListResponse,
+  ImageModelConfig,
+  ImageModelConfigCreateRequest,
+  ImageModelConfigUpdateRequest,
+  ImageModelConfigListResponse,
   ChapterPlanItem,
   BookImportTask,
   BookImportPreview,
@@ -65,6 +79,7 @@ import type {
   BookImportResult,
   BookImportRetryResult,
   BatchAnalysisStatusResponse,
+  AnalysisMonitorTask,
   BatchAnalyzeUnanalyzedRequest,
   BatchAnalyzeUnanalyzedResponse,
   AgentConversation,
@@ -105,6 +120,7 @@ api.interceptors.response.use(
     let errorMessage = '请求失败';
     // 登录页上的「未登录」401 属于预期状态（页面本身就在等待登录），不弹错误提示
     let silent = false;
+    const skipErrorToast = Boolean(error.config?.skipErrorToast);
 
     if (error.response) {
       const status = error.response.status;
@@ -139,6 +155,9 @@ api.interceptors.response.use(
         case 404:
           errorMessage = data?.detail || '请求的资源不存在';
           break;
+        case 409:
+          errorMessage = data?.detail?.message || data?.detail || '资源已存在';
+          break;
         case 422:
           errorMessage = data?.detail || '请求参数验证失败';
           if (data?.errors) {
@@ -160,7 +179,7 @@ api.interceptors.response.use(
       errorMessage = error.message || '请求失败';
     }
 
-    if (!silent) {
+    if (!silent && !skipErrorToast) {
       message.error(errorMessage);
     }
     console.error('API Error:', errorMessage, error);
@@ -304,23 +323,25 @@ export const settingsApi = {
       suggestions?: string[];
     }>('/settings/check-function-calling', params),
 
-  // API配置预设管理
-  getPresets: () =>
-    api.get<unknown, PresetListResponse>('/settings/presets'),
+  // 文本模型配置
+  getTextModels: () =>
+    api.get<unknown, TextModelConfigListResponse>('/settings/text-models'),
 
-  createPreset: (data: PresetCreateRequest) =>
-    api.post<unknown, APIKeyPreset>('/settings/presets', data),
+  createTextModel: (data: TextModelConfigCreateRequest) =>
+    api.post<unknown, TextModelConfig>('/settings/text-models', data),
 
-  updatePreset: (presetId: string, data: PresetUpdateRequest) =>
-    api.put<unknown, APIKeyPreset>(`/settings/presets/${presetId}`, data),
+  updateTextModel: (configId: string, data: TextModelConfigUpdateRequest) =>
+    api.put<unknown, TextModelConfig>(`/settings/text-models/${configId}`, data),
 
-  deletePreset: (presetId: string) =>
-    api.delete<unknown, { message: string; preset_id: string }>(`/settings/presets/${presetId}`),
+  activateTextModel: (configId: string) =>
+    api.post<unknown, { message: string; config_id: string; config_name: string }>(
+      `/settings/text-models/${configId}/activate`,
+    ),
 
-  activatePreset: (presetId: string) =>
-    api.post<unknown, { message: string; preset_id: string; preset_name: string }>(`/settings/presets/${presetId}/activate`),
+  deleteTextModel: (configId: string) =>
+    api.delete<unknown, { message: string; config_id: string }>(`/settings/text-models/${configId}`),
 
-  testPreset: (presetId: string) =>
+  testTextModel: (configId: string) =>
     api.post<unknown, {
       success: boolean;
       message: string;
@@ -332,17 +353,40 @@ export const settingsApi = {
       error?: string;
       error_type?: string;
       suggestions?: string[];
-    }>(`/settings/presets/${presetId}/test`),
+    }>(`/settings/text-models/${configId}/test`),
 
-  setChapterAnalysisPresetSelection: (presetId?: string) =>
-    api.put<unknown, { message: string; chapter_analysis_preset_id?: string; preset_name?: string }>('/settings/presets/usage/chapter-analysis', {
-      preset_id: presetId || null,
+  setChapterAnalysisTextModel: (configId?: string) =>
+    api.put<unknown, { message: string; chapter_analysis_config_id?: string; config_name?: string }>('/settings/text-models/usage/chapter-analysis', {
+      config_id: configId || null,
     }),
 
-  createPresetFromCurrent: (name: string, description?: string) =>
-    api.post<unknown, APIKeyPreset>('/settings/presets/from-current', null, {
-      params: { name, description }
-    }),
+  // 图片模型配置
+  getImageModels: () =>
+    api.get<unknown, ImageModelConfigListResponse>('/settings/image-models'),
+
+  createImageModel: (data: ImageModelConfigCreateRequest) =>
+    api.post<unknown, ImageModelConfig>('/settings/image-models', data),
+
+  updateImageModel: (configId: string, data: ImageModelConfigUpdateRequest) =>
+    api.put<unknown, ImageModelConfig>(`/settings/image-models/${configId}`, data),
+
+  activateImageModel: (configId: string) =>
+    api.post<unknown, { message: string; config_id: string; config_name: string }>(
+      `/settings/image-models/${configId}/activate`,
+    ),
+
+  deleteImageModel: (configId: string) =>
+    api.delete<unknown, { message: string; config_id: string }>(
+      `/settings/image-models/${configId}`,
+    ),
+
+  testImageModel: (configId: string) =>
+    api.post<unknown, {
+      success: boolean;
+      message: string;
+      provider?: string;
+      model?: string;
+    }>(`/settings/image-models/${configId}/test`),
 
   getSystemSMTPSettings: () =>
     api.get<unknown, import('../types').SystemSMTPSettings>('/settings/system/smtp'),
@@ -599,6 +643,13 @@ export const outlineApi = {
   generateOutline: (data: GenerateOutlineRequest) =>
     api.post<unknown, { total: number; items: Outline[] }>('/outlines/generate', data).then(res => res.items),
 
+  generateContinueDirections: (data: GenerateOutlineDirectionsRequest) =>
+    api.post<unknown, { suggestions: OutlineDirectionSuggestion[] }>(
+      '/outlines/continue-directions',
+      data,
+      { timeout: 240000 },
+    ).then(res => res.suggestions),
+
   // 获取大纲关联的章节
   getOutlineChapters: (outlineId: string) =>
     api.get<unknown, {
@@ -797,6 +848,16 @@ export const chapterApi = {
       chapter_ids: data?.chapter_ids && data.chapter_ids.length > 0 ? data.chapter_ids : undefined,
     }),
 
+  getAnalysisMonitor: (projectId: string) =>
+    api.get<unknown, { project_id: string; total: number; items: AnalysisMonitorTask[] }>(
+      `/chapters/project/${projectId}/analysis/monitor`
+    ),
+
+  clearAnalysisMonitor: (projectId: string) =>
+    api.delete<unknown, { project_id: string; removed: number }>(
+      `/chapters/project/${projectId}/analysis/monitor`
+    ),
+
   // 章节重新生成相关
   getRegenerationTasks: (chapterId: string, limit?: number) =>
     api.get<unknown, {
@@ -908,10 +969,17 @@ export const promptWorkshopApi = {
     api.get<unknown, { success: boolean; data: PromptWorkshopItem }>(`/prompt-workshop/items/${itemId}`),
 
   // 导入到本地
-  importItem: (itemId: string, customName?: string) =>
-    api.post<unknown, { success: boolean; message: string; writing_style: WritingStyle }>(
+  importItem: (
+    itemId: string,
+    options?: { customName?: string; duplicateAction?: 'overwrite' | 'copy'; skipErrorToast?: boolean }
+  ) =>
+    api.post<unknown, { success: boolean; message: string; overwritten?: boolean; writing_style: WritingStyle }>(
       `/prompt-workshop/items/${itemId}/import`,
-      { custom_name: customName }
+      {
+        custom_name: options?.customName,
+        duplicate_action: options?.duplicateAction,
+      },
+      { skipErrorToast: options?.skipErrorToast }
     ),
 
   // 点赞
@@ -1020,10 +1088,21 @@ export const announcementApi = {
 
 export const polishApi = {
   polishText: (data: PolishTextRequest) =>
-    api.post<unknown, { polished_text: string }>('/polish', data),
+    api.post<unknown, PolishResult>('/polish', data),
+
+  // 只跑确定性检测不改写，供「先看看有多少 AI 味」使用
+  polishCheck: (text: string) =>
+    api.post<unknown, PolishCheckResult>('/polish/check', { text }),
+
+  // 确定性标点整理（省略号/破折号/分隔线），不调模型、不花 token
+  polishNormalizePunctuation: (text: string) =>
+    api.post<unknown, PolishNormalizeResult>('/polish/normalize-punctuation', { text }),
 
   polishBatch: (texts: string[]) =>
-    api.post<unknown, { polished_texts: string[] }>('/polish/batch', { texts }),
+    api.post<unknown, { total: number; polished_texts: string[]; results: PolishResult[] }>(
+      '/polish/batch',
+      { texts },
+    ),
 };
 export const inspirationApi = {
   // 生成选项建议
@@ -1292,6 +1371,80 @@ export const adminApi = {
     }>(`/admin/users/${userId}`),
 };
 
+// 管理员作品审阅 API（只读）
+export const adminReviewApi = {
+  listUserProjects: (
+    userId: string,
+    params?: { page?: number; limit?: number; q?: string },
+  ) =>
+    api.get<unknown, import('../types').AdminProjectListResponse>(
+      `/admin/users/${userId}/projects`,
+      { params },
+    ),
+
+  getProjectDetail: (projectId: string) =>
+    api.get<unknown, import('../types').AdminProjectDetail>(
+      `/admin/projects/${projectId}`,
+    ),
+
+  listProjectChapters: (projectId: string) =>
+    api.get<unknown, import('../types').AdminChapterListResponse>(
+      `/admin/projects/${projectId}/chapters`,
+    ),
+
+  getChapterDetail: (chapterId: string) =>
+    api.get<unknown, import('../types').AdminChapterDetail>(
+      `/admin/chapters/${chapterId}`,
+    ),
+
+  listAuditLogs: (params?: {
+    admin_id?: string;
+    target_user_id?: string;
+    project_id?: string;
+    project_q?: string;
+    page?: number;
+    limit?: number;
+  }) =>
+    api.get<unknown, import('../types').AdminAccessLogListResponse>(
+      '/admin/audit-logs',
+      { params },
+    ),
+};
+
+// 管理员公共 API 配置
+export const adminApiConfig = {
+  list: () =>
+    api.get<unknown, import('../types').SharedApiConfig[]>('/admin/api-configs'),
+
+  create: (data: import('../types').SharedApiConfigCreateRequest) =>
+    api.post<unknown, import('../types').SharedApiConfig>('/admin/api-configs', data),
+
+  update: (configId: string, data: import('../types').SharedApiConfigUpdateRequest) =>
+    api.put<unknown, import('../types').SharedApiConfig>(`/admin/api-configs/${configId}`, data),
+
+  toggle: (configId: string, isEnabled: boolean) =>
+    api.post<unknown, import('../types').SharedApiConfig>(
+      `/admin/api-configs/${configId}/toggle`,
+      { is_enabled: isEnabled },
+    ),
+
+  remove: (configId: string) =>
+    api.delete<unknown, { message: string; config_id: string }>(`/admin/api-configs/${configId}`),
+
+  test: (configId: string) =>
+    api.post<unknown, {
+      success: boolean;
+      message: string;
+      response_time_ms?: number;
+      provider?: string;
+      model?: string;
+      response_preview?: string;
+      error?: string;
+      error_type?: string;
+      suggestions?: string[];
+    }>(`/admin/api-configs/${configId}/test`),
+};
+
 // 伏笔管理API
 export const foreshadowApi = {
   // 获取项目伏笔列表
@@ -1498,4 +1651,43 @@ export const projectAgentApi = {
       }
     }
   },
+};
+
+export const adminImageApiConfig = {
+  list: () =>
+    api.get<unknown, import('../types').SharedImageApiConfig[]>('/admin/image-api-configs'),
+
+  create: (data: import('../types').SharedImageApiConfigCreateRequest) =>
+    api.post<unknown, import('../types').SharedImageApiConfig>(
+      '/admin/image-api-configs',
+      data,
+    ),
+
+  update: (
+    configId: string,
+    data: import('../types').SharedImageApiConfigUpdateRequest,
+  ) =>
+    api.put<unknown, import('../types').SharedImageApiConfig>(
+      `/admin/image-api-configs/${configId}`,
+      data,
+    ),
+
+  toggle: (configId: string, isEnabled: boolean) =>
+    api.post<unknown, import('../types').SharedImageApiConfig>(
+      `/admin/image-api-configs/${configId}/toggle`,
+      { is_enabled: isEnabled },
+    ),
+
+  remove: (configId: string) =>
+    api.delete<unknown, { message: string; config_id: string }>(
+      `/admin/image-api-configs/${configId}`,
+    ),
+
+  test: (configId: string) =>
+    api.post<unknown, {
+      success: boolean;
+      message: string;
+      provider?: string;
+      model?: string;
+    }>(`/admin/image-api-configs/${configId}/test`),
 };

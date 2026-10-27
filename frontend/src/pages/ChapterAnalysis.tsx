@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Card, List, Button, Space, Empty, Tag, Spin, Alert, Switch, Drawer, message, theme } from 'antd';
+import React, { useState, useEffect, useRef } from 'react';
+import { Button, Empty, Spin, Alert, Switch, Drawer, message, theme } from 'antd';
 import {
   EyeOutlined,
   EyeInvisibleOutlined,
@@ -195,6 +195,20 @@ const ChapterAnalysis: React.FC = () => {
   };
 
   const hasAnnotations = annotationsData && annotationsData.annotations.length > 0;
+  const pageRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(window.innerWidth);
+
+  useEffect(() => {
+    const element = pageRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) setContainerWidth(width);
+    });
+    observer.observe(element);
+    setContainerWidth(element.clientWidth);
+    return () => observer.disconnect();
+  }, [loading]);
 
   if (loading) {
     return (
@@ -204,366 +218,397 @@ const ChapterAnalysis: React.FC = () => {
     );
   }
 
+  const summaryItems = annotationsData
+    ? [
+        { key: 'hook', label: '钩子', count: annotationsData.summary.hooks, color: token.colorError },
+        { key: 'foreshadow', label: '伏笔', count: annotationsData.summary.foreshadows, color: token.colorInfo },
+        { key: 'plot_point', label: '情节点', count: annotationsData.summary.plot_points, color: token.colorSuccess },
+        { key: 'character_event', label: '角色事件', count: annotationsData.summary.character_events, color: token.colorWarning },
+      ].filter((item) => item.count > 0)
+    : [];
+
+  const showChapterPanel = !isMobile && containerWidth >= 720;
+  const showChapterEntry = isMobile || !showChapterPanel;
+  const showSidebarPanel = !isMobile && containerWidth >= 960;
+  const showSidebarEntry = !showSidebarPanel && hasAnnotations;
+
+  const panelStyle: React.CSSProperties = {
+    background: token.colorBgContainer,
+    border: `1px solid ${token.colorBorderSecondary}`,
+    borderRadius: 12,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+    minWidth: 0,
+    overflow: 'hidden',
+  };
+
+  const renderChapterList = () => {
+    if (chapters.length === 0) {
+      return <Empty description="暂无章节" style={{ marginTop: 60 }} />;
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '0 8px 10px' }}>
+        {chapters.map((chapter) => {
+          const isActive = selectedChapter?.id === chapter.id;
+          const hasContent = Boolean(chapter.content && chapter.content.trim() !== '');
+          return (
+            <button
+              key={chapter.id}
+              type="button"
+              onClick={() => handleChapterSelect(chapter.id)}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '9px 10px',
+                border: 'none',
+                borderRadius: 8,
+                background: isActive ? token.colorFillSecondary : 'transparent',
+                cursor: 'pointer',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <div style={{
+                fontSize: 13,
+                fontWeight: isActive ? 600 : 400,
+                color: isActive ? token.colorText : token.colorTextSecondary,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                第{chapter.chapter_number}章 · {chapter.title}
+              </div>
+              <div style={{
+                marginTop: 3,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                fontSize: 11,
+                color: token.colorTextTertiary,
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                <span style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: 3,
+                  background: hasContent ? token.colorSuccess : token.colorBorder,
+                }} />
+                {chapter.word_count || 0} 字
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* 页面标题 - 仅桌面端显示 */}
+    <div
+      ref={pageRef}
+      style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}
+    >
       {!isMobile && (
         <div style={{
-          padding: '16px 0',
+          flexShrink: 0,
+          paddingBottom: 14,
           marginBottom: 16,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`
+          borderBottom: `1px solid ${token.colorBorderSecondary}`,
         }}>
-          <h2 style={{ margin: 0, fontSize: 24 }}>
-            <FundOutlined style={{ marginRight: 8 }} />
+          <h2 style={{
+            margin: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 20,
+            fontWeight: 600,
+            letterSpacing: '-0.01em',
+          }}>
+            <FundOutlined style={{ fontSize: 18, color: token.colorTextSecondary }} />
             剧情分析
           </h2>
+          <div style={{ marginTop: 6, paddingLeft: 26, fontSize: 12.5, color: token.colorTextTertiary }}>
+            查看 AI 在正文中标注的钩子、伏笔与情节点
+          </div>
         </div>
       )}
-      
+
       <div style={{
         flex: 1,
+        minHeight: 0,
         display: 'flex',
         gap: isMobile ? 0 : 16,
         flexDirection: isMobile ? 'column' : 'row',
-        overflow: 'hidden'
       }}>
-        {/* 左侧章节列表 - 桌面端 */}
-        {!isMobile && (
-        <Card
-          title="章节列表"
-          style={{ width: 280, height: '100%', overflow: 'hidden' }}
-          bodyStyle={{ padding: 0, height: 'calc(100% - 57px)', overflow: 'auto' }}
-        >
-          {chapters.length === 0 ? (
-            <Empty description="暂无章节" style={{ marginTop: 60 }} />
-          ) : (
-            <List
-              dataSource={chapters}
-              renderItem={(chapter) => (
-                <List.Item
-                  key={chapter.id}
-                  onClick={() => handleChapterSelect(chapter.id)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '12px 16px',
-                    background: selectedChapter?.id === chapter.id ? token.colorPrimaryBg : 'transparent',
-                    borderLeft: selectedChapter?.id === chapter.id ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
-                  }}
-                >
-                  <List.Item.Meta
-                    title={
-                      <span style={{ fontSize: 14, fontWeight: selectedChapter?.id === chapter.id ? 600 : 400 }}>
-                        第{chapter.chapter_number}章: {chapter.title}
-                      </span>
-                    }
-                    description={
-                      <Space size={4}>
-                        <Tag color={chapter.content && chapter.content.trim() !== '' ? 'success' : 'default'}>
-                          {chapter.word_count || 0}字
-                        </Tag>
-                      </Space>
-                    }
-                  />
-                </List.Item>
-              )}
-            />
-          )}
-        </Card>
+        {showChapterPanel && (
+          <div style={{ ...panelStyle, width: 236, flexShrink: 0 }}>
+            <div style={{
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: 6,
+              padding: '13px 16px 8px',
+              fontSize: 12,
+              fontWeight: 600,
+              color: token.colorTextTertiary,
+              letterSpacing: '0.02em',
+            }}>
+              章节列表
+              <span style={{ fontWeight: 400 }}>{chapters.length}</span>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              {renderChapterList()}
+            </div>
+          </div>
         )}
 
-        {/* 移动端章节列表抽屉 */}
-      {isMobile && (
-        <Drawer
-          title="章节列表"
-          placement="left"
-          onClose={() => setChapterListVisible(false)}
-          open={chapterListVisible}
-          width="85%"
-          styles={{ body: { padding: 0 } }}
-        >
-          {chapters.length === 0 ? (
-            <Empty description="暂无章节" style={{ marginTop: 60 }} />
-          ) : (
-            <List
-              dataSource={chapters}
-              renderItem={(chapter) => (
-                <List.Item
-                  key={chapter.id}
-                  onClick={() => handleChapterSelect(chapter.id)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: '12px 16px',
-                    background: selectedChapter?.id === chapter.id ? token.colorPrimaryBg : 'transparent',
-                    borderLeft: selectedChapter?.id === chapter.id ? `3px solid ${token.colorPrimary}` : '3px solid transparent',
-                  }}
-                >
-                  <List.Item.Meta
-                    title={
-                      <span style={{ fontSize: 14, fontWeight: selectedChapter?.id === chapter.id ? 600 : 400 }}>
-                        第{chapter.chapter_number}章: {chapter.title}
-                      </span>
-                    }
-                    description={
-                      <Space size={4}>
-                        <Tag color={chapter.content && chapter.content.trim() !== '' ? 'success' : 'default'}>
-                          {chapter.word_count || 0}字
-                        </Tag>
-                      </Space>
-                    }
-                  />
-                </List.Item>
-              )}
-            />
-          )}
-        </Drawer>
+        {isMobile && (
+          <Drawer
+            title="章节列表"
+            placement="left"
+            onClose={() => setChapterListVisible(false)}
+            open={chapterListVisible}
+            width="85%"
+            styles={{ body: { padding: '8px 0' } }}
+          >
+            {renderChapterList()}
+          </Drawer>
         )}
 
-        {/* 右侧内容区域 */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-        {!selectedChapter ? (
-          <Card style={{ height: '100%' }}>
-            <Empty description="请从左侧选择一个章节查看" style={{ marginTop: 100 }} />
-          </Card>
-        ) : (
-          <>
-            {/* 工具栏 */}
-            <Card size="small" style={{ marginBottom: isMobile ? 8 : 16 }}>
-              {isMobile ? (
-                // 移动端布局：两行显示
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {/* 第一行：标题和翻页按钮 */}
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 8
-                  }}>
+        <div style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'row',
+          gap: showSidebarPanel ? 16 : 0,
+          height: '100%',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            overflow: 'hidden',
+          }}>
+          {!selectedChapter ? (
+            <div style={{ ...panelStyle, flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Empty description="请从左侧选择一个章节查看" />
+            </div>
+          ) : (
+            <>
+              <div style={{ ...panelStyle, flex: '1 1 0%', height: '100%' }}>
+                <div style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: isMobile ? '12px 14px' : '14px 20px',
+                  borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                  flexWrap: 'wrap',
+                }}>
+                  <div style={{ flex: 1, minWidth: 140 }}>
+                    <div style={{
+                      fontSize: isMobile ? 14 : 15,
+                      fontWeight: 600,
+                      color: token.colorText,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      第{selectedChapter.chapter_number}章 · {selectedChapter.title}
+                    </div>
+                    <div style={{
+                      marginTop: 3,
+                      fontSize: 11.5,
+                      color: token.colorTextTertiary,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {(selectedChapter.word_count || 0).toLocaleString('zh-CN')} 字
+                      {hasAnnotations && annotationsData && (
+                        <> · {annotationsData.summary.total_annotations} 个标注</>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                     <Button
+                      type="text"
+                      size="small"
                       icon={<LeftOutlined />}
                       onClick={handlePreviousChapter}
                       disabled={!navigation?.previous}
                       title={navigation?.previous ? `上一章: ${navigation.previous.title}` : '已是第一章'}
-                      size="small"
                     />
-                    <span style={{
-                      fontSize: 14,
-                      fontWeight: 600,
-                      flex: 1,
-                      textAlign: 'center',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      padding: '0 8px'
-                    }}>
-                      第{selectedChapter.chapter_number}章: {selectedChapter.title}
-                    </span>
                     <Button
+                      type="text"
+                      size="small"
                       icon={<RightOutlined />}
                       onClick={handleNextChapter}
                       disabled={!navigation?.next}
                       title={navigation?.next ? `下一章: ${navigation.next.title}` : '已是最后一章'}
-                      size="small"
                     />
                   </div>
 
-                  {/* 第二行：章节、开关、分析按钮 */}
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    gap: 8
-                  }}>
+                  {hasAnnotations && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      <Switch
+                        size="small"
+                        checked={showAnnotations}
+                        onChange={setShowAnnotations}
+                        checkedChildren={<EyeOutlined />}
+                        unCheckedChildren={<EyeInvisibleOutlined />}
+                        style={isMobile ? { height: 20, minHeight: 20, minWidth: 38, lineHeight: '18px' } : undefined}
+                      />
+                      <span style={{ fontSize: 12, color: token.colorTextSecondary }}>标注</span>
+                    </div>
+                  )}
+
+                  {showChapterEntry && (
                     <Button
+                      size="small"
                       icon={<UnorderedListOutlined />}
                       onClick={() => setChapterListVisible(true)}
-                      size="small"
                     >
                       章节
                     </Button>
+                  )}
 
-                    {hasAnnotations && (
-                      <>
-                        <Switch
-                          checked={showAnnotations}
-                          onChange={setShowAnnotations}
-                          checkedChildren={<EyeOutlined />}
-                          unCheckedChildren={<EyeInvisibleOutlined />}
-                          size="small"
-                          style={{
-                            flexShrink: 0,
-                            height: 16,
-                            minHeight: 16,
-                            lineHeight: '16px'
-                          }}
-                        />
-                        <Button
-                          icon={<MenuOutlined />}
-                          onClick={() => setSidebarVisible(true)}
-                          size="small"
-                        >
-                          分析
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                // 桌面端布局：保持原样
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}>
-                  <Space>
+                  {showSidebarEntry && (
                     <Button
-                      icon={<LeftOutlined />}
-                      onClick={handlePreviousChapter}
-                      disabled={!navigation?.previous}
-                      title={navigation?.previous ? `上一章: ${navigation.previous.title}` : '已是第一章'}
+                      size="small"
+                      icon={<MenuOutlined />}
+                      onClick={() => setSidebarVisible(true)}
                     >
-                      上一章
+                      分析
                     </Button>
-                    <span style={{ fontSize: 16, fontWeight: 600 }}>
-                      第{selectedChapter.chapter_number}章: {selectedChapter.title}
-                    </span>
-                    <Button
-                      icon={<RightOutlined />}
-                      onClick={handleNextChapter}
-                      disabled={!navigation?.next}
-                      title={navigation?.next ? `下一章: ${navigation.next.title}` : '已是最后一章'}
-                    >
-                      下一章
-                    </Button>
-                  </Space>
-
-                  <Space>
-                    {hasAnnotations && (
-                      <>
-                        <Switch
-                          checked={showAnnotations}
-                          onChange={setShowAnnotations}
-                          checkedChildren={<EyeOutlined />}
-                          unCheckedChildren={<EyeInvisibleOutlined />}
-                        />
-                        <span style={{ fontSize: 13, color: token.colorTextSecondary }}>显示标注</span>
-                      </>
-                    )}
-                  </Space>
+                  )}
                 </div>
-              )}
 
-              {hasAnnotations && annotationsData && (
-                <div style={{
-                  marginTop: 12,
-                  fontSize: isMobile ? 11 : 12,
-                  color: token.colorTextTertiary,
-                  lineHeight: 1.5
-                }}>
-                  共有 {annotationsData.summary.total_annotations} 个标注：
-                  {annotationsData.summary.hooks > 0 && ` 🎣${annotationsData.summary.hooks}个钩子`}
-                  {annotationsData.summary.foreshadows > 0 &&
-                    ` 🌟${annotationsData.summary.foreshadows}个伏笔`}
-                  {annotationsData.summary.plot_points > 0 &&
-                    ` 💎${annotationsData.summary.plot_points}个情节点`}
-                  {annotationsData.summary.character_events > 0 &&
-                    ` 👤${annotationsData.summary.character_events}个角色事件`}
-                </div>
-              )}
-            </Card>
-
-            {/* 内容区域 */}
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              gap: isMobile ? 0 : 16,
-              overflow: 'hidden'
-            }}>
-              {/* 章节内容 */}
-              <Card
-                style={{ flex: 1, overflow: 'auto' }}
-                bodyStyle={{ padding: isMobile ? '12px' : '24px' }}
-                loading={contentLoading}
-              >
-                {!contentLoading && (
-                  <>
-                    {!hasAnnotations && (
-                      <Alert
-                        message="暂无分析数据"
-                        description="该章节尚未进行AI分析，无法显示记忆标注。"
-                        type="info"
-                        showIcon
-                        style={{ marginBottom: 24 }}
-                      />
-                    )}
-
-                    {showAnnotations && hasAnnotations && annotationsData ? (
-                      <AnnotatedText
-                        content={selectedChapter.content}
-                        annotations={annotationsData.annotations}
-                        onAnnotationClick={(annotation) => handleAnnotationClick(annotation, 'content')}
-                        activeAnnotationId={activeAnnotationId}
-                        scrollToAnnotation={scrollToContentAnnotation}
+                {hasAnnotations && summaryItems.length > 0 && (
+                  <div style={{
+                    flexShrink: 0,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 6,
+                    padding: isMobile ? '8px 14px' : '9px 20px',
+                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                    background: token.colorFillQuaternary,
+                  }}>
+                    {summaryItems.map((item) => (
+                      <span
+                        key={item.key}
                         style={{
-                          lineHeight: isMobile ? 1.8 : 2,
-                          fontSize: isMobile ? 14 : 16,
-                        }}
-                      />
-                    ) : (
-                      <div
-                        style={{
-                          lineHeight: isMobile ? 1.8 : 2,
-                          fontSize: isMobile ? 14 : 16,
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '1px 9px',
+                          borderRadius: 999,
+                          background: token.colorBgContainer,
+                          border: `1px solid ${token.colorBorderSecondary}`,
+                          fontSize: 11.5,
+                          color: token.colorTextSecondary,
+                          lineHeight: '18px',
                         }}
                       >
-                        {selectedChapter.content}
-                      </div>
-                    )}
-                  </>
+                        <span style={{ width: 6, height: 6, borderRadius: 3, background: item.color }} />
+                        {item.label}
+                        <span style={{ fontWeight: 600, color: token.colorText }}>{item.count}</span>
+                      </span>
+                    ))}
+                  </div>
                 )}
-              </Card>
 
-              {/* 右侧记忆侧边栏（桌面端） */}
-              {hasAnnotations && annotationsData && !isMobile && (
-                <Card
-                  style={{ width: 400, overflow: 'auto' }}
-                  bodyStyle={{ padding: 0 }}
-                >
-                  <MemorySidebar
-                    annotations={annotationsData.annotations}
-                    activeAnnotationId={activeAnnotationId}
-                    onAnnotationClick={(annotation) => handleAnnotationClick(annotation, 'sidebar')}
-                    scrollToAnnotation={scrollToSidebarAnnotation}
-                  />
-                </Card>
-              )}
+                <div style={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  padding: isMobile ? '18px 16px 28px' : '30px 40px 44px',
+                }}>
+                  {contentLoading ? (
+                    <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                      <Spin />
+                    </div>
+                  ) : (
+                    <div style={{ maxWidth: 640, margin: '0 auto' }}>
+                      {!hasAnnotations && (
+                        <Alert
+                          message="暂无分析数据"
+                          description="该章节尚未进行 AI 分析，因此正文中没有可显示的标注。"
+                          type="info"
+                          showIcon
+                          style={{ marginBottom: 24, borderRadius: 10 }}
+                        />
+                      )}
+
+                      {showAnnotations && hasAnnotations && annotationsData ? (
+                        <AnnotatedText
+                          content={selectedChapter.content}
+                          annotations={annotationsData.annotations}
+                          onAnnotationClick={(annotation) => handleAnnotationClick(annotation, 'content')}
+                          activeAnnotationId={activeAnnotationId}
+                          scrollToAnnotation={scrollToContentAnnotation}
+                          style={{
+                            lineHeight: isMobile ? 1.9 : 2,
+                            fontSize: isMobile ? 14.5 : 15.5,
+                            color: token.colorText,
+                          }}
+                        />
+                      ) : (
+                        <div style={{
+                          lineHeight: isMobile ? 1.9 : 2,
+                          fontSize: isMobile ? 14.5 : 15.5,
+                          color: token.colorText,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                        }}>
+                          {selectedChapter.content}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+          </div>
+
+          {showSidebarPanel && hasAnnotations && annotationsData && (
+            <div style={{ ...panelStyle, width: 344, flexShrink: 0, height: '100%' }}>
+              <MemorySidebar
+                annotations={annotationsData.annotations}
+                activeAnnotationId={activeAnnotationId}
+                onAnnotationClick={(annotation) => handleAnnotationClick(annotation, 'sidebar')}
+                scrollToAnnotation={scrollToSidebarAnnotation}
+              />
             </div>
-
-            {/* 移动端抽屉 */}
-            {hasAnnotations && annotationsData && (
-              <Drawer
-                title="章节分析"
-                placement="right"
-                onClose={() => setSidebarVisible(false)}
-                open={sidebarVisible}
-                width={isMobile ? '90%' : '80%'}
-              >
-                <MemorySidebar
-                  annotations={annotationsData.annotations}
-                  activeAnnotationId={activeAnnotationId}
-                  onAnnotationClick={(annotation) => {
-                    handleAnnotationClick(annotation, 'sidebar');
-                    setSidebarVisible(false);
-                  }}
-                  scrollToAnnotation={scrollToSidebarAnnotation}
-                />
-              </Drawer>
-            )}
-          </>
-        )}
+          )}
         </div>
       </div>
+
+      {hasAnnotations && annotationsData && (
+        <Drawer
+          title="章节分析"
+          placement="right"
+          onClose={() => setSidebarVisible(false)}
+          open={sidebarVisible}
+          width={isMobile ? '90%' : '420px'}
+          styles={{ body: { padding: 0 } }}
+        >
+          <MemorySidebar
+            annotations={annotationsData.annotations}
+            activeAnnotationId={activeAnnotationId}
+            onAnnotationClick={(annotation) => {
+              handleAnnotationClick(annotation, 'sidebar');
+              if (isMobile) setSidebarVisible(false);
+            }}
+            scrollToAnnotation={scrollToSidebarAnnotation}
+          />
+        </Drawer>
+      )}
     </div>
   );
 };

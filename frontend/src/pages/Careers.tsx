@@ -1,13 +1,27 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Tabs, Card, Tag, Space, Divider, Typography, InputNumber } from 'antd';
-import { ThunderboltOutlined, PlusOutlined, EditOutlined, DeleteOutlined, TrophyOutlined } from '@ant-design/icons';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { Button, Modal, Form, Input, Select, message, Row, Col, Empty, Segmented, Card, Tag, Space, Divider, Typography, InputNumber, Drawer, theme } from 'antd';
+import { ThunderboltOutlined, PlusOutlined, EditOutlined, DeleteOutlined, TrophyOutlined, ArrowRightOutlined } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import api from '../services/api';
 import SSEProgressModal from '../components/SSEProgressModal';
 import { eventBus, EventNames } from '../store/eventBus';
 
 const { TextArea } = Input;
-const { Title, Text, Paragraph } = Typography;
+const { Text, Paragraph } = Typography;
+
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+    const { token } = theme.useToken();
+
+    return (
+        <section style={{ marginTop: 22 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>{title}</span>
+                <span style={{ flex: 1, height: 1, background: token.colorBorderSecondary }} />
+            </div>
+            {children}
+        </section>
+    );
+}
 
 interface CareerStage {
     level: number;
@@ -32,9 +46,13 @@ interface Career {
 
 export default function Careers() {
     const { projectId } = useParams<{ projectId: string }>();
+    const { token } = theme.useToken();
     const [mainCareers, setMainCareers] = useState<Career[]>([]);
     const [subCareers, setSubCareers] = useState<Career[]>([]);
     const [, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState<'main' | 'sub'>('main');
+    const [detailCareer, setDetailCareer] = useState<Career | null>(null);
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isAIModalOpen, setIsAIModalOpen] = useState(false);
     const [editingCareer, setEditingCareer] = useState<Career | null>(null);
@@ -46,6 +64,12 @@ export default function Careers() {
     const [aiGenerating, setAiGenerating] = useState(false);
     const [aiProgress, setAiProgress] = useState(0);
     const [aiMessage, setAiMessage] = useState('');
+
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth <= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     const fetchCareers = useCallback(async () => {
         try {
@@ -253,128 +277,236 @@ export default function Careers() {
         }
     };
 
+    const currentCareers = activeTab === 'main' ? mainCareers : subCareers;
+
     const renderCareerCard = (career: Career) => (
         <Card
             key={career.id}
-            title={
-                <Space>
-                    <TrophyOutlined />
-                    {career.name}
-                    <Tag color={career.source === 'ai' ? 'blue' : 'default'}>
-                        {career.source === 'ai' ? 'AI生成' : '手动创建'}
-                    </Tag>
-                    {career.category && <Tag>{career.category}</Tag>}
-                </Space>
-            }
-            extra={
-                <Space>
-                    <Button size="small" icon={<EditOutlined />} onClick={() => handleOpenModal(career)} />
-                    <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(career.id)} />
-                </Space>
-            }
-            style={{ marginBottom: 16 }}
+            hoverable
+            onClick={() => setDetailCareer(career)}
+            style={{
+                height: '100%',
+                borderRadius: 10,
+                border: `1px solid ${token.colorBorderSecondary}`,
+                background: token.colorBgContainer,
+                cursor: 'pointer',
+            }}
+            styles={{
+                body: {
+                    height: '100%',
+                    minHeight: 196,
+                    padding: 16,
+                    display: 'flex',
+                    flexDirection: 'column',
+                },
+            }}
         >
-            <Paragraph ellipsis={{ rows: 2 }}>{career.description || '暂无描述'}</Paragraph>
-            <Divider style={{ margin: '12px 0' }} />
-            <Text strong>阶段体系（共{career.max_stage}个）：</Text>
-            <div style={{ maxHeight: 120, overflowY: 'auto', marginTop: 8 }}>
-                {career.stages.slice(0, 5).map(stage => (
-                    <div key={stage.level} style={{ marginLeft: 16, marginBottom: 4 }}>
-                        <Text type="secondary">{stage.level}. {stage.name}</Text>
-                        {stage.description && <Text type="secondary" style={{ fontSize: 12 }}> - {stage.description}</Text>}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <div style={{
+                    width: 36,
+                    height: 36,
+                    flexShrink: 0,
+                    display: 'grid',
+                    placeItems: 'center',
+                    borderRadius: '50%',
+                    background: token.colorFillTertiary,
+                    color: token.colorTextSecondary,
+                    fontSize: 16,
+                }}>
+                    <TrophyOutlined />
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0, paddingTop: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                        <Text
+                            strong
+                            style={{
+                                minWidth: 0,
+                                fontSize: 15,
+                                lineHeight: 1.4,
+                                color: token.colorText,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}
+                            title={career.name}
+                        >
+                            {career.name}
+                        </Text>
+                        {career.source === 'ai' && <Tag color="blue" style={{ marginInlineEnd: 0 }}>AI 生成</Tag>}
                     </div>
-                ))}
-                {career.stages.length > 5 && (
-                    <Text type="secondary" style={{ marginLeft: 16 }}>...还有{career.stages.length - 5}个阶段</Text>
-                )}
+                    <div style={{
+                        marginTop: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        flexWrap: 'wrap',
+                        fontSize: 12,
+                        color: token.colorTextTertiary,
+                    }}>
+                        <span>{activeTab === 'main' ? '主职业' : '副职业'}</span>
+                        {career.category && <><span>·</span><span>{career.category}</span></>}
+                    </div>
+                </div>
+
+                <div
+                    style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}
+                    onClick={(event) => event.stopPropagation()}
+                >
+                    <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => handleOpenModal(career)}
+                        aria-label={`编辑${career.name}`}
+                    />
+                    <Button
+                        type="text"
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={() => handleDelete(career.id)}
+                        aria-label={`删除${career.name}`}
+                    />
+                </div>
             </div>
-            {career.special_abilities && (
-                <>
-                    <Divider style={{ margin: '12px 0' }} />
-                    <Text strong>特殊能力：</Text>
-                    <Paragraph ellipsis={{ rows: 2 }} style={{ marginTop: 4 }}>{career.special_abilities}</Paragraph>
-                </>
-            )}
+
+            <div style={{
+                marginTop: 13,
+                minHeight: '3.4em',
+                fontSize: 13,
+                lineHeight: 1.7,
+                color: token.colorTextSecondary,
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+            }}>
+                {career.description || '暂无职业描述'}
+            </div>
+
+            <div style={{
+                marginTop: 'auto',
+                paddingTop: 11,
+                borderTop: `1px solid ${token.colorBorderSecondary}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+            }}>
+                <span style={{ fontSize: 12, color: token.colorTextTertiary }}>
+                    阶段体系 · {career.max_stage} 个
+                </span>
+                <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        setDetailCareer(career);
+                    }}
+                >
+                    查看设定 <ArrowRightOutlined style={{ fontSize: 11 }} />
+                </Button>
+            </div>
         </Card>
     );
-
-    const tabItems = [
-        {
-            key: 'main',
-            label: `主职业 (${mainCareers.length})`,
-            children: mainCareers.length > 0 ? (
-                <div>{mainCareers.map(renderCareerCard)}</div>
-            ) : (
-                <Empty description="还没有主职业" />
-            )
-        },
-        {
-            key: 'sub',
-            label: `副职业 (${subCareers.length})`,
-            children: subCareers.length > 0 ? (
-                <div>{subCareers.map(renderCareerCard)}</div>
-            ) : (
-                <Empty description="还没有副职业" />
-            )
-        }
-    ];
 
     return (
         <>
             {contextHolder}
             <div style={{
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden'
-        }}>
-            {/* 固定头部 */}
-            <div style={{
-                padding: '16px 16px 0 16px',
-                flexShrink: 0
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden'
             }}>
+                {/* 固定头部 */}
                 <div style={{
-                    marginBottom: 16,
+                    padding: isMobile ? '4px 0 16px' : '2px 0 18px',
+                    borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                    flexShrink: 0,
                     display: 'flex',
+                    flexDirection: isMobile ? 'column' : 'row',
                     justifyContent: 'space-between',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '12px'
+                    alignItems: isMobile ? 'stretch' : 'flex-start',
+                    gap: isMobile ? 14 : 20,
                 }}>
-                    <Title level={3} style={{ margin: 0 }}>
-                        <TrophyOutlined style={{ marginRight: 8 }} />
-                        职业管理
-                    </Title>
-                    <Space wrap>
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                            <TrophyOutlined style={{ fontSize: 18, color: token.colorTextSecondary }} />
+                            <h2 style={{ margin: 0, fontSize: 19, fontWeight: 600, color: token.colorText }}>职业管理</h2>
+                        </div>
+                        <div style={{ marginTop: 5, fontSize: 12, color: token.colorTextTertiary }}>
+                            主职业 {mainCareers.length} 个 · 副职业 {subCareers.length} 个
+                        </div>
+                    </div>
+
+                    <Space wrap size={8}>
                         <Button
-                            type="dashed"
                             icon={<ThunderboltOutlined />}
+                            size={isMobile ? 'small' : 'middle'}
                             onClick={() => {
                                 aiForm.resetFields();
                                 setIsAIModalOpen(true);
                             }}
                         >
-                            AI生成新职业
+                            AI 生成新职业
                         </Button>
                         <Button
                             type="primary"
                             icon={<PlusOutlined />}
+                            size={isMobile ? 'small' : 'middle'}
                             onClick={() => handleOpenModal()}
                         >
                             新增职业
                         </Button>
                     </Space>
                 </div>
-            </div>
 
-            {/* 可滚动的内容区域 */}
-            <div style={{
-                flex: 1,
-                overflow: 'auto',
-                padding: '0 16px 16px 16px'
-            }}>
-                <Tabs items={tabItems} />
-            </div>
+                <div style={{
+                    flexShrink: 0,
+                    padding: '12px 0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                }}>
+                    <Segmented
+                        value={activeTab}
+                        onChange={(value) => setActiveTab(value as 'main' | 'sub')}
+                        options={[
+                            { label: `主职业 ${mainCareers.length}`, value: 'main' },
+                            { label: `副职业 ${subCareers.length}`, value: 'sub' },
+                        ]}
+                    />
+                    <span style={{ fontSize: 12, color: token.colorTextTertiary }}>
+                        共 {currentCareers.length} 个{activeTab === 'main' ? '主职业' : '副职业'}
+                    </span>
+                </div>
+
+                {/* 可滚动的内容区域 */}
+                <div style={{
+                    flex: 1,
+                    overflowY: 'auto',
+                    padding: '0 0 24px',
+                }}>
+                    {currentCareers.length > 0 ? (
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: isMobile ? 'minmax(0, 1fr)' : 'repeat(auto-fill, minmax(330px, 1fr))',
+                            gap: isMobile ? 10 : 12,
+                            alignItems: 'stretch',
+                        }}>
+                            {currentCareers.map(renderCareerCard)}
+                        </div>
+                    ) : (
+                        <div style={{ minHeight: 320, display: 'grid', placeItems: 'center' }}>
+                            <Empty description={`还没有${activeTab === 'main' ? '主职业' : '副职业'}，先新增一个吧。`} />
+                        </div>
+                    )}
+                </div>
 
             {/* 创建/编辑对话框 */}
             <Modal
@@ -485,6 +617,138 @@ export default function Careers() {
                     </Form.Item>
                 </Form>
             </Modal>
+
+            {/* 职业详情抽屉 */}
+            <Drawer
+                open={Boolean(detailCareer)}
+                onClose={() => setDetailCareer(null)}
+                placement="right"
+                width={isMobile ? '100%' : 600}
+                title={detailCareer ? (
+                    <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 16, fontWeight: 600, color: token.colorText }}>{detailCareer.name}</span>
+                            {detailCareer.source === 'ai' && <Tag color="blue" style={{ marginInlineEnd: 0 }}>AI 生成</Tag>}
+                            {detailCareer.category && <Tag style={{ marginInlineEnd: 0 }}>{detailCareer.category}</Tag>}
+                        </div>
+                        <div style={{ marginTop: 3, fontSize: 12, fontWeight: 400, color: token.colorTextTertiary }}>
+                            {detailCareer.type === 'main' ? '主职业' : '副职业'} · 共 {detailCareer.max_stage} 个阶段
+                        </div>
+                    </div>
+                ) : null}
+                extra={detailCareer ? (
+                    <Space size={4}>
+                        <Button
+                            size="small"
+                            icon={<EditOutlined />}
+                            onClick={() => {
+                                const career = detailCareer;
+                                setDetailCareer(null);
+                                handleOpenModal(career);
+                            }}
+                        >
+                            编辑
+                        </Button>
+                        <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => {
+                                const id = detailCareer.id;
+                                setDetailCareer(null);
+                                handleDelete(id);
+                            }}
+                        >
+                            删除
+                        </Button>
+                    </Space>
+                ) : null}
+                styles={{ body: { padding: isMobile ? 16 : 24 } }}
+            >
+                {detailCareer && (
+                    <div style={{ paddingBottom: 16 }}>
+                        <div style={{
+                            fontSize: 13,
+                            lineHeight: 1.85,
+                            color: token.colorTextSecondary,
+                            whiteSpace: 'pre-wrap',
+                        }}>
+                            {detailCareer.description || '暂无职业描述'}
+                        </div>
+
+                        <DetailSection title={`阶段体系（${detailCareer.max_stage}）`}>
+                            <div>
+                                {detailCareer.stages.map((stage, index) => (
+                                    <div
+                                        key={`${stage.level}-${index}`}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'flex-start',
+                                            gap: 12,
+                                            padding: '11px 0',
+                                            borderBottom: index < detailCareer.stages.length - 1
+                                                ? `1px solid ${token.colorBorderSecondary}`
+                                                : undefined,
+                                        }}
+                                    >
+                                        <div style={{
+                                            width: 26,
+                                            height: 26,
+                                            flexShrink: 0,
+                                            display: 'grid',
+                                            placeItems: 'center',
+                                            borderRadius: '50%',
+                                            background: token.colorFillTertiary,
+                                            fontSize: 11,
+                                            color: token.colorTextSecondary,
+                                        }}>
+                                            {stage.level}
+                                        </div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 13, fontWeight: 500, color: token.colorText }}>
+                                                {stage.name}
+                                            </div>
+                                            <div style={{
+                                                marginTop: 3,
+                                                fontSize: 12,
+                                                lineHeight: 1.75,
+                                                color: token.colorTextTertiary,
+                                                whiteSpace: 'pre-wrap',
+                                            }}>
+                                                {stage.description || '暂无阶段说明'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </DetailSection>
+
+                        {detailCareer.special_abilities && (
+                            <DetailSection title="特殊能力">
+                                <div style={{ fontSize: 13, lineHeight: 1.85, color: token.colorTextSecondary, whiteSpace: 'pre-wrap' }}>
+                                    {detailCareer.special_abilities}
+                                </div>
+                            </DetailSection>
+                        )}
+
+                        {detailCareer.requirements && (
+                            <DetailSection title="职业要求">
+                                <div style={{ fontSize: 13, lineHeight: 1.85, color: token.colorTextSecondary, whiteSpace: 'pre-wrap' }}>
+                                    {detailCareer.requirements}
+                                </div>
+                            </DetailSection>
+                        )}
+
+                        {detailCareer.worldview_rules && (
+                            <DetailSection title="世界观规则">
+                                <div style={{ fontSize: 13, lineHeight: 1.85, color: token.colorTextSecondary, whiteSpace: 'pre-wrap' }}>
+                                    {detailCareer.worldview_rules}
+                                </div>
+                            </DetailSection>
+                        )}
+                    </div>
+                )}
+            </Drawer>
 
             {/* AI生成进度 */}
             <SSEProgressModal

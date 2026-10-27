@@ -1,0 +1,542 @@
+/* 管理后台外壳：与主应用视觉语言一致，但使用更紧凑的管理端密度。 */
+.adm-layout {
+  height: 100vh;
+  background: var(--adm-bg);
+  overflow: hidden;
+}
+
+/* ---------- 共享页面骨架 ---------- */
+.adm-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 22px 24px 56px;
+}
+
+.adm-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.adm-page-head-main {
+  min-width: 0;
+}
+
+.adm-page-title {
+  margin: 0;
+  color: var(--adm-text);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.adm-page-desc {
+  max-width: 720px;
+  margin: 4px 0 0;
+  color: var(--adm-secondary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.adm-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 面包屑 */
+.adm-crumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  color: var(--adm-tertiary);
+  font-size: 11.5px;
+}
+
+.adm-crumb-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--adm-secondary);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.adm-crumb-link:hover {
+  color: var(--adm-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.adm-crumb-sep {
+  color: var(--adm-tertiary);
+  opacity: 0.7;
+}
+
+.adm-crumb-current {
+  overflow: hidden;
+  max-width: 320px;
+  color: var(--adm-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 面板 / 工具条 / 表格 ---------- */
+.adm-panel {
+  border: 1px solid var(--adm-border);
+  border-radius: 12px;
+  background: var(--adm-panel);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--adm-text) 3%, transparent);
+  overflow: hidden;
+}
+
+.adm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--adm-border);
+}
+
+.adm-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.adm-count {
+  color: var(--adm-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.adm-pager {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--adm-border);
+}
+
+.adm-search {
+  width: 280px;
+}
+
+.adm-search .ant-input-affix-wrapper,
+.adm-toolbar .ant-select-selector {
+  border-radius: 8px !important;
+}
+
+.adm-search-icon {
+  color: var(--adm-tertiary);
+  font-size: 12px;
+}
+
+/* 筛选控件：审计页的下拉与项目搜索 */
+.adm-filter {
+  min-width: 176px;
+}
+
+.adm-filter--search {
+  width: 220px;
+  min-width: 0;
+}
+
+/* 表格：去掉 antd 默认的重边框，改为细发丝线 + 更轻的表头 */
+.adm-table .ant-table {
+  background: transparent;
+  font-size: 12.5px;
+}
+
+.adm-table .ant-table-thead > tr > th {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--adm-border);
+  background: color-mix(in srgb, var(--adm-text) 2%, var(--adm-panel));
+  color: var(--adm-tertiary);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.adm-table .ant-table-thead > tr > th::before {
+  display: none !important;
+}
+
+/* 排序中的列不要整列变灰，轻微着色即可 */
+.adm-table .ant-table-thead th.ant-table-column-sort,
+.adm-table .ant-table-tbody > tr > td.ant-table-column-sort {
+  background: transparent;
+}
+
+.adm-table .ant-table-column-sorter {
+  color: var(--adm-tertiary);
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+}
+
+.adm-table th:hover .ant-table-column-sorter,
+.adm-table .ant-table-column-sorter-up.active,
+.adm-table .ant-table-column-sorter-down.active {
+  opacity: 1;
+  color: var(--adm-text);
+}
+
+/* 嵌入的表格不需要固定列阴影和额外留白 */
+.adm-table .ant-table-cell-fix-right {
+  background: var(--adm-panel);
+}
+
+.adm-table .ant-table-cell-fix-right-first::after,
+.adm-table .ant-table-cell-fix-right-last::after {
+  box-shadow: none !important;
+}
+
+.adm-table .ant-table-tbody > tr:hover > .ant-table-cell-fix-right {
+  background: color-mix(in srgb, var(--adm-text) 2.4%, var(--adm-panel));
+}
+
+.adm-table .ant-btn-text {
+  padding-inline: 7px;
+  color: var(--adm-secondary);
+  font-size: 12px;
+}
+
+.adm-table .ant-btn-text:hover {
+  background: color-mix(in srgb, var(--adm-text) 5%, transparent);
+  color: var(--adm-text);
+}
+
+.adm-table .ant-btn-text.ant-btn-dangerous {
+  color: color-mix(in srgb, var(--adm-danger) 82%, var(--adm-secondary));
+}
+
+.adm-table .ant-btn-text.ant-btn-dangerous:hover {
+  background: color-mix(in srgb, var(--adm-danger) 8%, transparent);
+  color: var(--adm-danger);
+}
+
+.adm-table .ant-table-tbody > tr > td {
+  padding: 11px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--adm-text) 6%, transparent);
+  color: var(--adm-text);
+}
+
+.adm-table .ant-table-tbody > tr:last-child > td {
+  border-bottom: none;
+}
+
+.adm-table .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: color-mix(in srgb, var(--adm-text) 2.4%, transparent);
+}
+
+.adm-table .ant-table-pagination {
+  margin: 0 !important;
+  padding: 10px 14px !important;
+  border-top: 1px solid var(--adm-border);
+}
+
+.adm-table .ant-empty {
+  margin: 28px 0;
+}
+
+/* 单元格辅助元素 */
+.adm-cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.adm-cell-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 页面底部的说明条 */
+.adm-note {
+  margin-top: 14px;
+  border-radius: 10px;
+}
+
+.adm-note .ant-alert-message {
+  font-size: 12px;
+}
+
+.adm-note .ant-alert-description {
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.adm-cell-strong {
+  overflow: hidden;
+  color: var(--adm-text);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adm-cell-sub {
+  color: var(--adm-tertiary);
+  font-size: 11.5px;
+}
+
+.adm-cell-mono {
+  color: var(--adm-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+}
+
+.adm-cell-muted {
+  color: var(--adm-tertiary);
+}
+
+/* 细标签：替代 antd 的彩色 Tag，保持管理端的克制感 */
+.adm-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--adm-border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--adm-secondary);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.adm-tag--ok {
+  border-color: color-mix(in srgb, var(--adm-ok) 32%, var(--adm-border));
+  background: color-mix(in srgb, var(--adm-ok) 8%, transparent);
+  color: var(--adm-ok);
+}
+
+.adm-tag--warn {
+  border-color: color-mix(in srgb, var(--adm-warn) 32%, var(--adm-border));
+  background: color-mix(in srgb, var(--adm-warn) 8%, transparent);
+  color: var(--adm-warn);
+}
+
+.adm-tag--danger {
+  border-color: color-mix(in srgb, var(--adm-danger) 30%, var(--adm-border));
+  background: color-mix(in srgb, var(--adm-danger) 7%, transparent);
+  color: var(--adm-danger);
+}
+
+.adm-tag-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.adm-empty-icon {
+  color: var(--adm-tertiary);
+  font-size: 34px;
+}
+
+.adm-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--adm-bg);
+}
+
+.adm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 58px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--adm-border);
+  background: var(--adm-panel);
+  line-height: normal;
+}
+
+.adm-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.adm-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--adm-border);
+  border-radius: 8px;
+  background: var(--adm-fill);
+  color: var(--adm-secondary);
+  font-size: 14px;
+}
+
+.adm-brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.adm-brand-title {
+  color: var(--adm-text);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.adm-brand-sub {
+  color: var(--adm-tertiary);
+  font-size: 11px;
+}
+
+.adm-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.adm-body {
+  flex: 1;
+  min-height: 0;
+  background: var(--adm-bg);
+}
+
+.adm-sider {
+  border-right: 1px solid var(--adm-border);
+  background: var(--adm-panel) !important;
+}
+
+.adm-sider-inner {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  padding: 10px 8px 12px;
+}
+
+.adm-menu {
+  border-inline-end: none !important;
+  background: transparent !important;
+  font-size: 13px;
+}
+
+.adm-menu .ant-menu-item {
+  height: 36px;
+  margin: 2px 0;
+  border-radius: 8px;
+  color: var(--adm-secondary);
+}
+
+.adm-menu .ant-menu-item .anticon {
+  font-size: 13px;
+}
+
+.adm-menu .ant-menu-item:hover {
+  background: var(--adm-fill) !important;
+  color: var(--adm-text) !important;
+}
+
+.adm-menu .ant-menu-item-selected {
+  background: color-mix(in srgb, var(--adm-text) 7%, transparent) !important;
+  color: var(--adm-text) !important;
+  font-weight: 600;
+}
+
+.adm-sider-foot {
+  padding: 10px 6px 0;
+  border-top: 1px solid var(--adm-border);
+}
+
+.adm-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.adm-account-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.adm-account-name {
+  overflow: hidden;
+  color: var(--adm-text);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.adm-account-role {
+  color: var(--adm-tertiary);
+  font-size: 11px;
+}
+
+.adm-content {
+  min-width: 0;
+  min-height: 0;
+  background: var(--adm-bg);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.adm-mobile-nav {
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--adm-border);
+  background: var(--adm-panel);
+  overflow-x: auto;
+}
+
+.adm-mobile-nav .adm-menu {
+  border-bottom: none !important;
+  line-height: 40px;
+  white-space: nowrap;
+}
+
+.adm-mobile-nav .adm-menu .ant-menu-item {
+  height: 34px;
+  margin: 0 2px;
+  padding: 0 10px;
+  line-height: 34px;
+}
+
+.adm-mobile-nav .adm-menu .ant-menu-item::after {
+  display: none;
+}
+
+@media (max-width: 992px) {
+  .adm-header {
+    padding: 0 12px;
+  }
+
+  .adm-page {
+    padding: 18px 14px 48px;
+  }
+
+  .adm-search,
+  .adm-filter,
+  .adm-filter--search {
+    width: 100%;
+    min-width: 0;
+  }
+}

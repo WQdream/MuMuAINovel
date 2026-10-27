@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, Table, Tag, Button, Space, message, Modal, Form, Select, InputNumber, Input, Descriptions, Drawer, theme } from 'antd';
-import { PlusOutlined, UserOutlined, EditOutlined, DeleteOutlined, UnorderedListOutlined, BankOutlined } from '@ant-design/icons';
+import { PlusOutlined, UserOutlined, EditOutlined, DeleteOutlined, UnorderedListOutlined, BankOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync } from '../store/hooks';
+import { characterApi } from '../services/api';
+import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
+import { SSEPostClient } from '../utils/sseClient';
 import axios from 'axios';
 import { eventBus, EventNames } from '../store/eventBus';
 
@@ -52,10 +55,17 @@ export default function Organizations() {
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
   const [isEditMemberModalOpen, setIsEditMemberModalOpen] = useState(false);
   const [isEditOrgModalOpen, setIsEditOrgModalOpen] = useState(false);
+  const [isCreateOrgModalOpen, setIsCreateOrgModalOpen] = useState(false);
+  const [isGenerateOrgModalOpen, setIsGenerateOrgModalOpen] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('');
   const [editingMember, setEditingMember] = useState<OrganizationMember | null>(null);
   const [form] = Form.useForm();
   const [editMemberForm] = Form.useForm();
   const [editOrgForm] = Form.useForm();
+  const [createOrgForm] = Form.useForm();
+  const [generateOrgForm] = Form.useForm();
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [modal, contextHolder] = Modal.useModal();
   const [orgListVisible, setOrgListVisible] = useState(false);
@@ -131,6 +141,209 @@ export default function Organizations() {
   const handleSelectOrganization = (org: Organization) => {
     setSelectedOrg(org);
     loadMembers(org.id);
+  };
+
+  const handleCreateOrganization = async (values: Record<string, unknown>) => {
+    if (!projectId) return;
+
+    try {
+      const created = await characterApi.createCharacter({
+        project_id: projectId,
+        name: values.name as string,
+        is_organization: true,
+        role_type: 'supporting',
+        organization_type: values.organization_type as string,
+        organization_purpose: values.organization_purpose as string | undefined,
+        background: values.background as string | undefined,
+        power_level: (values.power_level as number | undefined) ?? 50,
+        location: values.location as string | undefined,
+        motto: values.motto as string | undefined,
+        color: values.color as string | undefined,
+      });
+
+      message.success('组织创建成功');
+      setIsCreateOrgModalOpen(false);
+      createOrgForm.resetFields();
+
+      const res = await axios.get(`/api/organizations/project/${projectId}`);
+      setOrganizations(res.data);
+      const createdOrg = res.data.find((org: Organization) => org.character_id === created.id);
+      if (createdOrg) {
+        setSelectedOrg(createdOrg);
+        loadMembers(createdOrg.id);
+      }
+
+      await loadCharacters();
+      await refreshCharacters();
+    } catch (error) {
+      message.error('创建组织失败');
+      console.error(error);
+    }
+  };
+
+  const handleGenerateOrganization = async (values: Record<string, unknown>) => {
+    if (!projectId) return;
+    const existingIds = new Set(organizations.map((org) => org.id));
+
+    try {
+      setIsGenerating(true);
+      setProgress(0);
+      setProgressMessage('准备生成组织...');
+
+      const client = new SSEPostClient(
+        '/api/organizations/generate-stream',
+        {
+          project_id: projectId,
+          name: values.name,
+          organization_type: values.organization_type,
+          background: values.background,
+          requirements: values.requirements,
+        },
+        {
+          onProgress: (msg, prog) => {
+            setProgress(prog);
+            setProgressMessage(msg);
+          },
+          onError: (error) => {
+            message.error(`生成失败: ${error}`);
+          },
+          onComplete: () => {
+            setProgress(100);
+            setProgressMessage('生成完成！');
+          },
+        }
+      );
+
+      await client.connect();
+      message.success('AI 生成组织成功');
+      setIsGenerateOrgModalOpen(false);
+      generateOrgForm.resetFields();
+
+      const res = await axios.get(`/api/organizations/project/${projectId}`);
+      setOrganizations(res.data);
+      const createdOrg = res.data.find((org: Organization) => !existingIds.has(org.id));
+      if (createdOrg) {
+        setSelectedOrg(createdOrg);
+        loadMembers(createdOrg.id);
+      }
+
+      await loadCharacters();
+      await refreshCharacters();
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'AI 生成失败';
+      message.error(errorMessage);
+    } finally {
+      setTimeout(() => {
+        setIsGenerating(false);
+        setProgress(0);
+        setProgressMessage('');
+      }, 500);
+    }
+  };
+
+  const handleOpenEditOrganization = async () => {
+    if (!selectedOrg) return;
+
+    try {
+      const res = await axios.get(`/api/characters/${selectedOrg.character_id}`);
+      const character = res.data;
+      editOrgForm.setFieldsValue({
+        name: character.name,
+        organization_type: character.organization_type,
+        organization_purpose: character.organization_purpose,
+        background: character.background,
+        power_level: selectedOrg.power_level,
+        location: selectedOrg.location,
+        motto: selectedOrg.motto,
+        color: selectedOrg.color,
+      });
+    } catch (error) {
+      console.error('加载组织档案失败', error);
+      editOrgForm.setFieldsValue({
+        power_level: selectedOrg.power_level,
+        location: selectedOrg.location,
+        motto: selectedOrg.motto,
+        color: selectedOrg.color,
+      });
+    }
+
+    setIsEditOrgModalOpen(true);
+  };
+
+  const handleUpdateOrganization = async (values: Record<string, unknown>) => {
+    if (!selectedOrg || !projectId) return;
+
+    const {
+      name,
+      organization_type,
+      organization_purpose,
+      background,
+      ...organizationFields
+    } = values;
+
+    try {
+      await Promise.all([
+        axios.put(`/api/characters/${selectedOrg.character_id}`, {
+          name,
+          organization_type,
+          organization_purpose,
+          background,
+        }),
+        axios.put(`/api/organizations/${selectedOrg.id}`, organizationFields),
+      ]);
+
+      message.success('组织信息更新成功');
+      setIsEditOrgModalOpen(false);
+      editOrgForm.resetFields();
+
+      const res = await axios.get(`/api/organizations/project/${projectId}`);
+      setOrganizations(res.data);
+      const updatedOrg = res.data.find((org: Organization) => org.id === selectedOrg.id);
+      if (updatedOrg) {
+        setSelectedOrg(updatedOrg);
+        loadMembers(updatedOrg.id);
+      }
+
+      await refreshCharacters();
+    } catch (error) {
+      message.error('更新失败');
+      console.error(error);
+    }
+  };
+
+  const handleDeleteOrganization = () => {
+    if (!selectedOrg || !projectId) return;
+
+    modal.confirm({
+      title: '删除组织',
+      content: `确定删除「${selectedOrg.name}」吗？组织的成员关系也会一并删除，此操作无法撤销。`,
+      centered: true,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await characterApi.deleteCharacter(selectedOrg.character_id);
+          message.success('组织已删除');
+
+          const res = await axios.get(`/api/organizations/project/${projectId}`);
+          setOrganizations(res.data);
+          if (res.data.length > 0) {
+            setSelectedOrg(res.data[0]);
+            loadMembers(res.data[0].id);
+          } else {
+            setSelectedOrg(null);
+            setMembers([]);
+          }
+
+          await loadCharacters();
+          await refreshCharacters();
+        } catch (error) {
+          message.error('删除失败');
+          console.error(error);
+        }
+      },
+    });
   };
 
   const handleAddMember = async (values: Record<string, unknown>) => {
@@ -321,19 +534,44 @@ export default function Organizations() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {contextHolder}
       
-      {/* 页面标题 - 仅桌面端显示 */}
-      {!isMobile && (
-        <div style={{
-          padding: '16px 0',
-          marginBottom: 16,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`
-        }}>
-          <h2 style={{ margin: 0, fontSize: 24 }}>
-            <BankOutlined style={{ marginRight: 8 }} />
-            组织管理
-          </h2>
+      <div style={{
+        padding: isMobile ? '4px 0 16px' : '2px 0 18px',
+        borderBottom: `1px solid ${token.colorBorderSecondary}`,
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        gap: isMobile ? 14 : 20,
+        justifyContent: 'space-between',
+        alignItems: isMobile ? 'stretch' : 'flex-start',
+      }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <BankOutlined style={{ fontSize: 18, color: token.colorTextSecondary }} />
+            <h2 style={{ margin: 0, fontSize: 19, fontWeight: 600, color: token.colorText }}>组织管理</h2>
+          </div>
+          <div style={{ marginTop: 5, fontSize: 12, color: token.colorTextTertiary }}>
+            共 {organizations.length} 个组织
+          </div>
         </div>
-      )}
+
+        <Space wrap size={8}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            size={isMobile ? 'small' : 'middle'}
+            onClick={() => setIsCreateOrgModalOpen(true)}
+          >
+            新建组织
+          </Button>
+          <Button
+            icon={<ThunderboltOutlined />}
+            loading={isGenerating}
+            size={isMobile ? 'small' : 'middle'}
+            onClick={() => setIsGenerateOrgModalOpen(true)}
+          >
+            AI 生成组织
+          </Button>
+        </Space>
+      </div>
       
       <div style={{
         flex: 1,
@@ -432,17 +670,36 @@ export default function Organizations() {
         {!selectedOrg ? (
           <Card style={{ height: '100%' }}>
             <div style={{ textAlign: 'center', padding: '100px 20px', color: token.colorTextTertiary }}>
-              {isMobile && organizations.length > 0 && (
-                <Button
-                  type="primary"
-                  icon={<UnorderedListOutlined />}
-                  onClick={() => setOrgListVisible(true)}
-                  style={{ marginBottom: 20 }}
-                >
-                  选择组织
-                </Button>
+              {organizations.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                  <BankOutlined style={{ fontSize: 36, color: token.colorTextQuaternary }} />
+                  <div style={{ fontSize: 15, fontWeight: 600, color: token.colorText }}>还没有组织</div>
+                  <div style={{ maxWidth: 360, fontSize: 12, lineHeight: 1.7 }}>
+                    创建组织后，可以在这里维护成员、势力等级、所在地和背景资料。
+                  </div>
+                  <Space style={{ marginTop: 6 }}>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={() => setIsCreateOrgModalOpen(true)}>
+                      新建组织
+                    </Button>
+                    <Button icon={<ThunderboltOutlined />} onClick={() => setIsGenerateOrgModalOpen(true)}>
+                      AI 生成
+                    </Button>
+                  </Space>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                  {isMobile && (
+                    <Button
+                      type="primary"
+                      icon={<UnorderedListOutlined />}
+                      onClick={() => setOrgListVisible(true)}
+                    >
+                      选择组织
+                    </Button>
+                  )}
+                  <div>请选择一个组织查看详情</div>
+                </div>
               )}
-              <div>请选择一个组织查看详情</div>
             </div>
           </Card>
         ) : (
@@ -485,22 +742,25 @@ export default function Organizations() {
                   title="组织详情"
                   size="small"
                   extra={
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<EditOutlined />}
-                      onClick={() => {
-                        editOrgForm.setFieldsValue({
-                          power_level: selectedOrg.power_level,
-                          location: selectedOrg.location,
-                          motto: selectedOrg.motto,
-                          color: selectedOrg.color
-                        });
-                        setIsEditOrgModalOpen(true);
-                      }}
-                    >
-                      编辑
-                    </Button>
+                    <Space size={2}>
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={handleOpenEditOrganization}
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        type="link"
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={handleDeleteOrganization}
+                      >
+                        删除
+                      </Button>
+                    </Space>
                   }
                 >
                   <Descriptions column={isMobile ? 1 : 2} size="small">
@@ -775,7 +1035,7 @@ export default function Organizations() {
 
       {/* 编辑组织模态框 */}
       <Modal
-        title="编辑组织信息"
+        title="编辑组织"
         open={isEditOrgModalOpen}
         onCancel={() => {
           setIsEditOrgModalOpen(false);
@@ -783,39 +1043,35 @@ export default function Organizations() {
         }}
         footer={null}
         centered={!isMobile}
-        width={isMobile ? '100%' : 500}
+        width={isMobile ? '100%' : 620}
         style={isMobile ? { top: 0, paddingBottom: 0, maxWidth: '100vw' } : undefined}
         styles={isMobile ? { body: { maxHeight: 'calc(100vh - 110px)', overflowY: 'auto' } } : undefined}
       >
         <Form
           form={editOrgForm}
           layout="vertical"
-          onFinish={async (values) => {
-            if (!selectedOrg) return;
-            try {
-              await axios.put(`/api/organizations/${selectedOrg.id}`, values);
-              message.success('组织信息更新成功');
-              setIsEditOrgModalOpen(false);
-              editOrgForm.resetFields();
-
-              // 重新获取更新后的组织列表
-              const res = await axios.get(`/api/organizations/project/${projectId}`);
-              setOrganizations(res.data);
-
-              // 更新当前选中的组织详情
-              const updatedOrg = res.data.find((org: Organization) => org.id === selectedOrg.id);
-              if (updatedOrg) {
-                setSelectedOrg(updatedOrg);
-              }
-
-              // 刷新全局 store
-              await refreshCharacters();
-            } catch (error) {
-              message.error('更新失败');
-              console.error(error);
-            }
-          }}
+          onFinish={handleUpdateOrganization}
         >
+          <Form.Item
+            name="name"
+            label="组织名称"
+            rules={[{ required: true, message: '请输入组织名称' }]}
+          >
+            <Input placeholder="组织名称" />
+          </Form.Item>
+
+          <Form.Item
+            name="organization_type"
+            label="组织类型"
+            rules={[{ required: true, message: '请输入组织类型' }]}
+          >
+            <Input placeholder="如：门派、帮派、公司、学院" />
+          </Form.Item>
+
+          <Form.Item name="organization_purpose" label="组织目的">
+            <Input placeholder="这个组织存在的核心目标是什么" />
+          </Form.Item>
+
           <Form.Item
             name="power_level"
             label="势力等级"
@@ -846,16 +1102,147 @@ export default function Organizations() {
             <Input placeholder="如：深红色、金色、黑色等" />
           </Form.Item>
 
+          <Form.Item name="background" label="组织背景">
+            <Input.TextArea rows={4} placeholder="描述组织的成立背景、经历与现状..." />
+          </Form.Item>
+
           <Form.Item>
             <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
               <Button onClick={() => setIsEditOrgModalOpen(false)}>取消</Button>
               <Button type="primary" htmlType="submit">
-                保存
+                保存修改
               </Button>
             </Space>
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 新建组织模态框 */}
+      <Modal
+        title="新建组织"
+        open={isCreateOrgModalOpen}
+        onCancel={() => {
+          setIsCreateOrgModalOpen(false);
+          createOrgForm.resetFields();
+        }}
+        footer={null}
+        centered={!isMobile}
+        width={isMobile ? '100%' : 620}
+        style={isMobile ? { top: 0, paddingBottom: 0, maxWidth: '100vw' } : undefined}
+        styles={isMobile ? { body: { maxHeight: 'calc(100vh - 110px)', overflowY: 'auto' } } : undefined}
+      >
+        <Form
+          form={createOrgForm}
+          layout="vertical"
+          initialValues={{ power_level: 50 }}
+          onFinish={handleCreateOrganization}
+        >
+          <Form.Item
+            name="name"
+            label="组织名称"
+            rules={[{ required: true, message: '请输入组织名称' }]}
+          >
+            <Input placeholder="如：天剑门、黑龙会" />
+          </Form.Item>
+
+          <Form.Item
+            name="organization_type"
+            label="组织类型"
+            rules={[{ required: true, message: '请输入组织类型' }]}
+          >
+            <Input placeholder="如：门派、帮派、公司、学院" />
+          </Form.Item>
+
+          <Form.Item name="organization_purpose" label="组织目的">
+            <Input placeholder="这个组织存在的核心目标是什么" />
+          </Form.Item>
+
+          <Form.Item
+            name="power_level"
+            label="势力等级"
+            tooltip="0-100 的数值，表示组织的影响力"
+          >
+            <InputNumber min={0} max={100} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item name="location" label="所在地">
+            <Input placeholder="总部或主要活动区域" />
+          </Form.Item>
+
+          <Form.Item name="motto" label="格言/口号">
+            <Input placeholder="组织的宗旨、格言或口号" />
+          </Form.Item>
+
+          <Form.Item name="color" label="代表颜色">
+            <Input placeholder="如：深红色、金色、黑色" />
+          </Form.Item>
+
+          <Form.Item name="background" label="组织背景">
+            <Input.TextArea rows={4} placeholder="描述组织的成立背景、经历与现状..." />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => setIsCreateOrgModalOpen(false)}>取消</Button>
+              <Button type="primary" htmlType="submit">
+                创建组织
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* AI 生成组织模态框 */}
+      <Modal
+        title="AI 生成组织"
+        open={isGenerateOrgModalOpen}
+        onCancel={() => {
+          setIsGenerateOrgModalOpen(false);
+          generateOrgForm.resetFields();
+        }}
+        footer={null}
+        centered={!isMobile}
+        width={isMobile ? '100%' : 620}
+        style={isMobile ? { top: 0, paddingBottom: 0, maxWidth: '100vw' } : undefined}
+        styles={isMobile ? { body: { maxHeight: 'calc(100vh - 110px)', overflowY: 'auto' } } : undefined}
+      >
+        <Form
+          form={generateOrgForm}
+          layout="vertical"
+          onFinish={handleGenerateOrganization}
+        >
+          <Form.Item name="name" label="组织名称">
+            <Input placeholder="如：天剑门、黑龙会（可选，AI 会自动生成）" />
+          </Form.Item>
+
+          <Form.Item name="organization_type" label="组织类型">
+            <Input placeholder="如：门派、帮派、公司、学院（可选，AI 会根据世界观生成）" />
+          </Form.Item>
+
+          <Form.Item name="background" label="背景设定">
+            <Input.TextArea rows={3} placeholder="简要描述组织的背景和环境..." />
+          </Form.Item>
+
+          <Form.Item name="requirements" label="其他要求">
+            <Input.TextArea rows={3} placeholder="其他需要 AI 注意的特殊要求..." />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => setIsGenerateOrgModalOpen(false)}>取消</Button>
+              <Button type="primary" htmlType="submit" icon={<ThunderboltOutlined />}>
+                开始生成
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <SSELoadingOverlay
+        loading={isGenerating}
+        progress={progress}
+        message={progressMessage}
+      />
     </div>
   );
 }

@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import dayjs, { Dayjs } from 'dayjs';
-import { Alert, Button, Card, Col, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Spin, Switch, Table, Tag, Tabs, Typography, message, theme } from 'antd';
+import { Alert, Button, Card, Col, DatePicker, Empty, Form, Input, InputNumber, Modal, Popconfirm, Row, Select, Space, Spin, Switch, Table, Tag, Tabs, Typography, message, theme } from 'antd';
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
-import { BellOutlined, CheckCircleOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, MailOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined } from '@ant-design/icons';
+import { BellOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, InfoCircleOutlined, InboxOutlined, MailOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined, WarningOutlined } from '@ant-design/icons';
 import { announcementApi, authApi, settingsApi } from '../services/api';
 import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementStatusResponse, AnnouncementUpdate, SystemSMTPSettings, SystemSMTPSettingsUpdate, User } from '../types';
 import MarkdownRenderer from '../components/MarkdownRenderer';
+import { useThemeMode } from '../theme/useThemeMode';
+import './SystemSettings.css';
 
-const { Title, Text, Paragraph } = Typography;
+const { Text } = Typography;
 const { Option } = Select;
 const { TextArea, Search } = Input;
 
@@ -74,6 +77,7 @@ const toIsoStringOrNull = (value?: Dayjs | null) => {
 
 export default function SystemSettingsPage() {
   const { token } = theme.useToken();
+  const { resolvedMode } = useThemeMode();
   const [form] = Form.useForm<SystemSMTPSettingsUpdate>();
   const [announcementForm] = Form.useForm<AnnouncementFormValues>();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -95,9 +99,19 @@ export default function SystemSettingsPage() {
 
   const announcementContent = Form.useWatch('content', announcementForm) || '';
 
-  const pageBackground = `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillSecondary} 100%)`;
-  const headerBackground = `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`;
-  const footerSafeOffset = 88;
+  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const themeVars = {
+    '--sys-page-bg': token.colorBgLayout,
+    '--sys-text': token.colorText,
+    '--sys-secondary': token.colorTextSecondary,
+    '--sys-tertiary': token.colorTextTertiary,
+    '--sys-border': token.colorBorderSecondary,
+    '--sys-fill': token.colorFillQuaternary,
+    '--sys-card-bg': token.colorBgContainer,
+    '--sys-accent': accentColor,
+    '--sys-ok': resolvedMode === 'dark' ? '#8FBE8A' : '#4F7A52',
+    '--sys-warn': resolvedMode === 'dark' ? '#D8B070' : '#A9762F',
+  } as CSSProperties;
   const announcementAdminAvailable = announcementStatus?.mode === 'server';
 
   const loadAnnouncementStatus = useCallback(async () => {
@@ -498,42 +512,26 @@ export default function SystemSettingsPage() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: `calc(100vh - ${footerSafeOffset}px)`,
-        boxSizing: 'border-box',
-        background: pageBackground,
-        padding: 24,
-        paddingBottom: footerSafeOffset,
-      }}
-    >
-      <div style={{ maxWidth: 1400, margin: '0 auto', width: '100%' }}>
-      <Card
-        bordered={false}
-        style={{
-          marginBottom: 24,
-          borderRadius: 20,
-          overflow: 'hidden',
-          boxShadow: `0 12px 32px ${token.colorFillSecondary}`,
-        }}
-        bodyStyle={{ padding: 0 }}
-      >
-        <div style={{ background: headerBackground, padding: '28px 32px', color: '#fff' }}>
-          <Space direction="vertical" size={6}>
-            <Space>
-              <SettingOutlined />
-              <Title level={3} style={{ color: '#fff', margin: 0 }}>系统设置</Title>
-            </Space>
-            <Paragraph style={{ color: 'rgba(255,255,255,0.88)', margin: 0 }}>
-              仅管理员可见，用于维护 SMTP 发信能力、邮箱注册参数与服务端公告发布。
-            </Paragraph>
-          </Space>
-        </div>
-      </Card>
+    <div className="sys-page" style={themeVars}>
+      <div className="sys-shell">
+        <header className="sys-header">
+          <div className="sys-header-main">
+            <span className="sys-header-icon"><SettingOutlined /></span>
+            <div>
+              <div className="sys-title-row">
+                <h1 className="sys-title">系统设置</h1>
+                <span className="sys-badge">管理员</span>
+              </div>
+              <p className="sys-subtitle">维护 SMTP 发信能力、邮箱注册策略与服务端公告。</p>
+            </div>
+          </div>
+        </header>
 
-      <Tabs
-        defaultActiveKey="smtp"
-        items={[
+        <div className="sys-panel">
+          <Tabs
+            className="sys-tabs"
+            defaultActiveKey="smtp"
+            items={[
           {
             key: 'smtp',
             label: (
@@ -543,118 +541,195 @@ export default function SystemSettingsPage() {
               </Space>
             ),
             children: (
-              <Form form={form} layout="vertical" onFinish={handleSave}>
-                <Row gutter={24}>
-                  <Col xs={24} xl={16}>
-                    <Card title="邮件服务配置" bordered={false} style={{ borderRadius: 16 }}>
+              <div className="sys-tab-body">
+                <Form form={form} layout="vertical" onFinish={handleSave}>
+                  <div className="sys-grid">
+                    <Card
+                      className="sys-card sys-card--main"
+                      title={(
+                        <div className="sys-card-heading">
+                          <span className="sys-card-title">邮件服务配置</span>
+                          <span className="sys-card-sub">SMTP 发信通道</span>
+                        </div>
+                      )}
+                    >
                       <Alert
+                        className="sys-note"
                         type="info"
                         showIcon
-                        style={{ marginBottom: 20 }}
+                        icon={<InfoCircleOutlined />}
                         message="QQ 邮箱配置说明"
-                        description="如果选择 QQ 邮箱，请使用完整 QQ 邮箱地址作为用户名，密码处填写 SMTP 授权码，而不是 QQ 登录密码。默认推荐 smtp.qq.com + SSL 465。"
+                        description="用户名填写完整 QQ 邮箱地址，密码处填写 SMTP 授权码（不是 QQ 登录密码）。推荐 smtp.qq.com + SSL 465。"
                       />
 
-                      <Row gutter={16}>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_provider" label="邮件服务商" rules={[{ required: true, message: '请选择邮件服务商' }]}>
-                            <Select onChange={handleProviderChange}>
-                              <Option value="qq">QQ 邮箱</Option>
-                              <Option value="custom">自定义 SMTP</Option>
-                            </Select>
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_host" label="SMTP 主机" rules={[{ required: true, message: '请输入 SMTP 主机' }]}>
-                            <Input placeholder="例如：smtp.qq.com" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_port" label="SMTP 端口" rules={[{ required: true, message: '请输入 SMTP 端口' }]}>
-                            <InputNumber style={{ width: '100%' }} min={1} max={65535} />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_username" label="SMTP 用户名" rules={[{ required: true, message: '请输入 SMTP 用户名' }]}>
-                            <Input placeholder="完整邮箱地址" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_password" label="SMTP 密码 / 授权码" rules={[{ required: true, message: '请输入 SMTP 授权码' }]}>
-                            <Input.Password placeholder="QQ 邮箱请填写授权码" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_from_email" label="发件人邮箱">
-                            <Input placeholder="默认可与用户名一致" />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_from_name" label="发件人名称" rules={[{ required: true, message: '请输入发件人名称' }]}>
-                            <Input placeholder="小新工坊" />
-                          </Form.Item>
-                        </Col>
-                      </Row>
+                      <div className="sys-section">
+                        <div className="sys-section-head">
+                          <span className="sys-section-title">连接参数</span>
+                          <span className="sys-section-desc">服务商、主机与端口</span>
+                        </div>
+                        <Row gutter={16}>
+                          <Col xs={24} md={12}>
+                            <Form.Item name="smtp_provider" label="邮件服务商" rules={[{ required: true, message: '请选择邮件服务商' }]}>
+                              <Select onChange={handleProviderChange}>
+                                <Option value="qq">QQ 邮箱</Option>
+                                <Option value="custom">自定义 SMTP</Option>
+                              </Select>
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item name="smtp_host" label="SMTP 主机" rules={[{ required: true, message: '请输入 SMTP 主机' }]}>
+                              <Input placeholder="例如：smtp.qq.com" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item name="smtp_port" label="SMTP 端口" rules={[{ required: true, message: '请输入 SMTP 端口' }]}>
+                              <InputNumber style={{ width: '100%' }} min={1} max={65535} />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      </div>
 
-                      <Row gutter={16}>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_use_ssl" label="启用 SSL" valuePropName="checked">
-                            <Switch />
-                          </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                          <Form.Item name="smtp_use_tls" label="启用 TLS" valuePropName="checked">
-                            <Switch />
-                          </Form.Item>
-                        </Col>
-                      </Row>
-                    </Card>
-                  </Col>
+                      <div className="sys-section">
+                        <div className="sys-section-head">
+                          <span className="sys-section-title">账号凭证</span>
+                          <span className="sys-section-desc">用于登录邮件服务商</span>
+                        </div>
+                        <Row gutter={16}>
+                          <Col xs={24} md={12}>
+                            <Form.Item name="smtp_username" label="SMTP 用户名" rules={[{ required: true, message: '请输入 SMTP 用户名' }]}>
+                              <Input placeholder="完整邮箱地址" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item name="smtp_password" label="SMTP 密码 / 授权码" rules={[{ required: true, message: '请输入 SMTP 授权码' }]}>
+                              <Input.Password placeholder="QQ 邮箱请填写授权码" />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      </div>
 
-                  <Col xs={24} xl={8}>
-                    <Card title="注册与验证码策略" bordered={false} style={{ borderRadius: 16, marginBottom: 24 }}>
-                      <Form.Item name="email_auth_enabled" label="启用邮箱认证" valuePropName="checked">
-                        <Switch />
-                      </Form.Item>
-                      <Form.Item name="email_register_enabled" label="启用邮箱注册" valuePropName="checked">
-                        <Switch />
-                      </Form.Item>
-                      <Form.Item name="verification_code_ttl_minutes" label="验证码有效期（分钟）" rules={[{ required: true, message: '请输入验证码有效期' }]}>
-                        <InputNumber style={{ width: '100%' }} min={1} max={120} />
-                      </Form.Item>
-                      <Form.Item name="verification_resend_interval_seconds" label="验证码重发间隔（秒）" rules={[{ required: true, message: '请输入验证码重发间隔' }]}>
-                        <InputNumber style={{ width: '100%' }} min={10} max={3600} />
-                      </Form.Item>
+                      <div className="sys-section">
+                        <div className="sys-section-head">
+                          <span className="sys-section-title">发件身份</span>
+                          <span className="sys-section-desc">收件人看到的名称与地址</span>
+                        </div>
+                        <Row gutter={16}>
+                          <Col xs={24} md={12}>
+                            <Form.Item name="smtp_from_email" label="发件人邮箱" extra="留空时与 SMTP 用户名一致">
+                              <Input placeholder="默认与用户名一致" />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} md={12}>
+                            <Form.Item name="smtp_from_name" label="发件人名称" rules={[{ required: true, message: '请输入发件人名称' }]}>
+                              <Input placeholder="小新工坊" />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      </div>
+
+                      <div className="sys-section sys-section--last">
+                        <div className="sys-section-head">
+                          <span className="sys-section-title">加密方式</span>
+                          <span className="sys-section-desc">465 端口用 SSL，587 端口用 TLS</span>
+                        </div>
+                        <div className="sys-switch-grid">
+                          <div className="sys-switch-item">
+                            <div className="sys-switch-copy">
+                              <span className="sys-switch-title">启用 SSL</span>
+                              <span className="sys-switch-desc">直连加密通道，推荐 465 端口</span>
+                            </div>
+                            <Form.Item name="smtp_use_ssl" valuePropName="checked" noStyle>
+                              <Switch />
+                            </Form.Item>
+                          </div>
+                          <div className="sys-switch-item">
+                            <div className="sys-switch-copy">
+                              <span className="sys-switch-title">启用 TLS</span>
+                              <span className="sys-switch-desc">连接后升级加密，适用于 587 端口</span>
+                            </div>
+                            <Form.Item name="smtp_use_tls" valuePropName="checked" noStyle>
+                              <Switch />
+                            </Form.Item>
+                          </div>
+                        </div>
+                      </div>
                     </Card>
 
-                    <Card title="操作" bordered={false} style={{ borderRadius: 16 }}>
-                      <Space direction="vertical" style={{ width: '100%' }} size={12}>
-                        <Input
-                          value={testTargetEmail}
-                          onChange={(e) => setTestTargetEmail(e.target.value)}
-                          placeholder="请输入测试目标邮箱，如 123456@qq.com"
-                        />
-                        <Button icon={<ReloadOutlined />} onClick={loadData} block>
-                          重新加载
-                        </Button>
-                        <Button icon={<SendOutlined />} loading={testing} onClick={handleTest} block>
-                          发送测试邮件
-                        </Button>
-                        <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving} block onClick={() => form.submit()}>
-                          保存系统设置
-                        </Button>
-                        <Alert
-                          type="success"
-                          showIcon
-                          icon={<CheckCircleOutlined />}
-                          message="建议使用 QQ 默认配置"
-                          description={<Text type="secondary">先保存 SMTP 配置，再填写测试目标邮箱，点击“发送测试邮件”后由后端通过 SMTP 实际发信。</Text>}
-                        />
-                      </Space>
-                    </Card>
-                  </Col>
-                </Row>
-              </Form>
+                    <div className="sys-side">
+                      <Card
+                        className="sys-card"
+                        title={(
+                          <div className="sys-card-heading">
+                            <span className="sys-card-title">注册与验证码</span>
+                            <span className="sys-card-sub">邮箱认证策略</span>
+                          </div>
+                        )}
+                      >
+                        <div className="sys-switch-list">
+                          <div className="sys-switch-item">
+                            <div className="sys-switch-copy">
+                              <span className="sys-switch-title">启用邮箱认证</span>
+                              <span className="sys-switch-desc">注册与找回密码需要邮箱验证码</span>
+                            </div>
+                            <Form.Item name="email_auth_enabled" valuePropName="checked" noStyle>
+                              <Switch />
+                            </Form.Item>
+                          </div>
+                          <div className="sys-switch-item">
+                            <div className="sys-switch-copy">
+                              <span className="sys-switch-title">启用邮箱注册</span>
+                              <span className="sys-switch-desc">允许新用户自助注册账号</span>
+                            </div>
+                            <Form.Item name="email_register_enabled" valuePropName="checked" noStyle>
+                              <Switch />
+                            </Form.Item>
+                          </div>
+                        </div>
+
+                        <div className="sys-field-pair">
+                          <Form.Item name="verification_code_ttl_minutes" label="验证码有效期" rules={[{ required: true, message: '请输入验证码有效期' }]}>
+                            <InputNumber style={{ width: '100%' }} min={1} max={120} addonAfter="分钟" />
+                          </Form.Item>
+                          <Form.Item name="verification_resend_interval_seconds" label="验证码重发间隔" rules={[{ required: true, message: '请输入验证码重发间隔' }]}>
+                            <InputNumber style={{ width: '100%' }} min={10} max={3600} addonAfter="秒" />
+                          </Form.Item>
+                        </div>
+                      </Card>
+
+                      <Card
+                        className="sys-card"
+                        title={(
+                          <div className="sys-card-heading">
+                            <span className="sys-card-title">测试与保存</span>
+                            <span className="sys-card-sub">先保存，再发测试信</span>
+                          </div>
+                        )}
+                      >
+                        <div className="sys-actions">
+                          <div className="sys-field">
+                            <span className="sys-field-label">测试收件邮箱</span>
+                            <Input
+                              value={testTargetEmail}
+                              onChange={(e) => setTestTargetEmail(e.target.value)}
+                              placeholder="例如 123456@qq.com"
+                              allowClear
+                            />
+                          </div>
+                          <Button icon={<SendOutlined />} loading={testing} onClick={handleTest} block>
+                            发送测试邮件
+                          </Button>
+                          <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving} block onClick={() => form.submit()}>
+                            保存系统设置
+                          </Button>
+                          <Button type="text" size="small" icon={<ReloadOutlined />} onClick={loadData} block className="sys-action-quiet">
+                            放弃修改并重新加载
+                          </Button>
+                        </div>
+                      </Card>
+                    </div>
+                  </div>
+                </Form>
+              </div>
             ),
           },
           {
@@ -666,67 +741,94 @@ export default function SystemSettingsPage() {
               </Space>
             ),
             children: (
-              <Card bordered={false} style={{ borderRadius: 16 }}>
-                <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                  <Alert
-                    type={announcementAdminAvailable ? 'info' : 'warning'}
-                    showIcon
-                    message={announcementAdminAvailable ? '公告发布入口' : '当前实例不是公告发布端'}
-                    description={announcementAdminAvailable
-                      ? '公告只能由服务端模式下的管理员发布、编辑、隐藏或删除；客户端实例会定时从服务端同步已发布且未过期的公告。'
-                      : `公告发布仅在云端服务端可用。当前模式：${announcementStatus?.mode || '未知'}${announcementStatus?.cloud_url ? `，云端地址：${announcementStatus.cloud_url}` : ''}`}
-                  />
+              <div className="sys-tab-body">
+                <div className="sys-announcement">
+                  <div className={`sys-hint ${announcementAdminAvailable ? '' : 'sys-hint--warn'}`}>
+                    <span className="sys-hint-icon">
+                      {announcementAdminAvailable ? <InfoCircleOutlined /> : <WarningOutlined />}
+                    </span>
+                    <div className="sys-hint-copy">
+                      <span className="sys-hint-title">
+                        {announcementAdminAvailable ? '公告发布入口' : '当前实例不是公告发布端'}
+                      </span>
+                      <span className="sys-hint-desc">
+                        {announcementAdminAvailable
+                          ? '公告只能由服务端模式下的管理员发布、编辑、隐藏或删除；客户端实例会定时同步已发布且未过期的公告。'
+                          : `公告发布仅在云端服务端可用。当前模式：${announcementStatus?.mode || '未知'}${announcementStatus?.cloud_url ? `，云端地址：${announcementStatus.cloud_url}` : ''}`}
+                      </span>
+                    </div>
+                    {announcementStatus && (
+                      <span className={`sys-mode-chip ${announcementAdminAvailable ? '' : 'sys-mode-chip--warn'}`}>
+                        {announcementStatus.mode === 'server' ? '服务端模式' : '客户端模式'}
+                      </span>
+                    )}
+                  </div>
 
-                  <Row gutter={[16, 16]} justify="space-between" align="middle">
-                    <Col xs={24} lg={14}>
-                      <Space wrap>
-                        <Button type="primary" icon={<PlusOutlined />} disabled={!announcementAdminAvailable} onClick={openCreateAnnouncementModal}>
-                          新建公告
-                        </Button>
-                        <Button icon={<ReloadOutlined />} loading={announcementLoading || announcementStatusLoading} onClick={() => { void loadAnnouncementStatus(); void loadAnnouncements(announcementPagination.current, announcementPagination.pageSize, announcementSearchKeyword); }}>
-                          刷新列表
-                        </Button>
-                        {announcementStatus && (
-                          <Tag color={announcementAdminAvailable ? 'green' : 'orange'}>
-                            {announcementStatus.mode === 'server' ? '服务端模式' : '客户端模式'}
-                          </Tag>
-                        )}
-                      </Space>
-                    </Col>
-                    <Col xs={24} lg={10} style={{ textAlign: 'right' }}>
-                      <Space wrap>
-                        <Search
-                          allowClear
-                          placeholder="搜索标题、摘要或正文"
-                          style={{ width: 220 }}
-                          onSearch={handleAnnouncementSearch}
-                          disabled={!announcementAdminAvailable}
-                        />
-                        <Text type="secondary">状态</Text>
-                        <Select<AnnouncementStatusFilter>
-                          style={{ width: 120, textAlign: 'left' }}
-                          value={announcementStatusFilter}
-                          disabled={!announcementAdminAvailable}
-                          onChange={(value) => {
-                            setAnnouncementStatusFilter(value);
-                            setAnnouncementPagination(prev => ({ ...prev, current: 1 }));
-                          }}
-                          options={[
-                            { label: '全部', value: 'all' },
-                            { label: '草稿', value: 'draft' },
-                            { label: '已发布', value: 'published' },
-                            { label: '已隐藏', value: 'hidden' },
-                          ]}
-                        />
-                      </Space>
-                    </Col>
-                  </Row>
+                  <div className="sys-announcement-toolbar">
+                    <div className="sys-announcement-actions">
+                      <Button type="primary" icon={<PlusOutlined />} disabled={!announcementAdminAvailable} onClick={openCreateAnnouncementModal}>
+                        新建公告
+                      </Button>
+                      <Button
+                        icon={<ReloadOutlined />}
+                        loading={announcementLoading || announcementStatusLoading}
+                        onClick={() => { void loadAnnouncementStatus(); void loadAnnouncements(announcementPagination.current, announcementPagination.pageSize, announcementSearchKeyword); }}
+                      >
+                        刷新列表
+                      </Button>
+                    </div>
+                    <div className="sys-announcement-filters">
+                      <Search
+                        allowClear
+                        className="sys-announcement-search"
+                        placeholder="搜索标题、摘要或正文"
+                        onSearch={handleAnnouncementSearch}
+                        disabled={!announcementAdminAvailable}
+                      />
+                      <Select<AnnouncementStatusFilter>
+                        className="sys-announcement-status"
+                        value={announcementStatusFilter}
+                        disabled={!announcementAdminAvailable}
+                        onChange={(value) => {
+                          setAnnouncementStatusFilter(value);
+                          setAnnouncementPagination(prev => ({ ...prev, current: 1 }));
+                        }}
+                        options={[
+                          { label: '全部状态', value: 'all' },
+                          { label: '草稿', value: 'draft' },
+                          { label: '已发布', value: 'published' },
+                          { label: '已隐藏', value: 'hidden' },
+                        ]}
+                      />
+                    </div>
+                  </div>
 
                   <Table<Announcement>
+                    className="sys-announcement-table"
                     rowKey="id"
                     columns={announcementColumns}
                     dataSource={announcements}
                     loading={announcementLoading}
+                    locale={{
+                      emptyText: (
+                        <Empty
+                          image={<InboxOutlined className="sys-empty-icon" />}
+                          imageStyle={{ height: 40 }}
+                          description={(
+                            <div className="sys-empty-copy">
+                              <span className="sys-empty-title">
+                                {announcementAdminAvailable ? '还没有公告' : '当前实例不发布公告'}
+                              </span>
+                              <span className="sys-empty-desc">
+                                {announcementAdminAvailable
+                                  ? '点击右上角「新建公告」发布第一条更新说明。'
+                                  : '客户端实例只会接收服务端同步的公告，无法在此处创建。'}
+                              </span>
+                            </div>
+                          )}
+                        />
+                      ),
+                    }}
                     pagination={{
                       current: announcementPagination.current,
                       pageSize: announcementPagination.pageSize,
@@ -737,12 +839,13 @@ export default function SystemSettingsPage() {
                     onChange={handleAnnouncementTableChange}
                     scroll={{ x: 1200 }}
                   />
-                </Space>
-              </Card>
+                </div>
+              </div>
             ),
           },
         ]}
-      />
+          />
+        </div>
       </div>
 
       <Modal

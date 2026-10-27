@@ -1,14 +1,13 @@
 import React, { useMemo, useEffect, useRef } from 'react';
-import { Card, Tag, Badge, Empty, Collapse, Divider, theme } from 'antd';
+import { Empty, theme } from 'antd';
 import {
+  DownOutlined,
   FireOutlined,
   StarOutlined,
   ThunderboltOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import type { MemoryAnnotation } from './AnnotatedText';
-
-const { Panel } = Collapse;
 
 interface MemorySidebarProps {
   annotations: MemoryAnnotation[];
@@ -17,25 +16,14 @@ interface MemorySidebarProps {
   scrollToAnnotation?: string;
 }
 
-// 类型配置
 const TYPE_CONFIG = {
-  hook: {
-    label: '钩子',
-    icon: <FireOutlined />,
-  },
-  foreshadow: {
-    label: '伏笔',
-    icon: <StarOutlined />,
-  },
-  plot_point: {
-    label: '情节点',
-    icon: <ThunderboltOutlined />,
-  },
-  character_event: {
-    label: '角色事件',
-    icon: <UserOutlined />,
-  },
+  hook: { label: '钩子', icon: <FireOutlined /> },
+  foreshadow: { label: '伏笔', icon: <StarOutlined /> },
+  plot_point: { label: '情节点', icon: <ThunderboltOutlined /> },
+  character_event: { label: '角色事件', icon: <UserOutlined /> },
 };
+
+const TYPE_ORDER = ['hook', 'foreshadow', 'plot_point', 'character_event'] as const;
 
 /**
  * 记忆侧边栏组件
@@ -49,6 +37,7 @@ const MemorySidebar: React.FC<MemorySidebarProps> = ({
 }) => {
   const { token } = theme.useToken();
   const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
   const typeColors: Record<keyof typeof TYPE_CONFIG, string> = {
     hook: token.colorError,
     foreshadow: token.colorInfo,
@@ -56,17 +45,12 @@ const MemorySidebar: React.FC<MemorySidebarProps> = ({
     character_event: token.colorWarning,
   };
 
-  // 当需要滚动到特定标注卡片时
   useEffect(() => {
     if (scrollToAnnotation && cardRefs.current[scrollToAnnotation]) {
-      const element = cardRefs.current[scrollToAnnotation];
-      element?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-      });
+      cardRefs.current[scrollToAnnotation]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [scrollToAnnotation]);
-  // 按类型分组
+
   const groupedAnnotations = useMemo(() => {
     const groups: Record<string, MemoryAnnotation[]> = {
       hook: [],
@@ -76,12 +60,9 @@ const MemorySidebar: React.FC<MemorySidebarProps> = ({
     };
 
     annotations.forEach((annotation) => {
-      if (groups[annotation.type]) {
-        groups[annotation.type].push(annotation);
-      }
+      if (groups[annotation.type]) groups[annotation.type].push(annotation);
     });
 
-    // 每组按重要性排序
     Object.keys(groups).forEach((type) => {
       groups[type].sort((a, b) => b.importance - a.importance);
     });
@@ -89,18 +70,24 @@ const MemorySidebar: React.FC<MemorySidebarProps> = ({
     return groups;
   }, [annotations]);
 
-  // 统计信息
-  const stats = useMemo(() => {
-    return {
+  const stats = useMemo(
+    () => ({
       total: annotations.length,
       hooks: groupedAnnotations.hook.length,
       foreshadows: groupedAnnotations.foreshadow.length,
       plotPoints: groupedAnnotations.plot_point.length,
       characterEvents: groupedAnnotations.character_event.length,
-    };
-  }, [annotations, groupedAnnotations]);
+    }),
+    [annotations, groupedAnnotations]
+  );
 
-  // 渲染单个记忆卡片
+  const statItems = [
+    { key: 'hook', label: '钩子', value: stats.hooks },
+    { key: 'foreshadow', label: '伏笔', value: stats.foreshadows },
+    { key: 'plot_point', label: '情节点', value: stats.plotPoints },
+    { key: 'character_event', label: '角色事件', value: stats.characterEvents },
+  ].filter((item) => item.value > 0);
+
   const renderMemoryCard = (annotation: MemoryAnnotation) => {
     const config = TYPE_CONFIG[annotation.type];
     const color = typeColors[annotation.type];
@@ -112,71 +99,92 @@ const MemorySidebar: React.FC<MemorySidebarProps> = ({
         ref={(el) => {
           cardRefs.current[annotation.id] = el;
         }}
+        onClick={() => onAnnotationClick?.(annotation)}
+        style={{
+          marginBottom: 8,
+          padding: '11px 12px',
+          borderRadius: 10,
+          border: `1px solid ${isActive ? color : token.colorBorderSecondary}`,
+          background: isActive ? `color-mix(in srgb, ${color} 6%, ${token.colorBgContainer})` : token.colorBgContainer,
+          cursor: 'pointer',
+          transition: 'border-color 0.15s ease, background 0.15s ease',
+        }}
       >
-        <Card
-          size="small"
-          hoverable
-          onClick={() => onAnnotationClick?.(annotation)}
-          style={{
-            marginBottom: 12,
-            borderLeft: `4px solid ${color}`,
-            backgroundColor: isActive ? `color-mix(in srgb, ${color} 8%, transparent)` : 'transparent',
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-          }}
-          bodyStyle={{ padding: 12 }}
-        >
-        <div style={{ marginBottom: 8 }}>
-          <Badge
-            count={`${(annotation.importance * 10).toFixed(1)}`}
-            style={{
-              backgroundColor: color,
-              float: 'right',
-            }}
-          />
-          <div style={{ fontWeight: 600, fontSize: 14, paddingRight: 50 }}>
-            {config.icon} {annotation.title}
-          </div>
-        </div>
-
-        <div
-          style={{
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+          <span style={{ color, fontSize: 12, display: 'inline-flex' }}>{config.icon}</span>
+          <span style={{
+            flex: 1,
+            minWidth: 0,
             fontSize: 13,
-            color: token.colorTextSecondary,
-            lineHeight: 1.6,
-            marginBottom: 8,
-          }}
-        >
-          {annotation.content.length > 100
-            ? `${annotation.content.slice(0, 100)}...`
-            : annotation.content}
+            fontWeight: 600,
+            color: token.colorText,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>
+            {annotation.title}
+          </span>
+          <span style={{
+            flexShrink: 0,
+            fontSize: 11,
+            fontWeight: 600,
+            color,
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {(annotation.importance * 10).toFixed(1)}
+          </span>
         </div>
 
-        {annotation.tags && annotation.tags.length > 0 && (
-          <div>
-            {annotation.tags.map((tag, index) => (
-              <Tag key={index} style={{ fontSize: 11, margin: '2px 4px 2px 0' }}>
-                {tag}
-              </Tag>
-            ))}
-          </div>
-        )}
+        <div style={{
+          fontSize: 12,
+          lineHeight: 1.65,
+          color: token.colorTextSecondary,
+          display: '-webkit-box',
+          WebkitLineClamp: 3,
+          WebkitBoxOrient: 'vertical' as const,
+          overflow: 'hidden',
+        }}>
+          {annotation.content}
+        </div>
 
-        {/* 特殊元数据 */}
-        {annotation.metadata.strength && (
-          <div style={{ marginTop: 4, fontSize: 11, color: token.colorTextTertiary }}>
-            强度: {annotation.metadata.strength}/10
+        {(annotation.tags?.length > 0 ||
+          annotation.metadata.strength ||
+          annotation.metadata.foreshadowType) && (
+          <div style={{
+            marginTop: 8,
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 5,
+            fontSize: 10.5,
+            color: token.colorTextTertiary,
+          }}>
+            {annotation.tags?.map((tag, index) => (
+              <span
+                key={index}
+                style={{
+                  padding: '0 6px',
+                  borderRadius: 4,
+                  background: token.colorFillTertiary,
+                  color: token.colorTextTertiary,
+                  lineHeight: '17px',
+                }}
+              >
+                {tag}
+              </span>
+            ))}
+            {annotation.metadata.strength && (
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                强度 {annotation.metadata.strength}/10
+              </span>
+            )}
+            {annotation.metadata.foreshadowType && (
+              <span style={{ color: annotation.metadata.foreshadowType === 'planted' ? token.colorInfo : token.colorSuccess }}>
+                {annotation.metadata.foreshadowType === 'planted' ? '已埋下' : '已回收'}
+              </span>
+            )}
           </div>
         )}
-        {annotation.metadata.foreshadowType && (
-          <Tag
-            color={annotation.metadata.foreshadowType === 'planted' ? 'blue' : 'green'}
-            style={{ marginTop: 4 }}
-          >
-            {annotation.metadata.foreshadowType === 'planted' ? '已埋下' : '已回收'}
-          </Tag>
-        )}
-        </Card>
       </div>
     );
   };
@@ -190,63 +198,66 @@ const MemorySidebar: React.FC<MemorySidebarProps> = ({
   }
 
   return (
-    <div style={{ height: '100%', overflowY: 'auto', padding: '16px' }}>
-      {/* 统计概览 */}
-      <Card size="small" style={{ marginBottom: 16 }}>
-        <div style={{ fontWeight: 600, marginBottom: 12 }}>📊 分析概览</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div>
-            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>钩子</div>
-            <div style={{ fontSize: 20, fontWeight: 600, color: typeColors.hook }}>
-              {stats.hooks}
+    <div style={{ height: '100%', overflowY: 'auto', padding: '14px 16px 20px' }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${Math.min(statItems.length, 2)}, minmax(0, 1fr))`,
+        gap: 6,
+        marginBottom: 14,
+      }}>
+        {statItems.map((item) => (
+          <div
+            key={item.key}
+            style={{
+              padding: '8px 10px',
+              borderRadius: 8,
+              background: token.colorFillQuaternary,
+              minWidth: 0,
+            }}
+          >
+            <div style={{ fontSize: 11, color: token.colorTextTertiary }}>{item.label}</div>
+            <div style={{
+              marginTop: 1,
+              fontSize: 17,
+              fontWeight: 600,
+              lineHeight: 1.3,
+              color: typeColors[item.key as keyof typeof TYPE_CONFIG],
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              {item.value}
             </div>
           </div>
-          <div>
-            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>伏笔</div>
-            <div style={{ fontSize: 20, fontWeight: 600, color: typeColors.foreshadow }}>
-              {stats.foreshadows}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>情节点</div>
-            <div style={{ fontSize: 20, fontWeight: 600, color: typeColors.plot_point }}>
-              {stats.plotPoints}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: token.colorTextTertiary }}>角色事件</div>
-            <div
-              style={{ fontSize: 20, fontWeight: 600, color: typeColors.character_event }}
-            >
-              {stats.characterEvents}
-            </div>
-          </div>
-        </div>
-      </Card>
+        ))}
+      </div>
 
-      <Divider style={{ margin: '16px 0' }} />
-
-      {/* 分类展示 */}
-      <Collapse defaultActiveKey={['hook', 'foreshadow', 'plot_point']} ghost>
-        {Object.entries(groupedAnnotations).map(([type, items]) => {
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {TYPE_ORDER.map((type) => {
+          const items = groupedAnnotations[type];
           if (items.length === 0) return null;
-
-          const config = TYPE_CONFIG[type as keyof typeof TYPE_CONFIG];
+          const config = TYPE_CONFIG[type];
 
           return (
-            <Panel
-              key={type}
-              header={
-                <span style={{ fontWeight: 600 }}>
-                  {config.icon} {config.label} ({items.length})
-                </span>
-              }
-            >
+            <div key={type}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                marginBottom: 7,
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: token.colorTextTertiary,
+                letterSpacing: '0.02em',
+              }}>
+                <span style={{ color: typeColors[type], display: 'inline-flex' }}>{config.icon}</span>
+                {config.label}
+                <span style={{ fontWeight: 400 }}>{items.length}</span>
+                <DownOutlined style={{ marginLeft: 'auto', fontSize: 9, opacity: 0.5 }} />
+              </div>
               {items.map((annotation) => renderMemoryCard(annotation))}
-            </Panel>
+            </div>
           );
         })}
-      </Collapse>
+      </div>
     </div>
   );
 };

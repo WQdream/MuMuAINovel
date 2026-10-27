@@ -237,35 +237,43 @@ const AnnotatedText: React.FC<AnnotatedTextProps> = ({
         className={`annotated-text ${isActive ? 'active' : ''}`}
         style={{
           position: 'relative',
-          borderBottom: `2px solid ${color}`,
           cursor: 'pointer',
-          backgroundColor: isActive ? `color-mix(in srgb, ${color} 13%, transparent)` : 'transparent',
-          transition: 'all 0.2s',
-          padding: '2px 0',
+          borderRadius: 3,
+          borderBottom: `1.5px solid color-mix(in srgb, ${color} ${isActive ? 85 : 45}%, transparent)`,
+          backgroundColor: isActive
+            ? `color-mix(in srgb, ${color} 16%, transparent)`
+            : `color-mix(in srgb, ${color} 10%, transparent)`,
+          transition: 'background-color 0.15s ease, border-color 0.15s ease',
+          padding: '0 1px',
         }}
         onClick={() => onAnnotationClick?.(annotation)}
         onMouseEnter={(e) => {
-          e.currentTarget.style.backgroundColor = `color-mix(in srgb, ${color} 20%, transparent)`;
+          e.currentTarget.style.backgroundColor = `color-mix(in srgb, ${color} 18%, transparent)`;
+          e.currentTarget.style.borderBottomColor = `color-mix(in srgb, ${color} 85%, transparent)`;
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.backgroundColor = isActive
-            ? `color-mix(in srgb, ${color} 13%, transparent)`
-            : 'transparent';
+            ? `color-mix(in srgb, ${color} 16%, transparent)`
+            : `color-mix(in srgb, ${color} 10%, transparent)`;
+          e.currentTarget.style.borderBottomColor = `color-mix(in srgb, ${color} ${isActive ? 85 : 45}%, transparent)`;
         }}
       >
         {segment.content}
-        <span
-          style={{
-            position: 'absolute',
-            top: -20,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            fontSize: 14,
-            pointerEvents: 'none',
-          }}
-        >
-          {icon}
-        </span>
+        {isActive && (
+          <span
+            style={{
+              position: 'absolute',
+              top: -19,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              fontSize: 12,
+              lineHeight: 1,
+              pointerEvents: 'none',
+            }}
+          >
+            {icon}
+          </span>
+        )}
       </span>
     );
   };

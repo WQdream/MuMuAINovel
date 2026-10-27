@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { List, Button, Modal, Form, Input, Select, message, Empty, Space, Badge, Tag, Card, InputNumber, Alert, Radio, Descriptions, Collapse, Popconfirm, Pagination, theme } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, CheckCircleOutlined, CloseCircleOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, BookOutlined, FormOutlined, PlusOutlined, ReadOutlined } from '@ant-design/icons';
+import { Button, Modal, Form, Input, Select, message, Empty, Space, Tag, Card, InputNumber, Alert, Radio, Descriptions, Pagination, theme, Dropdown } from 'antd';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, FormOutlined, PlusOutlined, ReadOutlined, MoreOutlined, SearchOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus, EventNames } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
@@ -14,6 +14,7 @@ import { SSELoadingOverlay } from '../components/SSELoadingOverlay';
 import ChapterReader from '../components/ChapterReader';
 import PartialRegenerateToolbar from '../components/PartialRegenerateToolbar';
 import PartialRegenerateModal from '../components/PartialRegenerateModal';
+import { AnalysisMonitorDrawer } from '../components/AnalysisMonitorDrawer';
 
 const { TextArea } = Input;
 
@@ -46,6 +47,25 @@ const setCachedWordCount = (value: number): void => {
   }
 };
 
+/**
+ * 把后端返回的长错误压成一句可放在列表里的短提示。
+ * 完整原因仍通过 title 悬浮与「分析监控」展示，这里只保证用户一眼看得出失败类型。
+ */
+const summarizeAnalysisError = (error?: string | null): string | null => {
+  if (!error) return null;
+  const text = error.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  if (text.includes('内容审核') || text.includes('服务商拒绝') || text.includes('涉嫌违反')) {
+    return '服务商内容审核拦截';
+  }
+  if (text.includes('余额不足') || text.includes('Insufficient credits')) return 'AI 余额不足';
+  if (text.includes('模型不可用')) return '模型不可用';
+  if (text.includes('API Key') || text.includes('401')) return 'API Key 无效';
+  if (text.includes('响应为空')) return 'AI 无有效输出';
+  if (text.includes('解析') || text.includes('JSON')) return 'AI 输出无法解析';
+  return text.length > 24 ? `${text.slice(0, 24)}…` : text;
+};
+
 export default function Chapters() {
   const { currentProject, chapters, outlines, setCurrentChapter, setCurrentProject } = useStore();
   const [modal, contextHolder] = Modal.useModal();
@@ -54,6 +74,7 @@ export default function Chapters() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [isContinuing, setIsContinuing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isBackgroundGenerating, setIsBackgroundGenerating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm();
   const [editorForm] = Form.useForm();
@@ -71,6 +92,7 @@ export default function Chapters() {
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | undefined>();
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [analysisChapterId, setAnalysisChapterId] = useState<string | null>(null);
+  const [monitorOpen, setMonitorOpen] = useState(false);
   // 分析任务状态管理
   const [analysisTasksMap, setAnalysisTasksMap] = useState<Record<string, AnalysisTask>>({});
   const analysisPollingIntervalRef = useRef<number | null>(null);
@@ -86,6 +108,7 @@ export default function Chapters() {
   const [chapterSearchKeyword, setChapterSearchKeyword] = useState('');
   const [chapterPage, setChapterPage] = useState(1);
   const [chapterPageSize, setChapterPageSize] = useState(20);
+  const [collapsedOutlineGroups, setCollapsedOutlineGroups] = useState<Set<string>>(() => new Set());
 
   // 阅读器状态
   const [readerVisible, setReaderVisible] = useState(false);
@@ -349,6 +372,7 @@ export default function Chapters() {
   const pollActiveAnalysisTasks = useCallback(async () => {
     const projectId = currentProjectIdRef.current;
     if (!projectId || analysisPollingInFlightRef.current) return;
+    if (document.visibilityState !== 'visible') return;
 
     const activeIds = Array.from(activeAnalysisPollingIdsRef.current);
     if (activeIds.length === 0) {
@@ -399,7 +423,7 @@ export default function Chapters() {
 
     analysisPollingIntervalRef.current = window.setInterval(() => {
       void pollActiveAnalysisTasks();
-    }, 2000);
+    }, 4000);
 
     // 立即执行一次
     void pollActiveAnalysisTasks();
@@ -502,36 +526,79 @@ export default function Chapters() {
   };
 
   const loadAvailableModels = async () => {
-    try {
-      // 从设置API获取用户配置的模型列表
-      const settingsResponse = await fetch('/api/settings');
-      if (settingsResponse.ok) {
-        const settings = await settingsResponse.json();
-        const { api_key, api_base_url, api_provider } = settings;
+    const options: Array<{ value: string; label: string }> = [];
+    const seen = new Set<string>();
+    const pushOption = (value?: string | null, label?: string) => {
+      const modelName = (value || '').trim();
+      if (!modelName || seen.has(modelName)) return;
+      seen.add(modelName);
+      options.push({ value: modelName, label: label || modelName });
+    };
 
-        if (api_base_url) {
-          try {
-            const modelsResponse = await fetch(
-              `/api/settings/models?api_key=${encodeURIComponent(api_key || '')}&api_base_url=${encodeURIComponent(api_base_url)}&provider=${api_provider}`
-            );
-            if (modelsResponse.ok) {
-              const data = await modelsResponse.json();
-              if (data.models && data.models.length > 0) {
-                setAvailableModels(data.models);
-                // 设置默认模型为当前配置的模型
-                setSelectedModel(settings.llm_model);
-                return settings.llm_model; // 返回模型名称
-              }
-            }
-          } catch {
-            console.log('获取模型列表失败，将使用默认模型');
+    let defaultModel: string | undefined;
+
+    try {
+      // 优先用本地已保存的配置填充，避免供应商不支持 /models 时下拉框空白
+      const [settingsResponse, textModelsResponse] = await Promise.all([
+        fetch('/api/settings'),
+        fetch('/api/settings/text-models'),
+      ]);
+
+      let settings: {
+        api_key?: string;
+        api_base_url?: string;
+        api_provider?: string;
+        llm_model?: string;
+        shared_config_active?: boolean;
+      } = {};
+
+      if (settingsResponse.ok) {
+        settings = await settingsResponse.json();
+        defaultModel = settings.llm_model || undefined;
+      }
+
+      const activeProvider = (settings.api_provider || '').toLowerCase();
+      if (textModelsResponse.ok) {
+        const data = await textModelsResponse.json();
+        const configs: Array<{ name?: string; llm_model?: string; api_provider?: string }> = Array.isArray(data?.configs)
+          ? data.configs
+          : [];
+        configs.forEach((config) => {
+          if (!config?.llm_model) return;
+          // 只列同供应商的模型：模型名会直接传给当前生效的接口，跨供应商会调用失败
+          if (activeProvider && (config.api_provider || '').toLowerCase() !== activeProvider) return;
+          pushOption(config.llm_model, config.name ? `${config.name} · ${config.llm_model}` : config.llm_model);
+        });
+      }
+
+      // 当前生效模型至少保留一项，保证下拉框永远有可选值
+      pushOption(defaultModel);
+
+      // 再补充供应商返回的完整模型列表（失败不影响上面的本地选项）。
+      // 公共配置生效时不能列真实模型，否则会绕过管理员的显示名称。
+      if (!settings.shared_config_active) {
+        try {
+          const modelsResponse = await fetch('/api/settings/models');
+          if (modelsResponse.ok) {
+            const data = await modelsResponse.json();
+            const models: Array<{ value?: string; label?: string }> = Array.isArray(data?.models)
+              ? data.models
+              : [];
+            models.forEach((model) => pushOption(model?.value, model?.label));
           }
+        } catch {
+          console.log('获取模型列表失败，将只使用已保存的配置');
         }
       }
     } catch (error) {
       console.error('加载可用模型失败:', error);
     }
-    return null;
+
+    setAvailableModels(options);
+    if (defaultModel) {
+      setSelectedModel(defaultModel);
+    }
+    return defaultModel ?? null;
   };
 
   // 检查并恢复批量生成任务
@@ -731,7 +798,10 @@ export default function Chapters() {
       } else if (task.status === 'running') {
         unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '分析中' });
       } else if (task.status === 'failed') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '分析失败' });
+        unanalyzedChapters.push({
+          chapterNumber: chapter.chapter_number,
+          reason: `分析失败：${summarizeAnalysisError(task.error_message) || '未知原因'}`,
+        });
       } else if (task.status !== 'completed') {
         unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '状态未知' });
       }
@@ -749,6 +819,18 @@ export default function Chapters() {
       return task.status !== 'completed' && task.status !== 'pending' && task.status !== 'running';
     }).length;
   }, [sortedChapters, analysisTasksMap]);
+
+  // 当前正在分析中的章节数（用于「更多」菜单上的监控角标提示）
+  const activeAnalysisCount = useMemo(
+    () => Object.values(analysisTasksMap).filter(
+      (task) => task?.status === 'running' || task?.status === 'pending',
+    ).length,
+    [analysisTasksMap],
+  );
+
+  const totalChapterWordCount = useMemo(() => {
+    return sortedChapters.reduce((sum, chapter) => sum + (chapter.word_count || 0), 0);
+  }, [sortedChapters]);
 
   if (!currentProject) return null;
 
@@ -870,6 +952,7 @@ export default function Chapters() {
       );
 
       message.success('AI创作成功，正在分析章节内容...');
+      setSingleChapterProgressMessage('');
 
       // 如果返回了分析任务ID，启动轮询
       if (result?.analysis_task_id) {
@@ -890,12 +973,14 @@ export default function Chapters() {
       }
     } catch (error) {
       const apiError = error as ApiError;
-      message.error('AI创作失败：' + (apiError.response?.data?.detail || apiError.message || '未知错误'));
+      const errorMessage = apiError.response?.data?.detail || apiError.message || '未知错误';
+      message.error('AI创作失败：' + errorMessage, 8);
+      setSingleChapterProgressMessage('生成失败：' + errorMessage);
+      await refreshChapters().catch(() => []);
     } finally {
       setIsContinuing(false);
       setIsGenerating(false);
       setSingleChapterProgress(0);
-      setSingleChapterProgressMessage('');
     }
   };
 
@@ -905,60 +990,67 @@ export default function Chapters() {
     ).sort((a, b) => a.chapter_number - b.chapter_number);
 
     const selectedStyle = writingStyles.find(s => s.id === selectedStyleId);
+    const infoItems = [
+      '章节大纲与项目世界观',
+      '相关角色、职业与伏笔',
+      previousChapters.length > 0
+        ? `前 ${previousChapters.length} 章正文与剧情摘要`
+        : '本章开篇，无前置章节',
+      selectedStyle ? `写作风格：${selectedStyle.name}` : '写作风格：未选择',
+      `目标字数：${targetWordCount.toLocaleString('zh-CN')} 字`,
+    ];
 
     const instance = modal.confirm({
-      title: 'AI创作章节内容',
-      width: 700,
+      title: '开始 AI 创作',
+      icon: null,
+      width: 520,
       centered: true,
       content: (
-        <div style={{ marginTop: 16 }}>
-          <p>AI将根据以下信息创作本章内容：</p>
-          <ul>
-            <li>章节大纲和要求</li>
-            <li>项目的世界观设定</li>
-            <li>相关角色信息</li>
-            <li><strong>前面已完成章节的内容（确保剧情连贯）</strong></li>
-            {selectedStyle && (
-              <li><strong>写作风格：{selectedStyle.name}</strong></li>
-            )}
-            <li><strong>目标字数：{targetWordCount}字</strong></li>
-          </ul>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 13, lineHeight: 1.7, color: token.colorTextSecondary }}>
+            将为第 {chapter.chapter_number} 章「{chapter.title}」生成完整正文。
+          </div>
+
+          <div style={{
+            marginTop: 16,
+            paddingTop: 14,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+            display: 'grid',
+            gap: 8,
+          }}>
+            {infoItems.map((item) => (
+              <div key={item} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 13 }}>
+                <span style={{ width: 4, height: 4, marginTop: 8, borderRadius: '50%', background: token.colorTextTertiary, flexShrink: 0 }} />
+                <span style={{ color: token.colorText, lineHeight: 1.55 }}>{item}</span>
+              </div>
+            ))}
+          </div>
 
           {previousChapters.length > 0 && (
-            <div style={{
-              marginTop: 16,
-              padding: 12,
-              background: token.colorInfoBg,
-              borderRadius: token.borderRadius,
-              border: `1px solid ${token.colorInfoBorder}`
-            }}>
-              <div style={{ marginBottom: 8, fontWeight: 500, color: token.colorPrimary }}>
-                📚 将引用的前置章节（共{previousChapters.length}章）：
-              </div>
-              <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-                {previousChapters.map(ch => (
-                  <div key={ch.id} style={{ padding: '4px 0', fontSize: 13 }}>
-                    ✓ 第{ch.chapter_number}章：{ch.title} ({ch.word_count || 0}字)
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 8, fontSize: 12, color: token.colorTextSecondary }}>
-                💡 AI会参考这些章节内容，确保情节连贯、角色状态一致
-              </div>
+            <div style={{ marginTop: 14, fontSize: 12, lineHeight: 1.6, color: token.colorTextTertiary }}>
+              参考章节：{previousChapters.slice(-3).map(ch => `第${ch.chapter_number}章`).join('、')}
+              {previousChapters.length > 3 ? ` 等 ${previousChapters.length} 章` : ''}
             </div>
           )}
 
-          <p style={{ color: token.colorError, marginTop: 16, marginBottom: 0 }}>
-            ⚠️ 注意：此操作将覆盖当前章节内容
-          </p>
+          <div style={{
+            marginTop: 16,
+            paddingTop: 13,
+            borderTop: `1px solid ${token.colorBorderSecondary}`,
+            fontSize: 12,
+            lineHeight: 1.6,
+            color: token.colorTextTertiary,
+          }}>
+            生成后将替换本章现有正文，原内容不会自动保留。
+          </div>
         </div>
       ),
       okText: '开始创作',
-      okButtonProps: { danger: true },
+      okButtonProps: { type: 'primary' },
       cancelText: '取消',
       onOk: async () => {
         instance.update({
-          okButtonProps: { danger: true, loading: true },
+          okButtonProps: { type: 'primary', loading: true },
           cancelButtonProps: { disabled: true },
           closable: false,
           maskClosable: false,
@@ -969,7 +1061,7 @@ export default function Chapters() {
           if (!selectedStyleId) {
             message.error('请先选择写作风格');
             instance.update({
-              okButtonProps: { danger: true, loading: false },
+              okButtonProps: { type: 'primary', loading: false },
               cancelButtonProps: { disabled: false },
               closable: true,
               maskClosable: true,
@@ -981,7 +1073,7 @@ export default function Chapters() {
           instance.destroy();
         } catch {
           instance.update({
-            okButtonProps: { danger: true, loading: false },
+            okButtonProps: { type: 'primary', loading: false },
             cancelButtonProps: { disabled: false },
             closable: true,
             maskClosable: true,
@@ -1003,6 +1095,10 @@ export default function Chapters() {
   // 不再强制显示进度弹窗，任务进度在右下角悬浮任务框中显示
   const handleBackgroundGenerate = async () => {
     if (!editingId) return;
+    if (isGenerating || isBackgroundGenerating) {
+      message.warning('已有生成任务正在运行，请等待完成');
+      return;
+    }
     if (!selectedStyleId) {
       message.error("请先选择写作风格");
       return;
@@ -1030,6 +1126,7 @@ export default function Chapters() {
         return latestChapters;
       };
 
+      setIsBackgroundGenerating(true);
       await generateChapterBackground(
         generatedChapterId,
         {
@@ -1060,20 +1157,12 @@ export default function Chapters() {
       message.info("章节生成任务已提交，可在右下角任务面板查看进度");
       // 通知悬浮任务框刷新
       eventBus.emit('background-task-created');
-    } catch {
-      message.error("创建后台任务失败");
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "创建后台任务失败");
+    } finally {
+      setIsBackgroundGenerating(false);
     }
   };
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      'draft': 'default',
-      'pending': 'warning',
-      'writing': 'processing',
-      'completed': 'success',
-    };
-    return colors[status] || 'default';
-  };
-
   const getStatusText = (status: string) => {
     const texts: Record<string, string> = {
       'draft': '草稿',
@@ -1603,51 +1692,6 @@ export default function Chapters() {
     });
   };
 
-  // 渲染分析状态标签
-  const renderAnalysisStatus = (chapterId: string) => {
-    const task = analysisTasksMap[chapterId];
-
-    if (!task) {
-      return null;
-    }
-
-    switch (task.status) {
-      case 'pending':
-        return (
-          <Tag icon={<SyncOutlined spin />} color="processing">
-            等待分析
-          </Tag>
-        );
-      case 'running': {
-        // 检查是否正在重试（后端会在error_message中包含"重试"信息）
-        const isRetrying = task.error_message && task.error_message.includes('重试');
-        return (
-          <Tag
-            icon={<SyncOutlined spin />}
-            color={isRetrying ? "warning" : "processing"}
-            title={task.error_message || undefined}
-          >
-            {isRetrying ? `重试中 ${task.progress}%` : `分析中 ${task.progress}%`}
-          </Tag>
-        );
-      }
-      case 'completed':
-        return (
-          <Tag icon={<CheckCircleOutlined />} color="success">
-            已分析
-          </Tag>
-        );
-      case 'failed':
-        return (
-          <Tag icon={<CloseCircleOutlined />} color="error" title={task.error_message || undefined}>
-            分析失败
-          </Tag>
-        );
-      default:
-        return null;
-    }
-  };
-
   // 显示展开规划详情
   const showExpansionPlanModal = (chapter: Chapter) => {
     if (!chapter.expansion_plan) return;
@@ -1975,504 +2019,463 @@ export default function Chapters() {
     message.success('局部重写已应用');
   };
 
+  const renderChapterListItem = (item: Chapter) => {
+    const task = analysisTasksMap[item.id];
+    const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
+    const hasContent = Boolean(item.content && item.content.trim() !== '');
+    const summary = (item.content || '').replace(/\s+/g, ' ').trim();
+    const statusColor = item.status === 'completed'
+      ? token.colorSuccess
+      : item.status === 'writing'
+        ? token.colorPrimary
+        : token.colorTextTertiary;
+
+    const renderAnalysisHint = () => {
+      if (!task || task.status === 'completed' || task.status === 'none') return null;
+
+      const isRetrying = task.status === 'running' && task.error_message?.includes('重试');
+      const failedReason = task.status === 'failed'
+        ? summarizeAnalysisError(task.error_message)
+        : null;
+      const text = task.status === 'pending'
+        ? '待分析'
+        : task.status === 'running'
+          ? isRetrying ? `重试中 ${task.progress}%` : `分析中 ${task.progress}%`
+          : failedReason ? `分析失败：${failedReason}` : '分析失败';
+      const color = task.status === 'failed'
+        ? token.colorError
+        : isRetrying
+          ? token.colorWarning
+          : token.colorTextTertiary;
+
+      return (
+        <span
+          title={task.error_message || undefined}
+          style={{ fontSize: 11, color, whiteSpace: 'nowrap' }}
+        >
+          {text}
+        </span>
+      );
+    };
+
+    return (
+      <article
+        id={`chapter-item-${item.id}`}
+        style={{
+          minWidth: 0,
+          minHeight: 196,
+          padding: '16px 18px 12px',
+          border: `1px solid ${token.colorBorderSecondary}`,
+          borderRadius: 10,
+          background: token.colorBgContainer,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          minWidth: 0,
+          fontSize: 11,
+          color: token.colorTextTertiary,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          <span style={{ flexShrink: 0 }}>第{item.chapter_number}章</span>
+          <span style={{ color: token.colorBorder }}>·</span>
+          <span style={{ flexShrink: 0 }}>{(item.word_count || 0).toLocaleString('zh-CN')} 字</span>
+          {!canGenerateChapter(item) && (
+            <LockOutlined
+              title={getGenerateDisabledReason(item)}
+              style={{ flexShrink: 0, marginLeft: 'auto', fontSize: 11 }}
+            />
+          )}
+        </div>
+
+        <div
+          title={hasContent ? '点击阅读' : '点击开始写作'}
+          onClick={() => hasContent ? handleOpenReader(item) : handleOpenEditor(item.id)}
+          style={{
+            marginTop: 8,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical' as const,
+            fontSize: 15,
+            fontWeight: 600,
+            lineHeight: 1.5,
+            color: token.colorText,
+            cursor: 'pointer',
+          }}
+        >
+          {item.title || '未命名章节'}
+        </div>
+
+        <div style={{
+          marginTop: 6,
+          minWidth: 0,
+          minHeight: 62,
+          fontSize: 12.5,
+          lineHeight: 1.65,
+          color: token.colorTextTertiary,
+          display: '-webkit-box',
+          WebkitLineClamp: 3,
+          WebkitBoxOrient: 'vertical' as const,
+          overflow: 'hidden',
+          overflowWrap: 'anywhere',
+        }}>
+          {hasContent
+            ? summary
+            : '暂无正文，开始创作后会显示在这里'}
+        </div>
+
+        <div style={{
+          marginTop: 'auto',
+          paddingTop: 9,
+          borderTop: `1px solid ${token.colorBorderSecondary}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          minHeight: 30,
+        }}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 5,
+            minWidth: 0,
+            fontSize: 11,
+            color: token.colorTextTertiary,
+            whiteSpace: 'nowrap',
+          }}>
+            <span style={{ width: 5, height: 5, borderRadius: 3, background: statusColor }} />
+            {getStatusText(item.status)}
+          </span>
+          {renderAnalysisHint()}
+
+          <Space size={0} style={{ flexShrink: 0, marginLeft: 'auto' }}>
+            <Button
+              type="text"
+              size="small"
+              icon={<ReadOutlined />}
+              onClick={() => handleOpenReader(item)}
+              disabled={!hasContent}
+              title={hasContent ? '阅读' : '暂无正文'}
+              style={{ width: 28, height: 28, padding: 0, color: token.colorTextSecondary }}
+            />
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleOpenEditor(item.id)}
+              title={hasContent ? '编辑正文' : '开始写作'}
+              style={{ width: 28, height: 28, padding: 0, color: token.colorTextSecondary }}
+            />
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: [
+                  {
+                    key: 'analysis',
+                    icon: isAnalyzing ? <SyncOutlined spin /> : <FundOutlined />,
+                    label: isAnalyzing ? '分析中...' : '章节分析',
+                    disabled: !hasContent || Boolean(isAnalyzing),
+                  },
+                  {
+                    key: 'metadata',
+                    icon: <SettingOutlined />,
+                    label: '修改章节信息',
+                  },
+                  ...(currentProject.outline_mode === 'one-to-many'
+                    ? [
+                        ...(item.expansion_plan
+                          ? [{
+                              key: 'plan-view',
+                              icon: <InfoCircleOutlined />,
+                              label: '查看展开规划',
+                            }]
+                          : []),
+                        {
+                          key: 'plan-edit',
+                          icon: <FormOutlined />,
+                          label: item.expansion_plan ? '编辑展开规划' : '创建展开规划',
+                        },
+                        { type: 'divider' as const },
+                        {
+                          key: 'delete',
+                          icon: <DeleteOutlined />,
+                          label: '删除章节',
+                          danger: true,
+                        },
+                      ]
+                    : []),
+                ],
+                onClick: ({ key }) => {
+                  if (key === 'analysis') {
+                    handleShowAnalysis(item.id);
+                  } else if (key === 'metadata') {
+                    handleOpenModal(item.id);
+                  } else if (key === 'plan-view') {
+                    showExpansionPlanModal(item);
+                  } else if (key === 'plan-edit') {
+                    handleOpenPlanEditor(item);
+                  } else if (key === 'delete') {
+                    modal.confirm({
+                      title: '确定删除这个章节吗？',
+                      content: '删除后将无法恢复，章节内容和分析结果都将被删除。',
+                      okText: '确定删除',
+                      cancelText: '取消',
+                      okButtonProps: { danger: true },
+                      onOk: () => handleDeleteChapter(item.id),
+                    });
+                  }
+                },
+              }}
+            >
+              <Button
+                type="text"
+                size="small"
+                icon={<MoreOutlined />}
+                title="更多操作"
+                style={{ width: 28, height: 28, padding: 0, color: token.colorTextSecondary }}
+              />
+            </Dropdown>
+          </Space>
+        </div>
+      </article>
+    );
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {contextHolder}
       <div style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 10,
-        backgroundColor: token.colorBgContainer,
-        padding: isMobile ? '12px 0' : '16px 0',
-        marginBottom: isMobile ? 12 : 16,
+        padding: isMobile ? '4px 0 14px' : '2px 0 16px',
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         display: 'flex',
         flexDirection: isMobile ? 'column' : 'row',
-        gap: isMobile ? 12 : 0,
+        gap: isMobile ? 12 : 16,
         justifyContent: 'space-between',
-        alignItems: isMobile ? 'stretch' : 'center'
+        alignItems: isMobile ? 'stretch' : 'center',
       }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24 }}>
-            <BookOutlined style={{ marginRight: 8 }} />
-            章节管理
-          </h2>
-          <Tag
-            color={currentProject.outline_mode === 'one-to-one' ? 'blue' : 'green'}
-            style={{ width: 'fit-content' }}
-          >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+            <FileTextOutlined style={{ fontSize: 18, color: token.colorTextSecondary }} />
+            <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 19, fontWeight: 600, color: token.colorText }}>
+              章节管理
+            </h2>
+          </div>
+          <div style={{ marginTop: 5, fontSize: 12, color: token.colorTextTertiary }}>
             {currentProject.outline_mode === 'one-to-one'
-              ? '传统模式：章节由大纲管理，请在大纲页面操作'
-              : '细化模式：章节可在大纲页面展开'}
-          </Tag>
+              ? '传统模式 · 章节由大纲管理'
+              : '细化模式 · 章节可在大纲页面展开'}
+            {` · ${chapters.length} 章 · ${totalChapterWordCount.toLocaleString('zh-CN')} 字`}
+            {chapterSearchKeyword.trim() ? ` · 找到 ${filteredSortedChapters.length} 章` : ''}
+          </div>
         </div>
-        <Space direction={isMobile ? 'vertical' : 'horizontal'} style={{ width: isMobile ? '100%' : 'auto' }}>
-          <Input.Search
-            allowClear
-            placeholder="搜索章节（序号/标题/大纲）"
-            value={chapterSearchKeyword}
-            onChange={(e) => setChapterSearchKeyword(e.target.value)}
-            style={{ width: isMobile ? '100%' : 280 }}
-          />
-          {currentProject.outline_mode === 'one-to-many' && (
-            <Button
-              icon={<PlusOutlined />}
-              onClick={showManualCreateChapterModal}
-              block={isMobile}
-              size={isMobile ? 'middle' : 'middle'}
-            >
-              手动创建
-            </Button>
-          )}
-          <Button
-            type="primary"
-            icon={<ThunderboltOutlined />}
-            onClick={handleBatchAnalyzeUnanalyzed}
-            loading={batchAnalyzingUnanalyzed}
-            disabled={chapters.length === 0 || batchAnalyzableChapterCount === 0}
-            block={isMobile}
-            size={isMobile ? 'middle' : 'middle'}
-            style={{ background: token.colorWarning, borderColor: token.colorWarning }}
-            title={batchAnalyzableChapterCount === 0 ? '暂无可一键分析章节' : `可一键分析 ${batchAnalyzableChapterCount} 章`}
-          >
-            一键分析{batchAnalyzableChapterCount > 0 ? ` (${batchAnalyzableChapterCount})` : ''}
-          </Button>
+
+        <Space wrap size={8}>
           <Button
             type="primary"
             icon={<RocketOutlined />}
             onClick={handleOpenBatchGenerate}
             disabled={chapters.length === 0 || batchGenerating}
             loading={batchGenerating}
-            block={isMobile}
-            size={isMobile ? 'middle' : 'middle'}
-            style={batchGenerating ? {} : { background: token.colorInfo, borderColor: token.colorInfo }}
+            size={isMobile ? 'small' : 'middle'}
           >
             {batchGenerating ? '生成中...' : '批量生成'}
           </Button>
-          <Button
-            type="default"
-            icon={<DownloadOutlined />}
-            onClick={handleExport}
-            disabled={chapters.length === 0}
-            block={isMobile}
-            size={isMobile ? 'middle' : 'middle'}
+          {currentProject.outline_mode === 'one-to-many' && (
+            <Button
+              icon={<PlusOutlined />}
+              onClick={showManualCreateChapterModal}
+              size={isMobile ? 'small' : 'middle'}
+            >
+              手动创建
+            </Button>
+          )}
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: [
+                {
+                  key: 'analyze',
+                  icon: batchAnalyzingUnanalyzed ? <SyncOutlined spin /> : <ThunderboltOutlined />,
+                  label: `一键分析未分析章节${batchAnalyzableChapterCount > 0 ? ` (${batchAnalyzableChapterCount})` : ''}`,
+                  disabled: batchAnalyzingUnanalyzed || chapters.length === 0 || batchAnalyzableChapterCount === 0,
+                },
+                {
+                  key: 'export',
+                  icon: <DownloadOutlined />,
+                  label: '导出为 TXT',
+                  disabled: chapters.length === 0,
+                },
+                { type: 'divider' as const },
+                {
+                  key: 'monitor',
+                  icon: <FundOutlined />,
+                  label: `分析监控${activeAnalysisCount > 0 ? ` (${activeAnalysisCount})` : ''}`,
+                },
+              ],
+              onClick: ({ key }) => {
+                if (key === 'analyze') {
+                  handleBatchAnalyzeUnanalyzed();
+                } else if (key === 'export') {
+                  handleExport();
+                } else if (key === 'monitor') {
+                  setMonitorOpen(true);
+                }
+              },
+            }}
           >
-            导出为TXT
-          </Button>
+            <Button icon={<MoreOutlined />} size={isMobile ? 'small' : 'middle'}>
+              更多
+            </Button>
+          </Dropdown>
         </Space>
       </div>
 
+      <div style={{
+        flexShrink: 0,
+        padding: '10px 0 12px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        gap: 12,
+        flexWrap: 'wrap',
+      }}>
+        <Input
+          allowClear
+          placeholder="搜索序号、标题或大纲"
+          value={chapterSearchKeyword}
+          onChange={(e) => setChapterSearchKeyword(e.target.value)}
+          suffix={<SearchOutlined style={{ color: token.colorTextTertiary, fontSize: 13 }} />}
+          style={{ width: isMobile ? '100%' : 320 }}
+        />
+      </div>
 
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {chapters.length === 0 ? (
-          <Empty description="还没有章节，开始创作吧！" />
+          <div style={{ padding: '40px 0' }}>
+            <Empty description="还没有章节，开始创作吧！" />
+          </div>
         ) : filteredSortedChapters.length === 0 ? (
-          <Empty description="未找到匹配章节" />
+          <div style={{ padding: '40px 0' }}>
+            <Empty description="未找到匹配章节" />
+          </div>
         ) : currentProject.outline_mode === 'one-to-one' ? (
-          // one-to-one 模式：直接显示扁平列表
-          <List
-            dataSource={pagedSortedChapters}
-            renderItem={(item) => (
-              <List.Item
-                id={`chapter-item-${item.id}`}
-                style={{
-                  padding: '16px',
-                  marginBottom: 16,
-                  background: token.colorBgContainer,
-                  borderRadius: token.borderRadius,
-                  border: `1px solid ${token.colorBorderSecondary}`,
-                  flexDirection: isMobile ? 'column' : 'row',
-                  alignItems: isMobile ? 'flex-start' : 'center',
-                }}
-                actions={isMobile ? undefined : [
-                  <Button
-                    type="text"
-                    icon={<ReadOutlined />}
-                    onClick={() => handleOpenReader(item)}
-                    disabled={!item.content || item.content.trim() === ''}
-                    title={!item.content || item.content.trim() === '' ? '暂无内容' : '沉浸式阅读'}
-                  >
-                    阅读
-                  </Button>,
-                  <Button
-                    type="text"
-                    icon={<EditOutlined />}
-                    onClick={() => handleOpenEditor(item.id)}
-                  >
-                    编辑
-                  </Button>,
-                  (() => {
-                    const task = analysisTasksMap[item.id];
-                    const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
-                    const hasContent = item.content && item.content.trim() !== '';
-
-                    return (
-                      <Button
-                        type="text"
-                        icon={isAnalyzing ? <SyncOutlined spin /> : <FundOutlined />}
-                        onClick={() => handleShowAnalysis(item.id)}
-                        disabled={!hasContent || isAnalyzing}
-                        loading={isAnalyzing}
-                        title={
-                          !hasContent ? '请先生成章节内容' :
-                            isAnalyzing ? '分析进行中，请稍候...' :
-                              ''
-                        }
-                      >
-                        {isAnalyzing ? '分析中' : '分析'}
-                      </Button>
-                    );
-                  })(),
-                  <Button
-                    type="text"
-                    icon={<SettingOutlined />}
-                    onClick={() => handleOpenModal(item.id)}
-                  >
-                    修改
-                  </Button>,
-                ]}
-              >
-                <div style={{ width: '100%' }}>
-                  <List.Item.Meta
-                    avatar={!isMobile && <FileTextOutlined style={{ fontSize: 32, color: token.colorPrimary }} />}
-                    title={
-                      <div style={{
-                        display: 'flex',
-                        flexDirection: isMobile ? 'column' : 'row',
-                        alignItems: isMobile ? 'flex-start' : 'center',
-                        gap: isMobile ? 6 : 12,
-                        width: '100%'
-                      }}>
-                        <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 500, flexShrink: 0 }}>
-                          第{item.chapter_number}章：{item.title}
-                        </span>
-                        <Space wrap size={isMobile ? 4 : 8}>
-                          <Tag color={getStatusColor(item.status)}>{getStatusText(item.status)}</Tag>
-                          <Badge count={`${item.word_count || 0}字`} style={{ backgroundColor: token.colorSuccess }} />
-                          {renderAnalysisStatus(item.id)}
-                          {!canGenerateChapter(item) && (
-                            <Tag icon={<LockOutlined />} color="warning" title={getGenerateDisabledReason(item)}>
-                              需前置章节
-                            </Tag>
-                          )}
-                        </Space>
-                      </div>
-                    }
-                    description={
-                      item.content ? (
-                        <div style={{ marginTop: 8, color: token.colorTextSecondary, lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}>
-                          {item.content.substring(0, isMobile ? 80 : 150)}
-                          {item.content.length > (isMobile ? 80 : 150) && '...'}
-                        </div>
-                      ) : (
-                        <span style={{ color: token.colorTextTertiary, fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
-                      )
-                    }
-                  />
-
-                  {isMobile && (
-                    <Space style={{ marginTop: 12, width: '100%', justifyContent: 'flex-end' }} wrap>
-                      <Button
-                        type="text"
-                        icon={<ReadOutlined />}
-                        onClick={() => handleOpenReader(item)}
-                        size="small"
-                        disabled={!item.content || item.content.trim() === ''}
-                        title={!item.content || item.content.trim() === '' ? '暂无内容' : '阅读'}
-                      />
-                      <Button
-                        type="text"
-                        icon={<EditOutlined />}
-                        onClick={() => handleOpenEditor(item.id)}
-                        size="small"
-                        title="编辑"
-                      />
-                      {(() => {
-                        const task = analysisTasksMap[item.id];
-                        const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
-                        const hasContent = item.content && item.content.trim() !== '';
-
-                        return (
-                          <Button
-                            type="text"
-                            icon={isAnalyzing ? <SyncOutlined spin /> : <FundOutlined />}
-                            onClick={() => handleShowAnalysis(item.id)}
-                            size="small"
-                            disabled={!hasContent || isAnalyzing}
-                            loading={isAnalyzing}
-                            title={
-                              !hasContent ? '请先生成章节内容' :
-                                isAnalyzing ? '分析中' :
-                                  '分析'
-                            }
-                          />
-                        );
-                      })()}
-                      <Button
-                        type="text"
-                        icon={<SettingOutlined />}
-                        onClick={() => handleOpenModal(item.id)}
-                        size="small"
-                        title="修改"
-                      />
-                    </Space>
-                  )}
-                </div>
-              </List.Item>
-            )}
-          />
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 240 : 300}px, 1fr))`,
+            gap: 14,
+            alignContent: 'start',
+          }}>
+            {pagedSortedChapters.map((item) => renderChapterListItem(item))}
+          </div>
         ) : (
-          // one-to-many 模式：按大纲分组显示
-          <Collapse
-            bordered={false}
-            defaultActiveKey={pagedGroupedChapters.length > 0 ? ['0'] : []}
-            destroyInactivePanel
-            expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} />}
-            style={{ background: 'transparent' }}
-          >
-            {pagedGroupedChapters.map((group, groupIndex) => (
-              <Collapse.Panel
-                key={groupIndex.toString()}
-                header={
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <Tag color={group.outlineId ? 'blue' : 'default'} style={{ margin: 0 }}>
-                      {group.outlineId ? `📖 大纲 ${group.outlineOrder}` : '📝 未分类'}
-                    </Tag>
-                    <span style={{ fontWeight: 600, fontSize: 16 }}>
+          <div>
+            {pagedGroupedChapters.map((group, groupIndex) => {
+              const groupWordCount = group.chapters.reduce((sum, chapter) => sum + (chapter.word_count || 0), 0);
+              const groupKey = group.outlineId || `uncategorized-${groupIndex}`;
+              const isCollapsed = collapsedOutlineGroups.has(groupKey);
+
+              return (
+                <section
+                  key={groupKey}
+                  style={{ marginTop: groupIndex === 0 ? 0 : 8 }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCollapsedOutlineGroups((current) => {
+                        const next = new Set(current);
+                        if (next.has(groupKey)) {
+                          next.delete(groupKey);
+                        } else {
+                          next.add(groupKey);
+                        }
+                        return next;
+                      });
+                    }}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: isMobile ? '9px 2px' : '9px 2px',
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'inherit',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <CaretRightOutlined
+                      rotate={isCollapsed ? 0 : 90}
+                      style={{ flexShrink: 0, fontSize: 10, color: token.colorTextTertiary }}
+                    />
+                    <span style={{
+                      flexShrink: 0,
+                      fontSize: 11,
+                      color: token.colorTextTertiary,
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {group.outlineId ? `大纲 ${group.outlineOrder}` : '未分类'}
+                    </span>
+                    <span style={{
+                      flexShrink: 1,
+                      minWidth: 0,
+                      fontSize: isMobile ? 13 : 14,
+                      fontWeight: 500,
+                      color: token.colorText,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
                       {group.outlineTitle}
                     </span>
-                    <Badge
-                      count={`${group.chapters.length} 章`}
-                      style={{ backgroundColor: token.colorSuccess }}
-                    />
-                    <Badge
-                      count={`${group.chapters.reduce((sum, ch) => sum + (ch.word_count || 0), 0)} 字`}
-                      style={{ backgroundColor: token.colorPrimary }}
-                    />
-                  </div>
-                }
-                style={{
-                  marginBottom: 16,
-                  background: token.colorBgContainer,
-                  borderRadius: token.borderRadius,
-                  border: `1px solid ${token.colorBorderSecondary}`,
-                }}
-              >
-                <List
-                  dataSource={group.chapters}
-                  renderItem={(item) => (
-                    <List.Item
-                      id={`chapter-item-${item.id}`}
-                      style={{
-                        padding: '16px 0',
-                        borderRadius: 8,
-                        transition: 'background 0.3s ease',
-                        flexDirection: isMobile ? 'column' : 'row',
-                        alignItems: isMobile ? 'flex-start' : 'center',
-                      }}
-                      actions={isMobile ? undefined : [
-                        <Button
-                          type="text"
-                          icon={<ReadOutlined />}
-                          onClick={() => handleOpenReader(item)}
-                          disabled={!item.content || item.content.trim() === ''}
-                          title={!item.content || item.content.trim() === '' ? '暂无内容' : '沉浸式阅读'}
-                        >
-                          阅读
-                        </Button>,
-                        <Button
-                          type="text"
-                          icon={<EditOutlined />}
-                          onClick={() => handleOpenEditor(item.id)}
-                        >
-                          编辑
-                        </Button>,
-                        (() => {
-                          const task = analysisTasksMap[item.id];
-                          const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
-                          const hasContent = item.content && item.content.trim() !== '';
-
-                          return (
-                            <Button
-                              type="text"
-                              icon={isAnalyzing ? <SyncOutlined spin /> : <FundOutlined />}
-                              onClick={() => handleShowAnalysis(item.id)}
-                              disabled={!hasContent || isAnalyzing}
-                              loading={isAnalyzing}
-                              title={
-                                !hasContent ? '请先生成章节内容' :
-                                  isAnalyzing ? '分析进行中，请稍候...' :
-                                    ''
-                              }
-                            >
-                              {isAnalyzing ? '分析中' : '分析'}
-                            </Button>
-                          );
-                        })(),
-                        <Button
-                          type="text"
-                          icon={<SettingOutlined />}
-                          onClick={() => handleOpenModal(item.id)}
-                        >
-                          修改
-                        </Button>,
-                        // 只在 one-to-many 模式下显示删除按钮
-                        ...(currentProject.outline_mode === 'one-to-many' ? [
-                          <Popconfirm
-                            title="确定删除这个章节吗？"
-                            description="删除后将无法恢复，章节内容和分析结果都将被删除。"
-                            onConfirm={() => handleDeleteChapter(item.id)}
-                            okText="确定删除"
-                            cancelText="取消"
-                            okButtonProps={{ danger: true }}
-                          >
-                            <Button
-                              type="text"
-                              danger
-                              icon={<DeleteOutlined />}
-                            >
-                              删除
-                            </Button>
-                          </Popconfirm>
-                        ] : []),
-                      ]}
-                    >
-                      <div style={{ width: '100%' }}>
-                        <List.Item.Meta
-                          avatar={!isMobile && <FileTextOutlined style={{ fontSize: 32, color: token.colorPrimary }} />}
-                          title={
-                            <div style={{
-                              display: 'flex',
-                              flexDirection: isMobile ? 'column' : 'row',
-                              alignItems: isMobile ? 'flex-start' : 'center',
-                              gap: isMobile ? 6 : 12,
-                              width: '100%'
-                            }}>
-                              <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 500, flexShrink: 0 }}>
-                                第{item.chapter_number}章：{item.title}
-                              </span>
-                              <Space wrap size={isMobile ? 4 : 8}>
-                                <Tag color={getStatusColor(item.status)}>{getStatusText(item.status)}</Tag>
-                                <Badge count={`${item.word_count || 0}字`} style={{ backgroundColor: token.colorSuccess }} />
-                                {renderAnalysisStatus(item.id)}
-                                {!canGenerateChapter(item) && (
-                                  <Tag icon={<LockOutlined />} color="warning" title={getGenerateDisabledReason(item)}>
-                                    需前置章节
-                                  </Tag>
-                                )}
-                                <Space size={4}>
-                                  {item.expansion_plan && (
-                                    <InfoCircleOutlined
-                                      title="查看展开详情"
-                                      style={{ color: token.colorPrimary, cursor: 'pointer', fontSize: 16 }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        showExpansionPlanModal(item);
-                                      }}
-                                    />
-                                  )}
-                                  <FormOutlined
-                                    title={item.expansion_plan ? "编辑规划信息" : "创建规划信息"}
-                                    style={{ color: token.colorSuccess, cursor: 'pointer', fontSize: 16 }}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleOpenPlanEditor(item);
-                                    }}
-                                  />
-                                </Space>
-                              </Space>
-                            </div>
-                          }
-                          description={
-                            item.content ? (
-                              <div style={{ marginTop: 8, color: token.colorTextSecondary, lineHeight: 1.6, fontSize: isMobile ? 12 : 14 }}>
-                                {item.content.substring(0, isMobile ? 80 : 150)}
-                                {item.content.length > (isMobile ? 80 : 150) && '...'}
-                              </div>
-                            ) : (
-                              <span style={{ color: token.colorTextTertiary, fontSize: isMobile ? 12 : 14 }}>暂无内容</span>
-                            )
-                          }
-                        />
-
-                        {isMobile && (
-                          <Space style={{ marginTop: 12, width: '100%', justifyContent: 'flex-end' }} wrap>
-                            <Button
-                              type="text"
-                              icon={<ReadOutlined />}
-                              onClick={() => handleOpenReader(item)}
-                              size="small"
-                              disabled={!item.content || item.content.trim() === ''}
-                              title={!item.content || item.content.trim() === '' ? '暂无内容' : '阅读'}
-                            />
-                            <Button
-                              type="text"
-                              icon={<EditOutlined />}
-                              onClick={() => handleOpenEditor(item.id)}
-                              size="small"
-                              title="编辑"
-                            />
-                            {(() => {
-                              const task = analysisTasksMap[item.id];
-                              const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
-                              const hasContent = item.content && item.content.trim() !== '';
-
-                              return (
-                                <Button
-                                  type="text"
-                                  icon={isAnalyzing ? <SyncOutlined spin /> : <FundOutlined />}
-                                  onClick={() => handleShowAnalysis(item.id)}
-                                  size="small"
-                                  disabled={!hasContent || isAnalyzing}
-                                  loading={isAnalyzing}
-                                  title={
-                                    !hasContent ? '请先生成章节内容' :
-                                      isAnalyzing ? '分析中' :
-                                        '分析'
-                                  }
-                                />
-                              );
-                            })()}
-                            <Button
-                              type="text"
-                              icon={<SettingOutlined />}
-                              onClick={() => handleOpenModal(item.id)}
-                              size="small"
-                              title="修改"
-                            />
-                            {/* 只在 one-to-many 模式下显示删除按钮 */}
-                            {currentProject.outline_mode === 'one-to-many' && (
-                              <Popconfirm
-                                title="确定删除？"
-                                description="删除后无法恢复"
-                                onConfirm={() => handleDeleteChapter(item.id)}
-                                okText="删除"
-                                cancelText="取消"
-                                okButtonProps={{ danger: true }}
-                              >
-                                <Button
-                                  type="text"
-                                  danger
-                                  icon={<DeleteOutlined />}
-                                  size="small"
-                                  title="删除章节"
-                                />
-                              </Popconfirm>
-                            )}
-                          </Space>
-                        )}
-                      </div>
-                    </List.Item>
+                    <span style={{
+                      flexShrink: 0,
+                      padding: '1px 7px',
+                      borderRadius: 999,
+                      background: token.colorFillTertiary,
+                      fontSize: 11,
+                      color: token.colorTextTertiary,
+                      fontVariantNumeric: 'tabular-nums',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {group.chapters.length} 章 · {groupWordCount.toLocaleString('zh-CN')} 字
+                    </span>
+                  </button>
+                  {!isCollapsed && (
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 240 : 300}px, 1fr))`,
+                      gap: 14,
+                      paddingTop: 8,
+                      paddingBottom: 8,
+                      alignContent: 'start',
+                    }}>
+                      {group.chapters.map((item) => renderChapterListItem(item))}
+                    </div>
                   )}
-                />
-              </Collapse.Panel>
-            ))}
-          </Collapse>
+                </section>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {filteredSortedChapters.length > 0 && (
-        <div style={{ paddingTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+      {filteredSortedChapters.length > chapterPageSize && (
+        <div style={{
+          flexShrink: 0,
+          display: 'flex',
+          justifyContent: 'flex-end',
+          padding: isMobile ? '8px 0' : '10px 0',
+          borderTop: `1px solid ${token.colorBorderSecondary}`,
+          background: token.colorBgContainer,
+        }}>
           <Pagination
             current={chapterPage}
             pageSize={chapterPageSize}
@@ -2611,7 +2614,7 @@ export default function Chapters() {
                     type="primary"
                     icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
                     onClick={() => currentChapter && showGenerateModal(currentChapter)}
-                    loading={isContinuing}
+                    loading={isContinuing || isGenerating}
                     disabled={!canGenerate}
                     danger={!canGenerate}
                     style={{ fontWeight: 'bold' }}
@@ -2622,7 +2625,8 @@ export default function Chapters() {
                   <Button
                     icon={<RocketOutlined />}
                     onClick={handleBackgroundGenerate}
-                    disabled={!canGenerate || isContinuing}
+                    loading={isBackgroundGenerating}
+                    disabled={!canGenerate || isContinuing || isGenerating}
                     style={{ fontWeight: 'bold' }}
                     title={!canGenerate ? disabledReason : '后台生成：关闭浏览器也不影响，完成后自动保存'}
                   >
@@ -2752,7 +2756,7 @@ export default function Chapters() {
 
             <Form.Item
               label="AI模型"
-              tooltip="选择用于生成章节内容的AI模型，不选择则使用默认模型"
+              tooltip="指定本次生成使用的模型；不选则使用「API 设置」里当前启用的配置"
               style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
             >
               <Select
@@ -2763,6 +2767,11 @@ export default function Chapters() {
                 disabled={isGenerating}
                 showSearch
                 optionFilterProp="label"
+                notFoundContent={
+                  <div style={{ padding: '4px 2px', fontSize: 12, color: token.colorTextTertiary, lineHeight: 1.7 }}>
+                    暂无可选模型。请先到「API 设置 → 文本模型」新增并启用一套配置。
+                  </div>
+                }
               >
                 {availableModels.map(model => (
                   <Select.Option key={model.value} value={model.value} label={model.label}>
@@ -3007,7 +3016,7 @@ export default function Chapters() {
             <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 0 : 16 }}>
               <Form.Item
                 label="AI模型"
-                tooltip="不选则使用默认模型"
+                tooltip="指定本批次使用的模型；不选则使用「API 设置」里当前启用的配置"
                 style={{ flex: 1, marginBottom: 12 }}
               >
                 <Select
@@ -3017,6 +3026,11 @@ export default function Chapters() {
                   allowClear
                   showSearch
                   optionFilterProp="label"
+                  notFoundContent={
+                    <div style={{ padding: '4px 2px', fontSize: 12, color: token.colorTextTertiary, lineHeight: 1.7 }}>
+                      暂无可选模型。请先到「API 设置 → 文本模型」新增并启用一套配置。
+                    </div>
+                  }
                 >
                   {availableModels.map(model => (
                     <Select.Option key={model.value} value={model.value} label={model.label}>
@@ -3125,6 +3139,13 @@ export default function Chapters() {
           onChapterChange={handleReaderChapterChange}
         />
       )}
+
+      {/* 分析过程监控（默认关闭，从「更多」菜单手动打开） */}
+      <AnalysisMonitorDrawer
+        open={monitorOpen}
+        projectId={currentProject?.id || null}
+        onClose={() => setMonitorOpen(false)}
+      />
 
       {/* 局部重写弹窗 */}
       {editingId && (

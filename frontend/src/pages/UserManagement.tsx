@@ -55,7 +55,12 @@ type SortField =
 
 type SortOrder = 'ascend' | 'descend' | null;
 
-export default function UserManagement() {
+interface UserManagementProps {
+  /** 嵌入管理后台外壳时使用：不再占满整屏，也不重复提供返回/账号入口。 */
+  embedded?: boolean;
+}
+
+export default function UserManagement({ embedded = false }: UserManagementProps) {
   const navigate = useNavigate();
   const [users, setUsers] = useState<UserWithStatus[]>([]);
   const [loading, setLoading] = useState(false);
@@ -304,21 +309,68 @@ export default function UserManagement() {
 
   const isMobile = window.innerWidth <= 768;
 
+  // 嵌入管理后台时统一使用 .adm-* 类，避免与外壳的暖灰语言冲突
+  const renderUser = (text: string) =>
+    embedded ? (
+      <span className="adm-cell-strong">{text}</span>
+    ) : (
+      <Space>
+        <UserOutlined style={{ color: token.colorPrimary }} />
+        <Text strong>{text}</Text>
+      </Space>
+    );
+
+  const renderDisplayName = (text: string) =>
+    embedded ? <span>{text}</span> : text;
+
+  const renderStatus = (isActive: boolean) =>
+    embedded ? (
+      <span className={`adm-tag ${isActive !== false ? 'adm-tag--ok' : 'adm-tag--danger'}`}>
+        <span className="adm-tag-dot" />
+        {isActive !== false ? '正常' : '已禁用'}
+      </span>
+    ) : (
+      <Badge
+        status={isActive !== false ? 'success' : 'error'}
+        text={isActive !== false ? '正常' : '已禁用'}
+      />
+    );
+
+  const renderRole = (isAdmin: boolean) =>
+    embedded ? (
+      <span className={`adm-tag${isAdmin ? ' adm-tag--warn' : ''}`}>
+        {isAdmin ? '管理员' : '普通用户'}
+      </span>
+    ) : (
+      <Tag color={isAdmin ? 'gold' : 'blue'}>
+        {isAdmin ? '👑 管理员' : '普通用户'}
+      </Tag>
+    );
+
+  const renderTrustLevel = (level: number) =>
+    embedded ? (
+      <span className={`adm-tag${level >= 5 ? ' adm-tag--ok' : ''}${level === -1 ? ' adm-tag--danger' : ''}`}>
+        {level === -1 ? '已禁用' : `Level ${level}`}
+      </span>
+    ) : (
+      <Tag color={level === -1 ? 'default' : level >= 5 ? 'green' : 'blue'}>
+        {level === -1 ? '已禁用' : `Level ${level}`}
+      </Tag>
+    );
+
+  const formatDateTime = (date: string, emptyText = '-') =>
+    date ? new Date(date).toLocaleString('zh-CN') : emptyText;
+
   // 表格列定义
   const columns = [
     {
       title: '用户名',
       dataIndex: 'username',
       key: 'username',
-      width: 150,
+      width: embedded ? 180 : 150,
       sorter: true,
       sortOrder: sortField === 'username' ? sortOrder : null,
-      render: (text: string) => (
-        <Space>
-          <UserOutlined style={{ color: token.colorPrimary }} />
-          <Text strong>{text}</Text>
-        </Space>
-      ),
+      render: renderUser,
     },
     {
       title: '显示名称',
@@ -327,6 +379,7 @@ export default function UserManagement() {
       width: 150,
       sorter: true,
       sortOrder: sortField === 'display_name' ? sortOrder : null,
+      render: renderDisplayName,
     },
     {
       title: '状态',
@@ -335,12 +388,7 @@ export default function UserManagement() {
       width: 100,
       sorter: true,
       sortOrder: sortField === 'is_active' ? sortOrder : null,
-      render: (isActive: boolean) => (
-        <Badge
-          status={isActive !== false ? 'success' : 'error'}
-          text={isActive !== false ? '正常' : '已禁用'}
-        />
-      ),
+      render: renderStatus,
     },
     {
       title: '角色',
@@ -349,11 +397,7 @@ export default function UserManagement() {
       width: 100,
       sorter: true,
       sortOrder: sortField === 'is_admin' ? sortOrder : null,
-      render: (isAdmin: boolean) => (
-        <Tag color={isAdmin ? 'gold' : 'blue'}>
-          {isAdmin ? '👑 管理员' : '普通用户'}
-        </Tag>
-      ),
+      render: renderRole,
     },
     {
       title: '信任等级',
@@ -362,29 +406,39 @@ export default function UserManagement() {
       width: 100,
       sorter: true,
       sortOrder: sortField === 'trust_level' ? sortOrder : null,
-      render: (level: number) => (
-        <Tag color={level === -1 ? 'default' : level >= 5 ? 'green' : 'blue'}>
-          {level === -1 ? '已禁用' : `Level ${level}`}
-        </Tag>
-      ),
+      render: renderTrustLevel,
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: 180,
+      width: embedded ? 150 : 180,
       sorter: true,
       sortOrder: sortField === 'created_at' ? sortOrder : null,
-      render: (date: string) => date ? new Date(date).toLocaleString('zh-CN') : '-',
+      render: (date: string) =>
+        embedded ? (
+          <span className="adm-cell-muted" style={{ whiteSpace: 'nowrap' }}>
+            {formatDateTime(date)}
+          </span>
+        ) : (
+          formatDateTime(date)
+        ),
     },
     {
       title: '最后登录',
       dataIndex: 'last_login',
       key: 'last_login',
-      width: 180,
+      width: embedded ? 150 : 180,
       sorter: true,
       sortOrder: sortField === 'last_login' ? sortOrder : null,
-      render: (date: string) => date ? new Date(date).toLocaleString('zh-CN') : '从未登录',
+      render: (date: string) =>
+        embedded ? (
+          <span className="adm-cell-muted" style={{ whiteSpace: 'nowrap' }}>
+            {formatDateTime(date, '从未登录')}
+          </span>
+        ) : (
+          formatDateTime(date, '从未登录')
+        ),
     },
     {
       title: '操作',
@@ -447,7 +501,48 @@ export default function UserManagement() {
           );
         }
 
-        // 桌面端：保持原有按钮样式
+        // 桌面端：嵌入管理后台时用克制的文字按钮，独立页保留链接按钮
+        if (embedded) {
+          return (
+            <Space size={4}>
+              <Button type="text" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
+                编辑
+              </Button>
+              <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => handleResetPassword(record)}>
+                重置密码
+              </Button>
+              <Popconfirm
+                title={`确定${isActive ? '禁用' : '启用'}该用户吗？`}
+                onConfirm={() => handleToggleStatus(record)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  danger={isActive}
+                  icon={isActive ? <StopOutlined /> : <CheckCircleOutlined />}
+                >
+                  {isActive ? '禁用' : '启用'}
+                </Button>
+              </Popconfirm>
+              {!record.is_admin && (
+                <Popconfirm
+                  title="确定删除该用户吗？此操作不可恢复！"
+                  onConfirm={() => handleDelete(record)}
+                  okText="确定"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                >
+                  <Button type="text" size="small" danger icon={<DeleteOutlined />}>
+                    删除
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
+          );
+        }
+
         return (
           <Space size="small">
             <Button
@@ -508,26 +603,56 @@ export default function UserManagement() {
     },
   ];
 
+  // 嵌入式（管理后台内）使用与外壳一致的页头 + 面板；独立路由保留原有渐变头。
+  const embeddedHeader = (
+    <header className="adm-page-head">
+      <div className="adm-page-head-main">
+        <h2 className="adm-page-title">用户管理</h2>
+        <p className="adm-page-desc">
+          维护平台账号、角色与信任等级；禁用后该用户无法继续登录。
+        </p>
+      </div>
+      <div className="adm-page-actions">
+        <Button
+          type="primary"
+          size="small"
+          icon={<PlusOutlined />}
+          onClick={() => setModalVisible(true)}
+        >
+          添加用户
+        </Button>
+      </div>
+    </header>
+  );
+
   return (
-    <div style={{
-      height: '100vh',
-      background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${alphaColor(token.colorPrimary, 0.08)} 100%)`,
-      padding: isMobile ? '20px 16px' : '40px 24px',
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-    }}>
+    <div
+      style={
+        embedded
+          ? { width: '100%', maxWidth: 1180, margin: '0 auto', padding: '22px 24px 56px' }
+          : {
+              height: '100vh',
+              background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${alphaColor(token.colorPrimary, 0.08)} 100%)`,
+              padding: isMobile ? '20px 16px' : '40px 24px',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+            }
+      }
+    >
       {contextHolder}
+      {embedded && embeddedHeader}
       <div style={{
-        maxWidth: 1400,
+        maxWidth: embedded ? undefined : 1400,
         margin: '0 auto',
         width: '100%',
-        height: '100%',
+        flex: embedded ? undefined : 1,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        {/* 顶部导航卡片 */}
+        {/* 独立路由下保留原有渐变头；嵌入管理后台时由 embeddedHeader 取代 */}
+        {!embedded && (
         <Card
           variant="borderless"
           style={{
@@ -559,29 +684,31 @@ export default function UserManagement() {
             </Col>
             <Col xs={24} sm={12}>
               <Space size={12} style={{ display: 'flex', justifyContent: isMobile ? 'flex-start' : 'flex-end', width: '100%' }}>
-                <Button
-                  icon={<ArrowLeftOutlined />}
-                  onClick={() => navigate('/')}
-                  style={{
-                    borderRadius: 12,
-                    background: alphaColor(token.colorWhite, 0.15),
-                    border: `1px solid ${alphaColor(token.colorWhite, 0.3)}`,
-                    boxShadow: `0 2px 8px ${alphaColor(token.colorText, 0.15)}`,
-                    color: token.colorWhite,
-                    backdropFilter: 'blur(10px)',
-                    transition: 'all 0.3s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = alphaColor(token.colorWhite, 0.25);
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = alphaColor(token.colorWhite, 0.15);
-                    e.currentTarget.style.transform = 'none';
-                  }}
-                >
-                  返回主页
-                </Button>
+                {!embedded && (
+                  <Button
+                    icon={<ArrowLeftOutlined />}
+                    onClick={() => navigate('/')}
+                    style={{
+                      borderRadius: 12,
+                      background: alphaColor(token.colorWhite, 0.15),
+                      border: `1px solid ${alphaColor(token.colorWhite, 0.3)}`,
+                      boxShadow: `0 2px 8px ${alphaColor(token.colorText, 0.15)}`,
+                      color: token.colorWhite,
+                      backdropFilter: 'blur(10px)',
+                      transition: 'all 0.3s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = alphaColor(token.colorWhite, 0.25);
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = alphaColor(token.colorWhite, 0.15);
+                      e.currentTarget.style.transform = 'none';
+                    }}
+                  >
+                    返回主页
+                  </Button>
+                )}
                 <Button
                   type="primary"
                   icon={<PlusOutlined />}
@@ -597,39 +724,48 @@ export default function UserManagement() {
                 >
                   添加用户
                 </Button>
-                <UserMenu />
+                {!embedded && <UserMenu />}
               </Space>
             </Col>
           </Row>
         </Card>
+        )}
 
-        {/* 主内容卡片 */}
-        <Card
-          variant="borderless"
+        {/* 主内容面板：嵌入时用外壳的细边框面板，独立时保留柔和卡片 */}
+        <div
           style={{
-            background: alphaColor(token.colorBgContainer, 0.72),
-            borderRadius: isMobile ? 16 : 24,
-            border: `1px solid ${alphaColor(token.colorWhite, 0.45)}`,
-            backdropFilter: 'blur(20px)',
-            boxShadow: `0 4px 24px ${alphaColor(token.colorText, 0.06)}`,
-            flex: 1,
+            flex: embedded ? undefined : 1,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-          }}
-          bodyStyle={{
-            padding: 0,
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
+            ...(embedded
+              ? {
+                  border: `1px solid ${token.colorBorderSecondary}`,
+                  borderRadius: 12,
+                  background: token.colorBgContainer,
+                  boxShadow: `0 1px 2px ${alphaColor(token.colorText, 0.03)}`,
+                }
+              : {
+                  border: `1px solid ${alphaColor(token.colorWhite, 0.45)}`,
+                  borderRadius: isMobile ? 16 : 24,
+                  background: alphaColor(token.colorBgContainer, 0.72),
+                  backdropFilter: 'blur(20px)',
+                  boxShadow: `0 4px 24px ${alphaColor(token.colorText, 0.06)}`,
+                }),
           }}
         >
-          {/* 搜索栏 */}
-          <div style={{
-            padding: '16px 24px 0 24px',
-            borderBottom: `1px solid ${alphaColor(token.colorText, 0.06)}`,
-          }}>
+          {/* 工具条：搜索 + 计数 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              padding: embedded ? '12px 14px' : '16px 24px 12px',
+              borderBottom: `1px solid ${embedded ? token.colorBorderSecondary : alphaColor(token.colorText, 0.06)}`,
+            }}
+          >
             <Input
               placeholder="搜索用户名、显示名称或用户ID"
               prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
@@ -641,24 +777,41 @@ export default function UserManagement() {
               allowClear
               style={{
                 borderRadius: 8,
+                width: embedded ? 280 : undefined,
+                maxWidth: '100%',
               }}
             />
+            <span
+              style={{
+                color: token.colorTextTertiary,
+                fontSize: 11.5,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              共 {filteredUsers.length} 位用户{searchText ? '（已过滤）' : ''}
+            </span>
           </div>
 
           {/* 表格区域 */}
-          <div style={{
-            flex: 1,
-            overflow: 'auto',
-            padding: '16px 24px 0 24px',
-          }}>
+          <div
+            style={{
+              flex: embedded ? undefined : 1,
+              overflow: 'auto',
+              padding: embedded ? 0 : '16px 24px 0 24px',
+            }}
+          >
             <Table
               columns={columns}
               dataSource={sortedUsers.slice((currentPage - 1) * pageSize, currentPage * pageSize)}
               rowKey="user_id"
               loading={loading}
+              className={embedded ? 'adm-table' : undefined}
+              size={embedded ? 'middle' : 'large'}
               scroll={{
-                x: 1400,
-                y: 'calc(100vh - 410px)'
+                // 嵌入时不再限定 x，让列宽自适应容器，避免操作列被裁切
+                x: embedded ? undefined : 1400,
+                // 嵌入管理后台时多出 58px 顶栏 + 页头 + 工具条
+                y: embedded ? undefined : 'calc(100vh - 410px)',
               }}
               pagination={false}
               onChange={(_pagination, _filters, sorter) => {
@@ -677,19 +830,22 @@ export default function UserManagement() {
           </div>
 
           {/* 固定分页控件 */}
-          <div style={{
-            padding: '16px 24px 24px 24px',
-            borderTop: `1px solid ${alphaColor(token.colorText, 0.06)}`,
-            background: 'transparent',
-            display: 'flex',
-            justifyContent: 'center',
-          }}>
+          <div
+            style={{
+              padding: embedded ? '8px 6px' : '16px 24px 24px 24px',
+              borderTop: embedded ? 'none' : `1px solid ${alphaColor(token.colorText, 0.06)}`,
+              background: 'transparent',
+              display: 'flex',
+              justifyContent: embedded ? 'flex-end' : 'center',
+            }}
+          >
             <Pagination
               current={currentPage}
               pageSize={pageSize}
               total={filteredUsers.length}
+              size={embedded ? 'small' : undefined}
               showSizeChanger
-              showTotal={(total) => `共 ${total} 个用户${searchText ? ' (已过滤)' : ''}`}
+              showTotal={embedded ? undefined : (total) => `共 ${total} 个用户${searchText ? ' (已过滤)' : ''}`}
               pageSizeOptions={[20, 50, 100]}
               onChange={(page, size) => {
                 setCurrentPage(page);
@@ -701,7 +857,7 @@ export default function UserManagement() {
               }}
             />
           </div>
-        </Card>
+        </div>
       </div>
 
       {/* 添加用户对话框 */}

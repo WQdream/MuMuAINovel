@@ -14,7 +14,6 @@ import {
   BankOutlined,
   EditOutlined,
   FundOutlined,
-  HeartOutlined,
   TrophyOutlined,
   BulbOutlined,
   CloudOutlined,
@@ -22,6 +21,7 @@ import {
   ThunderboltOutlined,
   SettingOutlined,
   DatabaseOutlined,
+  ClearOutlined,
 } from '@ant-design/icons';
 import { useStore } from '../store';
 import { useCharacterSync, useOutlineSync, useChapterSync } from '../store/hooks';
@@ -154,11 +154,6 @@ export default function ProjectDetail() {
 
   const menuItems = [
     {
-      key: 'sponsor',
-      icon: <HeartOutlined />,
-      label: <Link to={`/project/${projectId}/sponsor`}>赞助支持</Link>,
-    },
-    {
       type: 'group' as const,
       label: '创作管理',
       children: [
@@ -234,6 +229,11 @@ export default function ProjectDetail() {
           label: <Link to={`/project/${projectId}/skill-chat`}>Skill 工具箱</Link>,
         },
         {
+          key: 'polish',
+          icon: <ClearOutlined />,
+          label: <Link to={`/project/${projectId}/polish`}>AI 去味</Link>,
+        },
+        {
           key: 'skill-manage',
           icon: <SettingOutlined />,
           label: <Link to={`/project/${projectId}/skill-manage`}>Skill 管理</Link>,
@@ -243,11 +243,6 @@ export default function ProjectDetail() {
   ];
 
   const menuItemsCollapsed = [
-    {
-      key: 'sponsor',
-      icon: <HeartOutlined />,
-      label: <Link to={`/project/${projectId}/sponsor`}>赞助支持</Link>,
-    },
     {
       key: 'world-setting',
       icon: <GlobalOutlined />,
@@ -314,6 +309,11 @@ export default function ProjectDetail() {
       label: <Link to={`/project/${projectId}/skill-chat`}>Skill 工具箱</Link>,
     },
     {
+      key: 'polish',
+      icon: <ClearOutlined />,
+      label: <Link to={`/project/${projectId}/polish`}>AI 去味</Link>,
+    },
+    {
       key: 'skill-manage',
       icon: <SettingOutlined />,
       label: <Link to={`/project/${projectId}/skill-manage`}>Skill 管理</Link>,
@@ -337,9 +337,8 @@ export default function ProjectDetail() {
     if (path.includes('/prompt-workshop')) return 'prompt-workshop';
     if (path.includes('/skill-chat')) return 'skill-chat';
     if (path.includes('/skill-manage')) return 'skill-manage';
-    if (path.includes('/sponsor')) return 'sponsor';
-    // if (path.includes('/polish')) return 'polish';
-    return 'sponsor'; // 默认选中赞助支持
+    if (path.includes('/polish')) return 'polish';
+    return 'outline';
   }, [location.pathname]);
 
   if (loading || !currentProject) {
@@ -446,7 +445,7 @@ export default function ProjectDetail() {
         )}
 
         {!mobile && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', zIndex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', zIndex: 1 }}>
             {[
               { label: '大纲', value: outlines.length, unit: '条' },
               { label: '角色', value: characters.length, unit: '个' },
@@ -459,16 +458,22 @@ export default function ProjectDetail() {
                   display: 'flex',
                   alignItems: 'baseline',
                   gap: 4,
-                  padding: '4px 10px',
-                  borderRadius: 8,
-                  background: token.colorFillQuaternary,
-                  border: `1px solid ${token.colorBorderSecondary}`,
+                  padding: index === 0 ? '0 18px 0 0' : index === 3 ? '0 0 0 18px' : '0 18px',
+                  borderLeft: index === 0 ? 'none' : `1px solid ${token.colorBorderSecondary}`,
+                  whiteSpace: 'nowrap',
                 }}
               >
-                <span style={{ fontSize: 11, color: token.colorTextTertiary }}>{item.label}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
+                <span style={{ fontSize: 11, color: token.colorTextTertiary, letterSpacing: '0.02em' }}>{item.label}</span>
+                <span
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: token.colorText,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
                   {item.value > 10000 ? (item.value / 10000).toFixed(1) + 'w' : item.value}
-                  <span style={{ fontSize: 10, marginLeft: 2, opacity: 0.7 }}>{item.unit}</span>
+                  <span style={{ fontSize: 10, marginLeft: 2, fontWeight: 400, opacity: 0.55 }}>{item.unit}</span>
                 </span>
               </div>
             ))}

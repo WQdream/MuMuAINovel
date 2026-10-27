@@ -1,0 +1,149 @@
+/* 管理后台 · API 配置：卡片/抽屉复用 Settings.css 的 .st-* 组件，这里只补容器差异 */
+
+.apc-page {
+  max-width: 1180px;
+}
+
+.apc-panel {
+  padding: 0;
+}
+
+.apc-tabs {
+  overflow: hidden;
+  border: 1px solid var(--adm-border);
+  border-radius: 12px;
+  background: var(--adm-panel);
+}
+
+.apc-tabs > .ant-tabs-nav {
+  padding: 0 18px;
+}
+
+.apc-tabs .ant-tabs-content-holder {
+  min-width: 0;
+}
+
+.apc-tabs .apc-panel {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.apc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--adm-border);
+}
+
+.apc-toolbar-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.apc-toolbar-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--adm-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.apc-toolbar-desc {
+  color: var(--adm-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* 卡片区：与用户端同一套栅格节奏，仅收一点内边距贴合面板 */
+.apc-cards {
+  padding: 16px;
+}
+
+.apc-empty {
+  margin: 16px;
+  min-height: 210px;
+}
+
+/* 卡片：去掉用户端「当前生效」的绿色描边，仅保留轻量 hover 抬升 */
+.apc-card {
+  position: relative;
+  overflow: visible;
+}
+
+.apc-card:hover {
+  border-color: color-mix(in srgb, var(--st-accent) 26%, var(--st-border));
+  box-shadow: 0 12px 26px color-mix(in srgb, var(--st-text) 9%, transparent);
+  transform: translateY(-3px);
+}
+
+/* 停用态：整卡降饱和，但不隐藏，便于管理员对照 */
+.apc-card--off {
+  border-color: var(--st-border);
+  background: color-mix(in srgb, var(--st-text) 1.6%, var(--st-card-bg));
+}
+
+.apc-card--off .st-model-card-name,
+.apc-card--off .st-model-card-model {
+  color: var(--st-secondary);
+}
+
+/* 管理员卡片上额外露出真实模型，便于核对显示名背后的实际渠道 */
+.apc-real-model {
+  margin-top: 5px;
+  color: var(--st-tertiary);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.apc-real-model span {
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+}
+
+.apc-badge--off {
+  background: var(--st-fill);
+  color: var(--st-tertiary);
+}
+
+.apc-quota {
+  color: color-mix(in srgb, var(--st-accent) 72%, var(--st-secondary));
+  font-weight: 550;
+}
+
+.apc-quota-tip {
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+/* 卡片底部开关 */
+.apc-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.apc-switch-label {
+  color: var(--st-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .apc-cards {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .apc-empty {
+    margin: 12px;
+  }
+}

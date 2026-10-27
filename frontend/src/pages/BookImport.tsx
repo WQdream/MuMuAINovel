@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Alert,
   Button,
-  Card,
   Col,
   Collapse,
   Empty,
@@ -17,15 +17,22 @@ import {
   Select,
   Space,
   Spin,
-  Steps,
-  Tag,
-  Typography,
   Upload,
   theme,
 } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { InboxOutlined, PlayCircleOutlined, ReloadOutlined, StopOutlined, WarningOutlined, RedoOutlined } from '@ant-design/icons';
+import {
+  CheckOutlined,
+  FileTextOutlined,
+  InboxOutlined,
+  PlayCircleOutlined,
+  RedoOutlined,
+  ReloadOutlined,
+  StopOutlined,
+  WarningOutlined,
+} from '@ant-design/icons';
 import { bookImportApi } from '../services/api';
+import { useThemeMode } from '../theme/useThemeMode';
 import type {
   BookImportApplyPayload,
   BookImportExtractMode,
@@ -33,8 +40,8 @@ import type {
   BookImportStepFailure,
   BookImportTask,
 } from '../types';
+import './BookImport.css';
 
-const { Text, Title } = Typography;
 const { Dragger } = Upload;
 const { TextArea } = Input;
 
@@ -109,10 +116,17 @@ function isNotFoundError(error: unknown): boolean {
   return maybeError.response?.status === 404;
 }
 
+function formatFileSize(bytes: number): string {
+  if (!bytes) return '0 KB';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function BookImport() {
   const navigate = useNavigate();
   const { token } = theme.useToken();
-  const isMobile = window.innerWidth <= 768;
+  const { resolvedMode } = useThemeMode();
   const [file, setFile] = useState<File | null>(null);
   const [extractMode, setExtractMode] = useState<BookImportExtractMode>('tail');
   const [tailChapterCount, setTailChapterCount] = useState(10);
@@ -192,6 +206,19 @@ export default function BookImport() {
     { title: '生成导入' },
   ];
   const currentStepText = stepItems[currentStep]?.title || '上传文件';
+
+  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const themeVars = {
+    '--bi-page-bg': token.colorBgLayout,
+    '--bi-text': token.colorText,
+    '--bi-secondary': token.colorTextSecondary,
+    '--bi-tertiary': token.colorTextTertiary,
+    '--bi-border': token.colorBorderSecondary,
+    '--bi-fill': token.colorFillQuaternary,
+    '--bi-card-bg': token.colorBgContainer,
+    '--bi-accent': accentColor,
+    '--bi-accent-contrast': resolvedMode === 'dark' ? '#1B1B18' : '#FFFFFF',
+  } as CSSProperties;
 
   useEffect(() => {
     const cache = loadBookImportCache();
@@ -587,572 +614,583 @@ export default function BookImport() {
     });
   };
 
+  const renderSteps = () => (
+    <div className="bi-steps" role="list" aria-label="拆书导入进度">
+      {stepItems.map((item, index) => {
+        const state = index < currentStep ? 'done' : index === currentStep ? 'active' : 'todo';
+        return (
+          <div className={`bi-step bi-step--${state}`} role="listitem" key={item.title}>
+            <span className="bi-step-index">
+              {state === 'done' ? <CheckOutlined /> : index + 1}
+            </span>
+            <span className="bi-step-label">{item.title}</span>
+            {index < stepItems.length - 1 && <span className="bi-step-line" aria-hidden="true" />}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
-    <div
-      style={{
-        minHeight: '90vh',
-        overflow: 'auto',
-        background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${token.colorFillSecondary} 100%)`,
-        padding: isMobile ? '20px 16px 70px' : '24px 24px 70px',
-      }}
-    >
-      <div style={{ maxWidth: 1400, margin: '0 auto', width: '100%' }}>
-        <Card
-          variant="borderless"
-          style={{
-            background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${token.colorPrimaryHover} 100%)`,
-            borderRadius: isMobile ? 16 : 20,
-            boxShadow: token.boxShadowSecondary,
-            marginBottom: isMobile ? 14 : 16,
-            border: 'none',
-            position: 'relative',
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ position: 'absolute', top: -48, right: -48, width: 160, height: 160, borderRadius: '50%', background: token.colorWhite, opacity: 0.08, pointerEvents: 'none' }} />
-          <div style={{ position: 'absolute', bottom: -40, left: '26%', width: 110, height: 110, borderRadius: '50%', background: token.colorWhite, opacity: 0.05, pointerEvents: 'none' }} />
-
-          <Row align="middle" justify="space-between" gutter={[16, 16]} style={{ position: 'relative', zIndex: 1 }}>
-            <Col xs={24} sm={12}>
-              <Space direction="vertical" size={4}>
-                <Title level={isMobile ? 3 : 2} style={{ margin: 0, color: token.colorWhite, textShadow: `0 2px 4px ${token.colorBgMask}` }}>
-                  <InboxOutlined style={{ color: token.colorWhite, opacity: 0.9, marginRight: 8 }} />
-                  拆书导入
-                </Title>
-                <Text style={{ fontSize: isMobile ? 12 : 14, color: token.colorTextLightSolid, opacity: 0.85, marginLeft: isMobile ? 40 : 48 }}>
-                  上传TXT并自动解析为章节、预览并导入项目
-                </Text>
-              </Space>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Space
-                size={12}
-                style={{
-                  width: '100%',
-                  display: 'flex',
-                  justifyContent: isMobile ? 'flex-start' : 'flex-end',
-                }}
-              >
-                <Tag
-                  style={{
-                    marginInlineEnd: 0,
-                    background: token.colorWhite,
-                    border: `1px solid ${token.colorWhite}`,
-                    color: token.colorPrimary,
-                    fontWeight: 600,
-                    borderRadius: 8,
-                    paddingInline: 10,
-                  }}
-                >
-                  当前进度：{currentStepText}
-                </Tag>
-                <Popconfirm
-                  title="确认重新开始？"
-                  description="将清空当前拆书任务与缓存，并回到上传文件步骤。"
-                  onConfirm={restartImport}
-                  okText="重新开始"
-                  cancelText="取消"
-                  disabled={!canRestart}
-                >
-                  <Button
-                    danger
-                    type="primary"
-                    icon={<ReloadOutlined />}
-                    disabled={!canRestart}
-                    style={{ boxShadow: '0 6px 16px rgba(0, 0, 0, 0.2)', borderRadius: 10 }}
-                  >
-                    重新开始
-                  </Button>
-                </Popconfirm>
-              </Space>
-            </Col>
-          </Row>
-
-          <Card
-            variant="borderless"
-            style={{
-              marginTop: isMobile ? 14 : 18,
-              borderRadius: 12,
-              background: token.colorBgContainer,
-              border: `1px solid ${token.colorBorderSecondary}`,
-              boxShadow: token.boxShadow,
-            }}
-            styles={{ body: { padding: isMobile ? '10px 12px' : '12px 16px' } }}
-          >
-            <Steps current={currentStep} size={isMobile ? 'small' : 'default'} items={stepItems} />
-          </Card>
-        </Card>
-
-      {currentStep === 0 && (
-      <Card title="上传 TXT 并开始解析" style={{ marginBottom: 16 }}>
-        <Space direction="vertical" style={{ width: '100%' }} size={16}>
-          <Dragger
-            accept=".txt"
-            multiple={false}
-            beforeUpload={(f) => {
-              setFile(f);
-              return false;
-            }}
-            onRemove={() => {
-              setFile(null);
-            }}
-            fileList={
-              file
-                ? [
-                    {
-                      uid: 'selected-txt',
-                      name: file.name,
-                      status: 'done',
-                    } as UploadFile,
-                  ]
-                : []
-            }
-            style={{ padding: '8px 0' }}
-          >
-            <p className="ant-upload-drag-icon">
+    <div className="bi-page" style={themeVars}>
+      <div className="bi-shell">
+        <header className="bi-header">
+          <div className="bi-header-main">
+            <span className="bi-header-icon">
               <InboxOutlined />
-            </p>
-            <p className="ant-upload-text">点击或拖拽 TXT 文件到此区域</p>
-            <p className="ant-upload-hint">首版仅支持 .txt，建议不超过 50MB</p>
-          </Dragger>
+            </span>
+            <div className="bi-header-copy">
+              <div className="bi-title-row">
+                <h2 className="bi-title">拆书导入</h2>
+                <span className={`bi-status bi-status--${currentStep === 3 ? 'busy' : 'idle'}`}>
+                  {currentStepText}
+                </span>
+              </div>
+              <p className="bi-subtitle">上传 TXT，自动拆解章节结构、预览校对后一键生成作品。</p>
+            </div>
+          </div>
+          {canRestart && (
+            <div className="bi-header-actions">
+              <Popconfirm
+                title="确认重新开始？"
+                description="将清空当前拆书任务与缓存，并回到上传文件步骤。"
+                onConfirm={restartImport}
+                okText="重新开始"
+                cancelText="取消"
+              >
+                <Button icon={<ReloadOutlined />}>重新开始</Button>
+              </Popconfirm>
+            </div>
+          )}
+        </header>
 
-          <Card size="small" title="解析范围设置">
-            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+        {renderSteps()}
+
+        {currentStep === 0 && (
+          <div className="bi-grid">
+            <section className="bi-panel bi-panel--upload">
+              <div className="bi-panel-head">
+                <div>
+                  <h3 className="bi-panel-title">上传原稿</h3>
+                  <p className="bi-panel-desc">整本 TXT 或分章 TXT 均可，解析过程不会修改原文件。</p>
+                </div>
+                <span className="bi-panel-badge">TXT</span>
+              </div>
+
+              <Dragger
+                accept=".txt"
+                multiple={false}
+                className="bi-dragger"
+                beforeUpload={(f) => {
+                  setFile(f);
+                  return false;
+                }}
+                onRemove={() => {
+                  setFile(null);
+                }}
+                showUploadList={false}
+                fileList={
+                  file
+                    ? [
+                        {
+                          uid: 'selected-txt',
+                          name: file.name,
+                          status: 'done',
+                        } as UploadFile,
+                      ]
+                    : []
+                }
+              >
+                <div className="bi-drop">
+                  <span className="bi-drop-icon">
+                    <InboxOutlined />
+                  </span>
+                  <div className="bi-drop-title">
+                    {file ? '已选择文件，可点击更换' : '拖拽 TXT 到此处，或点击选择文件'}
+                  </div>
+                  <div className="bi-drop-hint">仅支持 .txt，建议不超过 50MB</div>
+                </div>
+              </Dragger>
+
+              {file && (
+                <div className="bi-file">
+                  <span className="bi-file-icon">
+                    <FileTextOutlined />
+                  </span>
+                  <div className="bi-file-meta">
+                    <span className="bi-file-name" title={file.name}>{file.name}</span>
+                    <span className="bi-file-size">{formatFileSize(file.size)}</span>
+                  </div>
+                  <Button
+                    type="text"
+                    size="small"
+                    onClick={() => setFile(null)}
+                    className="bi-file-remove"
+                  >
+                    移除
+                  </Button>
+                </div>
+              )}
+
+              <div className="bi-panel-foot">
+                <span className="bi-foot-note">
+                  {file ? '确认范围后即可开始解析' : '先选择文件，再设置解析范围'}
+                </span>
+                <Button
+                  type="primary"
+                  icon={<PlayCircleOutlined />}
+                  loading={creatingTask}
+                  disabled={!file}
+                  onClick={startTask}
+                >
+                  开始解析
+                </Button>
+              </div>
+            </section>
+
+            <section className="bi-panel bi-panel--settings">
+              <div className="bi-panel-head">
+                <div>
+                  <h3 className="bi-panel-title">解析范围</h3>
+                  <p className="bi-panel-desc">控制本次拆书取用的章节区间，范围越小解析越快。</p>
+                </div>
+              </div>
+
               {rangeLocked && (
                 <Alert
                   type="warning"
                   showIcon
                   message="当前任务的解析范围已锁定"
-                  description="拆书任务会按创建任务时的解析范围执行。若需修改范围，请点击上方“重新开始”后重新上传并解析。"
+                  description="如需调整范围，请点击右上角「重新开始」后重新上传并解析。"
+                  style={{ marginBottom: 14 }}
                 />
               )}
-              <Select
-                value={extractMode}
-                onChange={(value) => setExtractMode(value)}
-                options={[
-                  { label: '截取末 x 章反向生成', value: 'tail' },
-                  { label: '整本反向生成', value: 'full' },
-                ]}
-                style={{ width: '100%' }}
-                disabled={rangeLocked}
-              />
-              <InputNumber
-                min={5}
-                max={55}
-                step={5}
-                precision={0}
-                value={tailChapterCount}
-                disabled={rangeLocked || extractMode !== 'tail'}
-                onChange={(value) => setTailChapterCount(typeof value === 'number' ? value : 10)}
-                addonBefore="末尾章节数"
-                style={{ width: '100%' }}
-              />
-              <Text type="secondary">
-                {effectiveExtractMode === 'tail'
-                  ? `当前将截取末 ${normalizedTailChapterCount} 章进行反向生成；章节数必须为 5 的倍数，最多 50 章。`
-                  : extractMode === 'tail' && tailChapterCount > 50
-                    ? '当前输入已超过 50 章，将自动按整本拆处理。'
-                    : '当前将基于整本内容进行反向生成，适合完整拆书但耗时可能更长。'}
-              </Text>
-            </Space>
-          </Card>
 
-          <Alert
-            type="info"
-            showIcon
-            message="支持的拆书 TXT 格式要求"
-            description={
-              <div style={{ lineHeight: 1.8 }}>
-                <div>1. 仅支持 <strong>.txt</strong> 文件，建议每章使用单独的章节标题行。</div>
-                <div>2. 推荐格式：<strong>第1章 标题</strong>，下一行开始写正文内容。</div>
-                <div>3. 正文建议按自然段换行，首行可缩进两个字符。</div>
-                <div>4. 章节之间保留空行即可，不要添加多余的分割线、全文完、导出时间等干扰内容。</div>
-                <div style={{ marginTop: 8 }}>
-                  示例：
-                  <pre style={{ margin: '8px 0 0', padding: 12, borderRadius: 8, background: token.colorFillAlter, whiteSpace: 'pre-wrap' }}>
-{`第1章 初入江湖
+              <div className="bi-field">
+                <span className="bi-field-label">解析方式</span>
+                <Select
+                  value={extractMode}
+                  onChange={(value) => setExtractMode(value)}
+                  options={[
+                    { label: '截取末 x 章反向生成', value: 'tail' },
+                    { label: '整本反向生成', value: 'full' },
+                  ]}
+                  style={{ width: '100%' }}
+                  disabled={rangeLocked}
+                />
+              </div>
+
+              <div className="bi-field">
+                <span className="bi-field-label">末尾章节数</span>
+                <InputNumber
+                  min={5}
+                  max={55}
+                  step={5}
+                  precision={0}
+                  value={tailChapterCount}
+                  disabled={rangeLocked || extractMode !== 'tail'}
+                  onChange={(value) => setTailChapterCount(typeof value === 'number' ? value : 10)}
+                  suffix="章"
+                  style={{ width: '100%' }}
+                />
+              </div>
+
+              <p className="bi-field-note">
+                {effectiveExtractMode === 'tail'
+                  ? `将截取末 ${normalizedTailChapterCount} 章反向生成，章节数须为 5 的倍数，最多 50 章。`
+                  : extractMode === 'tail' && tailChapterCount > 50
+                    ? '输入已超过 50 章，将自动按整本拆处理。'
+                    : '将基于整本内容反向生成，适合完整拆书，耗时可能更长。'}
+              </p>
+
+              <Collapse
+                ghost
+                className="bi-format"
+                items={[
+                  {
+                    key: 'format',
+                    label: 'TXT 格式要求',
+                    children: (
+                      <div className="bi-format-body">
+                        <ol>
+                          <li>仅支持 <strong>.txt</strong> 文件，每章使用单独的标题行。</li>
+                          <li>推荐标题格式：<strong>第1章 标题</strong>，下一行开始正文。</li>
+                          <li>正文按自然段换行，首行可缩进两个字符。</li>
+                          <li>章节间保留空行，避免分割线、导出时间等干扰内容。</li>
+                        </ol>
+                        <pre className="bi-sample">{`第1章 初入江湖
 这里是第1章正文第一段。
 这里是第1章正文第二段。
 
 第2章 雨夜追踪
-这里是第2章正文内容。`}
-                  </pre>
-                </div>
+这里是第2章正文内容。`}</pre>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+
+              <div className="bi-output">
+                <div className="bi-output-title">导入后自动生成</div>
+                <ul>
+                  <li>
+                    <span className="bi-output-dot" />
+                    <span>章节与大纲</span>
+                  </li>
+                  <li>
+                    <span className="bi-output-dot" />
+                    <span>世界观与职业体系</span>
+                  </li>
+                  <li>
+                    <span className="bi-output-dot" />
+                    <span>核心角色与相关组织</span>
+                  </li>
+                </ul>
               </div>
-            }
-          />
-          
-          <Space wrap>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              loading={creatingTask}
-              onClick={startTask}
-            >
-              开始解析
-            </Button>
-            {taskId && (
-              <Tag color="blue">任务ID: {taskId}</Tag>
-            )}
-          </Space>
-        </Space>
-      </Card>
-      )}
-
-      {currentStep === 1 && (
-      <Card title="解析任务状态" style={{ marginBottom: 16 }}>
-        {!taskId ? (
-          <Empty description="尚未创建任务" />
-        ) : (
-          <div style={{ textAlign: 'center', padding: '24px 0' }}>
-            <Progress
-              type="circle"
-              percent={taskStatus?.progress || 0}
-              status={
-                taskStatus?.status === 'failed' ? 'exception' :
-                taskStatus?.status === 'completed' ? 'success' :
-                'active'
-              }
-            />
-            <div style={{ marginTop: 24 }}>
-              <Text strong style={{ fontSize: 16 }}>
-                {taskStatus?.status === 'pending' && '等待调度...'}
-                {taskStatus?.status === 'running' && '正在解析TXT文件...'}
-                {taskStatus?.status === 'completed' && '解析完成！正在生成预览...'}
-                {taskStatus?.status === 'failed' && '解析失败'}
-                {taskStatus?.status === 'cancelled' && '已取消'}
-              </Text>
-              {taskStatus?.message && (
-                <div style={{ marginTop: 8 }}>
-                  <Text type="secondary">{taskStatus.message}</Text>
-                </div>
-              )}
-            </div>
-
-            {taskStatus?.error && (
-              <Alert type="error" message={taskStatus.error} showIcon style={{ marginTop: 16, textAlign: 'left' }} />
-            )}
-
-            <Space style={{ marginTop: 24 }}>
-              <Button icon={<ReloadOutlined />} onClick={refreshStatus}>刷新状态</Button>
-              {taskStatus && ['pending', 'running'].includes(taskStatus.status) && (
-                <Button danger icon={<StopOutlined />} onClick={cancelTask}>取消任务</Button>
-              )}
-            </Space>
+            </section>
           </div>
         )}
-      </Card>
-      )}
 
-      {currentStep === 2 && (
-      <>
-      <Card
-        title="预览修正"
-        extra={
-          <Button
-            type="primary"
-            loading={applying}
-            disabled={!preview}
-            onClick={applyImport}
-          >
-            确认导入
-          </Button>
-        }
-        style={{ marginBottom: 16 }}
-      >
-        <Spin spinning={loadingPreview}>
-          {!preview ? (
-            <Empty description="解析完成后将显示预览数据" />
-          ) : (
-            <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: 8 }}>
-              <Space direction="vertical" style={{ width: '100%' }} size={16}>
-              {preview.warnings.length > 0 && (
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="检测到告警"
-                  description={
-                    <ul style={{ margin: 0, paddingLeft: 20 }}>
-                      {preview.warnings.map((w, idx) => (
-                        <li key={`${w.code}-${idx}`}>[{w.level}] {w.message}</li>
-                      ))}
-                    </ul>
+        {currentStep === 1 && (
+          <section className="bi-panel bi-panel--wide">
+            <div className="bi-panel-head">
+              <div>
+                <h3 className="bi-panel-title">正在解析</h3>
+                <p className="bi-panel-desc">任务在后台执行，离开页面后可从缓存恢复进度。</p>
+              </div>
+            </div>
+            {!taskId ? (
+              <Empty description="尚未创建任务" style={{ padding: '40px 0' }} />
+            ) : (
+              <div className="bi-progress">
+                <Progress
+                  type="circle"
+                  size={168}
+                  percent={taskStatus?.progress || 0}
+                  strokeWidth={7}
+                  status={
+                    taskStatus?.status === 'failed' ? 'exception' :
+                    taskStatus?.status === 'completed' ? 'success' :
+                    'active'
                   }
                 />
-              )}
+                <div className="bi-progress-copy">
+                  <h4 className="bi-progress-title">
+                    {taskStatus?.status === 'pending' && '等待调度...'}
+                    {taskStatus?.status === 'running' && '正在解析 TXT 文件...'}
+                    {taskStatus?.status === 'completed' && '解析完成，正在生成预览...'}
+                    {taskStatus?.status === 'failed' && '解析失败'}
+                    {taskStatus?.status === 'cancelled' && '已取消'}
+                  </h4>
+                  {taskStatus?.message && <p className="bi-progress-msg">{taskStatus.message}</p>}
+                  {taskId && <p className="bi-progress-task">任务 ID · {taskId}</p>}
+                  {taskStatus?.error && (
+                    <Alert type="error" message={taskStatus.error} showIcon style={{ marginTop: 14, textAlign: 'left' }} />
+                  )}
+                  <Space style={{ marginTop: 20 }}>
+                    <Button icon={<ReloadOutlined />} onClick={refreshStatus}>刷新状态</Button>
+                    {taskStatus && ['pending', 'running'].includes(taskStatus.status) && (
+                      <Button danger icon={<StopOutlined />} onClick={cancelTask}>取消任务</Button>
+                    )}
+                  </Space>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
-              <Card
-                size="small"
-                title="项目信息"
+        {currentStep === 2 && (
+          <section className="bi-panel bi-panel--wide">
+            <div className="bi-panel-head">
+              <div>
+                <h3 className="bi-panel-title">预览与校正</h3>
+                <p className="bi-panel-desc">
+                  {preview
+                    ? `共解析出 ${preview.chapters.length} 个章节，可直接修改标题、摘要与正文。`
+                    : '解析完成后将显示预览数据。'}
+                </p>
+              </div>
+              <Button
+                type="primary"
+                loading={applying}
+                disabled={!preview}
+                onClick={applyImport}
               >
-                <Row gutter={12}>
-                  <Col xs={24} md={12}>
-                    <Text>标题</Text>
-                    <Input
-                      value={preview.project_suggestion.title}
-                      onChange={(e) =>
-                        setPreview(prev => prev ? ({
-                          ...prev,
-                          project_suggestion: { ...prev.project_suggestion, title: e.target.value },
-                        }) : prev)
-                      }
-                    />
-                  </Col>
-                  <Col xs={24} md={12}>
-                    <Text>类型</Text>
-                    <Input
-                      value={preview.project_suggestion.genre}
-                      onChange={(e) =>
-                        setPreview(prev => prev ? ({
-                          ...prev,
-                          project_suggestion: { ...prev.project_suggestion, genre: e.target.value },
-                        }) : prev)
-                      }
-                    />
-                  </Col>
-                  <Col xs={24}>
-                    <Text>主题</Text>
-                    <TextArea
-                      rows={3}
-                      value={preview.project_suggestion.theme}
-                      onChange={(e) =>
-                        setPreview(prev => prev ? ({
-                          ...prev,
-                          project_suggestion: { ...prev.project_suggestion, theme: e.target.value },
-                        }) : prev)
-                      }
-                    />
-                  </Col>
-                  <Col xs={24}>
-                    <Text>简介</Text>
-                    <TextArea
-                      rows={3}
-                      value={preview.project_suggestion.description}
-                      onChange={(e) =>
-                        setPreview(prev => prev ? ({
-                          ...prev,
-                          project_suggestion: { ...prev.project_suggestion, description: e.target.value },
-                        }) : prev)
-                      }
-                    />
-                  </Col>
-                  <Col xs={24} md={12}>
-                    <Text>叙事角度</Text>
-                    <Select
-                      style={{ width: '100%' }}
-                      value={preview.project_suggestion.narrative_perspective}
-                      onChange={(v) =>
-                        setPreview(prev => prev ? ({
-                          ...prev,
-                          project_suggestion: { ...prev.project_suggestion, narrative_perspective: v },
-                        }) : prev)
-                      }
-                      options={[
-                        { value: '第一人称', label: '第一人称' },
-                        { value: '第三人称', label: '第三人称' },
-                        { value: '全知视角', label: '全知视角' },
-                      ]}
-                    />
-                  </Col>
-                  <Col xs={24} md={12}>
-                    <Text>目标字数</Text>
-                    <InputNumber
-                      style={{ width: '100%' }}
-                      min={1000}
-                      step={1000}
-                      value={preview.project_suggestion.target_words}
-                      onChange={(v) =>
-                        setPreview(prev => prev ? ({
-                          ...prev,
-                          project_suggestion: {
-                            ...prev.project_suggestion,
-                            target_words: Number(v || 100000),
-                          },
-                        }) : prev)
-                      }
-                    />
-                  </Col>
-                </Row>
-              </Card>
-
-              <Card size="small" title={`章节（${preview.chapters.length}）`}>
-                <Collapse
-                  items={preview.chapters.map((ch, idx) => ({
-                    key: String(idx),
-                    label: `第 ${ch.chapter_number} 章 · ${ch.title}`,
-                    children: (
-                      <Space direction="vertical" style={{ width: '100%' }}>
-                        <Input
-                          value={ch.title}
-                          addonBefore="标题"
-                          onChange={(e) => updateChapter(idx, { title: e.target.value })}
-                        />
-                        <TextArea
-                          rows={2}
-                          value={ch.summary}
-                          placeholder="章节摘要"
-                          onChange={(e) => updateChapter(idx, { summary: e.target.value })}
-                        />
-                        <TextArea
-                          rows={8}
-                          value={ch.content}
-                          placeholder="章节正文"
-                          onChange={(e) => updateChapter(idx, { content: e.target.value })}
-                        />
-                      </Space>
-                    ),
-                  }))}
-                />
-              </Card>
-
-              </Space>
+                确认导入
+              </Button>
             </div>
-          )}
-        </Spin>
-      </Card>
 
-      </>
-      )}
+            <Spin spinning={loadingPreview}>
+              {!preview ? (
+                <Empty description="解析完成后将显示预览数据" style={{ padding: '40px 0' }} />
+              ) : (
+                <div className="bi-preview">
+                  <Space direction="vertical" style={{ width: '100%' }} size={14}>
+                    {preview.warnings.length > 0 && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        message="检测到告警"
+                        description={
+                          <ul className="bi-warning-list">
+                            {preview.warnings.map((w, idx) => (
+                              <li key={`${w.code}-${idx}`}>[{w.level}] {w.message}</li>
+                            ))}
+                          </ul>
+                        }
+                      />
+                    )}
 
-      {currentStep === 3 && (
-      <Card title="生成导入进度" style={{ marginBottom: 16 }}>
-        <div style={{ textAlign: 'center', padding: '40px 20px', maxWidth: 600, margin: '0 auto' }}>
-          <Typography.Title level={4} style={{ marginBottom: 32 }}>
-            {retrying ? '正在重试失败的生成步骤' : (failedSteps.length > 0 && isApplyComplete ? '导入完成，部分步骤需要重试' : '正在为您生成并导入项目内容')}
-          </Typography.Title>
-          
-          <Progress
-            percent={retrying ? retryProgress : applyProgress}
-            status={
-              applyError ? 'exception' :
-              (failedSteps.length > 0 && isApplyComplete && !retrying) ? 'exception' :
-              (isApplyComplete && failedSteps.length === 0) ? 'success' :
-              'active'
-            }
-            strokeColor={{
-              '0%': 'var(--color-primary)',
-              '100%': failedSteps.length > 0 ? '#faad14' : 'var(--color-primary-active)',
-            }}
-            style={{ marginBottom: 24 }}
-          />
-          
-          <Typography.Paragraph
-            style={{
-              fontSize: 16,
-              marginBottom: 32,
-              color: applyError ? 'var(--color-error)' :
-                (failedSteps.length > 0 && isApplyComplete && !retrying) ? '#faad14' :
-                'var(--color-text-secondary)'
-            }}
-          >
-            {retrying ? retryMessage : (applyError || applyMessage)}
-          </Typography.Paragraph>
-          
-          {applyError && (
-            <Alert
-              type="error"
-              message="导入出错"
-              description={applyError}
-              showIcon
-              style={{ textAlign: 'left', marginBottom: 24 }}
-            />
-          )}
+                    <div className="bi-section">
+                      <div className="bi-section-title">项目信息</div>
+                      <Row gutter={[14, 12]}>
+                        <Col xs={24} md={12}>
+                          <div className="bi-field">
+                            <span className="bi-field-label">标题</span>
+                            <Input
+                              value={preview.project_suggestion.title}
+                              onChange={(e) =>
+                                setPreview(prev => prev ? ({
+                                  ...prev,
+                                  project_suggestion: { ...prev.project_suggestion, title: e.target.value },
+                                }) : prev)
+                              }
+                            />
+                          </div>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <div className="bi-field">
+                            <span className="bi-field-label">类型</span>
+                            <Input
+                              value={preview.project_suggestion.genre}
+                              onChange={(e) =>
+                                setPreview(prev => prev ? ({
+                                  ...prev,
+                                  project_suggestion: { ...prev.project_suggestion, genre: e.target.value },
+                                }) : prev)
+                              }
+                            />
+                          </div>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <div className="bi-field">
+                            <span className="bi-field-label">叙事角度</span>
+                            <Select
+                              style={{ width: '100%' }}
+                              value={preview.project_suggestion.narrative_perspective}
+                              onChange={(v) =>
+                                setPreview(prev => prev ? ({
+                                  ...prev,
+                                  project_suggestion: { ...prev.project_suggestion, narrative_perspective: v },
+                                }) : prev)
+                              }
+                              options={[
+                                { value: '第一人称', label: '第一人称' },
+                                { value: '第三人称', label: '第三人称' },
+                                { value: '全知视角', label: '全知视角' },
+                              ]}
+                            />
+                          </div>
+                        </Col>
+                        <Col xs={24} md={12}>
+                          <div className="bi-field">
+                            <span className="bi-field-label">目标字数</span>
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              min={1000}
+                              step={1000}
+                              value={preview.project_suggestion.target_words}
+                              onChange={(v) =>
+                                setPreview(prev => prev ? ({
+                                  ...prev,
+                                  project_suggestion: {
+                                    ...prev.project_suggestion,
+                                    target_words: Number(v || 100000),
+                                  },
+                                }) : prev)
+                              }
+                            />
+                          </div>
+                        </Col>
+                        <Col xs={24}>
+                          <div className="bi-field">
+                            <span className="bi-field-label">主题</span>
+                            <TextArea
+                              rows={2}
+                              value={preview.project_suggestion.theme}
+                              onChange={(e) =>
+                                setPreview(prev => prev ? ({
+                                  ...prev,
+                                  project_suggestion: { ...prev.project_suggestion, theme: e.target.value },
+                                }) : prev)
+                              }
+                            />
+                          </div>
+                        </Col>
+                        <Col xs={24}>
+                          <div className="bi-field">
+                            <span className="bi-field-label">简介</span>
+                            <TextArea
+                              rows={3}
+                              value={preview.project_suggestion.description}
+                              onChange={(e) =>
+                                setPreview(prev => prev ? ({
+                                  ...prev,
+                                  project_suggestion: { ...prev.project_suggestion, description: e.target.value },
+                                }) : prev)
+                              }
+                            />
+                          </div>
+                        </Col>
+                      </Row>
+                    </div>
 
-          {/* 步骤失败提示与重试UI */}
-          {failedSteps.length > 0 && isApplyComplete && !retrying && (
-            <div style={{ textAlign: 'left', marginBottom: 24 }}>
-              <Alert
-                type="warning"
-                icon={<WarningOutlined />}
-                showIcon
-                message={`${failedSteps.length} 个生成步骤失败`}
-                description={
-                  <div>
-                    <Typography.Paragraph style={{ marginBottom: 12, color: 'rgba(0,0,0,0.65)' }}>
-                      以下AI生成步骤未能完成，但基础数据（章节、大纲）已成功导入。您可以选择重试或跳过。
-                    </Typography.Paragraph>
-                    <List
-                      size="small"
-                      bordered
-                      dataSource={failedSteps}
-                      renderItem={(item) => (
-                        <List.Item
-                          style={{ padding: '8px 12px' }}
-                        >
-                          <List.Item.Meta
-                            title={
-                              <Space>
-                                <Tag color="error">{item.step_label}</Tag>
-                                {(item.retry_count ?? 0) > 0 && (
-                                  <Tag color="orange">已重试 {item.retry_count} 次</Tag>
-                                )}
-                              </Space>
-                            }
-                            description={
-                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                                {item.error.length > 120 ? item.error.slice(0, 120) + '...' : item.error}
-                              </Typography.Text>
-                            }
-                          />
-                        </List.Item>
-                      )}
-                    />
-                    <Space style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
-                      <Button
-                        type="primary"
-                        icon={<RedoOutlined />}
-                        onClick={retryFailedSteps}
-                        loading={retrying}
-                      >
-                        智能重试全部失败步骤
-                      </Button>
-                      <Button onClick={skipFailedSteps}>
-                        跳过，直接进入项目
-                      </Button>
-                    </Space>
-                  </div>
+                    <div className="bi-section">
+                      <div className="bi-section-title">
+                        章节
+                        <span className="bi-section-count">{preview.chapters.length}</span>
+                      </div>
+                      <Collapse
+                        className="bi-chapters"
+                        items={preview.chapters.map((ch, idx) => ({
+                          key: String(idx),
+                          label: (
+                            <span className="bi-chapter-label">
+                              <span className="bi-chapter-no">{ch.chapter_number}</span>
+                              <span className="bi-chapter-name">{ch.title}</span>
+                            </span>
+                          ),
+                          children: (
+                            <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                              <Input
+                                value={ch.title}
+                                addonBefore="标题"
+                                onChange={(e) => updateChapter(idx, { title: e.target.value })}
+                              />
+                              <TextArea
+                                rows={2}
+                                value={ch.summary}
+                                placeholder="章节摘要"
+                                onChange={(e) => updateChapter(idx, { summary: e.target.value })}
+                              />
+                              <TextArea
+                                rows={8}
+                                value={ch.content}
+                                placeholder="章节正文"
+                                onChange={(e) => updateChapter(idx, { content: e.target.value })}
+                              />
+                            </Space>
+                          ),
+                        }))}
+                      />
+                    </div>
+                  </Space>
+                </div>
+              )}
+            </Spin>
+          </section>
+        )}
+
+        {currentStep === 3 && (
+          <section className="bi-panel bi-panel--wide">
+            <div className="bi-panel-head">
+              <div>
+                <h3 className="bi-panel-title">生成导入</h3>
+                <p className="bi-panel-desc">章节与大纲落库后，AI 会继续补全世界观、职业与角色。</p>
+              </div>
+            </div>
+
+            <div className="bi-apply">
+              <div className="bi-apply-head">
+                <h4 className="bi-apply-title">
+                  {retrying
+                    ? '正在重试失败的生成步骤'
+                    : (failedSteps.length > 0 && isApplyComplete
+                      ? '导入完成，部分步骤需要重试'
+                      : '正在生成并导入项目内容')}
+                </h4>
+                <span className="bi-apply-percent">
+                  {Math.round(retrying ? retryProgress : applyProgress)}%
+                </span>
+              </div>
+
+              <Progress
+                percent={retrying ? retryProgress : applyProgress}
+                showInfo={false}
+                status={
+                  applyError ? 'exception' :
+                  (failedSteps.length > 0 && isApplyComplete && !retrying) ? 'exception' :
+                  (isApplyComplete && failedSteps.length === 0) ? 'success' :
+                  'active'
                 }
+                strokeColor={failedSteps.length > 0 ? '#C99A3E' : accentColor}
                 style={{ marginBottom: 16 }}
               />
-            </div>
-          )}
 
-          {/* 重试进行中 */}
-          {retrying && (
-            <div style={{ marginBottom: 24 }}>
-              <Spin spinning={retrying}>
-                <Alert
-                  type="info"
-                  showIcon
-                  message="正在重试..."
-                  description={retryMessage}
-                  style={{ textAlign: 'left' }}
-                />
-              </Spin>
-            </div>
-          )}
-          
-          {!failedSteps.length && !retrying && (
-            <div style={{
-              background: 'var(--color-bg-layout)',
-              padding: 16,
-              borderRadius: 8,
-              textAlign: 'left',
-              marginTop: 32
-            }}>
-              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-                导入过程中，AI会自动帮您补全：<br />
-                • 世界观设定（时间、地点、氛围、规则）<br />
-                • 职业体系（主职业与副职业）<br />
-                • 核心角色与相关组织<br />
-                {isApplyComplete ? '所有步骤已完成，即将自动跳转。' : '请耐心等待，完成后将自动跳转。'}
-              </Typography.Text>
-            </div>
-          )}
-        </div>
-      </Card>
-      )}
+              <p className="bi-apply-msg">
+                {retrying ? retryMessage : (applyError || applyMessage)}
+              </p>
 
+              {applyError && (
+                <Alert type="error" message="导入出错" description={applyError} showIcon />
+              )}
+
+              {failedSteps.length > 0 && isApplyComplete && !retrying && (
+                <div className="bi-failures">
+                  <div className="bi-failure-head">
+                    <WarningOutlined />
+                    <span>{failedSteps.length} 个生成步骤失败</span>
+                  </div>
+                  <p className="bi-failure-desc">
+                    章节与大纲已成功导入，以下 AI 步骤未完成，可以重试或跳过。
+                  </p>
+                  <List
+                    size="small"
+                    className="bi-failure-list"
+                    dataSource={failedSteps}
+                    renderItem={(item) => (
+                      <List.Item>
+                        <div className="bi-failure-item">
+                          <div className="bi-failure-item-head">
+                            <span className="bi-failure-tag">{item.step_label}</span>
+                            {(item.retry_count ?? 0) > 0 && (
+                              <span className="bi-failure-retry">已重试 {item.retry_count} 次</span>
+                            )}
+                          </div>
+                          <p className="bi-failure-error">
+                            {item.error.length > 120 ? `${item.error.slice(0, 120)}...` : item.error}
+                          </p>
+                        </div>
+                      </List.Item>
+                    )}
+                  />
+                  <Space style={{ marginTop: 16 }}>
+                    <Button type="primary" icon={<RedoOutlined />} onClick={retryFailedSteps} loading={retrying}>
+                      智能重试全部失败步骤
+                    </Button>
+                    <Button onClick={skipFailedSteps}>跳过，直接进入项目</Button>
+                  </Space>
+                </div>
+              )}
+
+              {retrying && (
+                <Alert type="info" showIcon message="正在重试..." description={retryMessage} style={{ marginTop: 16 }} />
+              )}
+
+              {!failedSteps.length && !retrying && (
+                <div className="bi-apply-note">
+                  <div className="bi-apply-note-title">AI 将自动补全</div>
+                  <ul>
+                    <li>世界观设定：时间、地点、氛围与规则</li>
+                    <li>职业体系：主职业与副职业</li>
+                    <li>核心角色与相关组织</li>
+                  </ul>
+                  <p>{isApplyComplete ? '所有步骤已完成，即将自动跳转。' : '请耐心等待，完成后将自动跳转。'}</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

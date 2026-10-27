@@ -1,34 +1,30 @@
 import { useState, useEffect, useCallback } from 'react';
+import type { CSSProperties } from 'react';
 import {
-  Card,
-  Row,
-  Col,
   Input,
   Select,
   Button,
-  Tag,
   Space,
   Empty,
   Spin,
   Modal,
+  Drawer,
   Form,
   message,
   Tooltip,
   Badge,
   Tabs,
-  Typography,
   Pagination,
   Alert,
-  Statistic,
   theme,
 } from 'antd';
+import type { AxiosError } from 'axios';
 import {
   SearchOutlined,
   DownloadOutlined,
   HeartOutlined,
   HeartFilled,
   CloudUploadOutlined,
-  EyeOutlined,
   UserOutlined,
   ClockCircleOutlined,
   CheckCircleOutlined,
@@ -39,6 +35,9 @@ import {
   DisconnectOutlined,
   SettingOutlined,
   PlusOutlined,
+  CloseOutlined,
+  InfoCircleOutlined,
+  InboxOutlined,
 } from '@ant-design/icons';
 import { promptWorkshopApi, authApi } from '../services/api';
 import type {
@@ -48,9 +47,9 @@ import type {
   User,
 } from '../types';
 import { PROMPT_CATEGORIES } from '../types';
+import './PromptWorkshop.css';
 
 const { TextArea } = Input;
-const { Text, Paragraph } = Typography;
 
 export default function PromptWorkshop() {
   const [items, setItems] = useState<PromptWorkshopItem[]>([]);
@@ -86,6 +85,11 @@ export default function PromptWorkshop() {
   
   // 导入状态
   const [importingId, setImportingId] = useState<string | null>(null);
+  const [duplicateConflict, setDuplicateConflict] = useState<{
+    item: PromptWorkshopItem;
+    existingName: string;
+  } | null>(null);
+  const [duplicateActionLoading, setDuplicateActionLoading] = useState(false);
   
   // 当前用户
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -122,19 +126,17 @@ export default function PromptWorkshop() {
   
   const isMobile = window.innerWidth <= 768;
   const { token } = theme.useToken();
+  const themeVars = {
+    '--pw-text': token.colorText,
+    '--pw-secondary': token.colorTextSecondary,
+    '--pw-tertiary': token.colorTextTertiary,
+    '--pw-border': token.colorBorderSecondary,
+    '--pw-fill': token.colorFillQuaternary,
+    '--pw-card-bg': token.colorBgContainer,
+  } as CSSProperties;
   
   // 判断是否为服务端管理员
   const isServerAdmin = serviceStatus?.mode === 'server' && currentUser?.is_admin;
-
-  // 卡片网格配置 - 与 WritingStyles 保持一致
-  const gridConfig = {
-    gutter: isMobile ? 8 : 16,
-    xs: 24,
-    sm: 24,
-    md: 12,
-    lg: 8,
-    xl: 6,
-  };
 
   // 加载服务状态和用户信息
   useEffect(() => {
@@ -191,19 +193,55 @@ export default function PromptWorkshop() {
     }
   };
 
-  // 导入到本地
-  const handleImport = async (item: PromptWorkshopItem) => {
+  // 导入到本地（已存在相同提示词时交给用户选择）
+  const runImport = async (
+    item: PromptWorkshopItem,
+    duplicateAction?: 'overwrite' | 'copy'
+  ) => {
     setImportingId(item.id);
     try {
-      await promptWorkshopApi.importItem(item.id);
-      message.success(`已导入「${item.name}」到本地写作风格`);
+      const response = await promptWorkshopApi.importItem(item.id, {
+        duplicateAction,
+        skipErrorToast: true,
+      });
+      message.success(
+        response.overwritten
+          ? `已用「${item.name}」覆盖现有写作风格`
+          : `已导入「${item.name}」到本地写作风格`
+      );
+      setDuplicateConflict(null);
       // 刷新列表更新下载计数
       loadItems();
+      return true;
     } catch (error) {
+      const detail = (error as AxiosError<{ detail?: { code?: string; message?: string; existing_style?: { name?: string } } }>)
+        .response?.data?.detail;
+      if (detail?.code === 'STYLE_ALREADY_EXISTS') {
+        setDuplicateConflict({
+          item,
+          existingName: detail.existing_style?.name || item.name,
+        });
+        return false;
+      }
       console.error('Failed to import item:', error);
       message.error('导入失败');
+      return false;
     } finally {
       setImportingId(null);
+    }
+  };
+
+  const handleImport = async (item: PromptWorkshopItem) => {
+    await runImport(item);
+  };
+
+  const handleDuplicateAction = async (action: 'overwrite' | 'copy') => {
+    if (!duplicateConflict) return;
+    setDuplicateActionLoading(true);
+    try {
+      await runImport(duplicateConflict.item, action);
+    } finally {
+      setDuplicateActionLoading(false);
     }
   };
 
@@ -301,21 +339,21 @@ export default function PromptWorkshop() {
     }
   };
 
-  // 获取分类标签颜色
-  const getCategoryColor = (cat: string) => {
+  // 分类仅用一个小圆点区分，避免彩色标签堆叠。
+  const getCategoryDot = (cat: string) => {
     const colors: Record<string, string> = {
-      general: 'blue',
-      fantasy: 'purple',
-      martial: 'orange',
-      romance: 'pink',
-      scifi: 'cyan',
-      horror: 'red',
-      history: 'gold',
-      urban: 'green',
-      game: 'magenta',
-      other: 'default',
+      general: '#8C8C84',
+      fantasy: '#8B7CF6',
+      martial: '#D08A3E',
+      romance: '#DD7C9B',
+      scifi: '#3FA0B5',
+      horror: '#C25B57',
+      history: '#B08D57',
+      urban: '#4E9A6A',
+      game: '#B266C4',
+      other: '#8C8C84',
     };
-    return colors[cat] || 'default';
+    return colors[cat] || colors.other;
   };
 
   // 获取分类名称
@@ -329,20 +367,25 @@ export default function PromptWorkshop() {
     label,
   }));
 
-  // 获取提交状态标签
+  // 提交状态：小圆点 + 文案，与其他页保持同一套视觉。
   const getStatusTag = (status: string) => {
     const config: Record<string, { color: string; icon: React.ReactNode; text: string }> = {
-      pending: { color: 'processing', icon: <ClockCircleOutlined />, text: '待审核' },
-      approved: { color: 'success', icon: <CheckCircleOutlined />, text: '已通过' },
-      rejected: { color: 'error', icon: <CloseCircleOutlined />, text: '已拒绝' },
+      pending: { color: token.colorWarning, icon: <ClockCircleOutlined />, text: '待审核' },
+      approved: { color: token.colorSuccess, icon: <CheckCircleOutlined />, text: '已通过' },
+      rejected: { color: token.colorError, icon: <CloseCircleOutlined />, text: '已拒绝' },
     };
     const cfg = config[status] || config.pending;
-    return <Tag color={cfg.color} icon={cfg.icon}>{cfg.text}</Tag>;
+    return (
+      <span className="pw-status" style={{ color: cfg.color }}>
+        {cfg.icon}
+        {cfg.text}
+      </span>
+    );
   };
 
   // 渲染筛选区域（固定在顶部）
   const renderFilterBar = () => (
-    <div style={{ marginBottom: 16 }}>
+    <div className="pw-filter-wrap">
       {/* 服务状态 */}
       {serviceStatus && !serviceStatus.cloud_connected && serviceStatus.mode === 'client' && (
         <Alert
@@ -351,52 +394,50 @@ export default function PromptWorkshop() {
           description="无法访问提示词工坊，请检查网络连接或稍后重试"
           icon={<DisconnectOutlined />}
           showIcon
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 12 }}
         />
       )}
-      
-      {/* 筛选区域 */}
-      <div style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 12,
-        alignItems: 'center',
-      }}>
+
+      <div className="pw-filter">
         <Input
-          placeholder="搜索提示词..."
+          className="pw-search"
+          placeholder="搜索提示词"
           prefix={<SearchOutlined />}
           value={searchKeyword}
           onChange={e => setSearchKeyword(e.target.value)}
           onPressEnter={() => { setCurrentPage(1); loadItems(); }}
-          style={{ width: isMobile ? '100%' : 200 }}
+          style={{ width: isMobile ? '100%' : 240 }}
           allowClear
         />
-        <Select
-          placeholder="选择分类"
-          value={category}
-          onChange={v => { setCategory(v); setCurrentPage(1); }}
-          style={{ width: isMobile ? '100%' : 150 }}
-          allowClear
-        >
-          {categoryOptions.map(cat => (
-            <Select.Option key={cat.value} value={cat.value}>{cat.label}</Select.Option>
-          ))}
-        </Select>
-        <Select
-          value={sortBy}
-          onChange={v => { setSortBy(v); setCurrentPage(1); }}
-          style={{ width: isMobile ? '100%' : 120 }}
-        >
-          <Select.Option value="newest">最新发布</Select.Option>
-          <Select.Option value="popular">最受欢迎</Select.Option>
-          <Select.Option value="downloads">下载最多</Select.Option>
-        </Select>
-        <Button
-          icon={<SyncOutlined />}
-          onClick={() => { setCurrentPage(1); loadItems(); }}
-        >
-          刷新
-        </Button>
+        <div className="pw-filter-group">
+          <Select
+            placeholder="全部分类"
+            value={category || undefined}
+            onChange={v => { setCategory(v || ''); setCurrentPage(1); }}
+            style={{ width: isMobile ? '100%' : 140 }}
+            allowClear
+          >
+            {categoryOptions.map(cat => (
+              <Select.Option key={cat.value} value={cat.value}>{cat.label}</Select.Option>
+            ))}
+          </Select>
+          <Select
+            value={sortBy}
+            onChange={v => { setSortBy(v); setCurrentPage(1); }}
+            style={{ width: isMobile ? '100%' : 124 }}
+          >
+            <Select.Option value="newest">最新发布</Select.Option>
+            <Select.Option value="popular">最受欢迎</Select.Option>
+            <Select.Option value="downloads">下载最多</Select.Option>
+          </Select>
+          <Tooltip title="刷新列表">
+            <Button
+              icon={<SyncOutlined />}
+              aria-label="刷新列表"
+              onClick={() => { setCurrentPage(1); loadItems(); }}
+            />
+          </Tooltip>
+        </div>
       </div>
     </div>
   );
@@ -404,137 +445,99 @@ export default function PromptWorkshop() {
   // 渲染工坊列表（只有卡片部分，用于滚动区域）
   const renderWorkshopList = () => (
     <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
+      <div className="pw-scroll">
         <Spin spinning={loading}>
           {items.length === 0 ? (
-            <Empty description="暂无提示词" />
+            <div className="pw-empty">
+              <Empty description="暂无提示词" />
+            </div>
           ) : (
-              <Row
-                gutter={[0, gridConfig.gutter]}
-                style={{ marginLeft: 0, marginRight: 0 }}
-              >
+            <div className="pw-grid">
               {items.map(item => (
-                <Col
+                <article
+                  className={`pw-card${item.is_official ? ' pw-card--official' : ''}`}
                   key={item.id}
-                  xs={gridConfig.xs}
-                  sm={gridConfig.sm}
-                  md={gridConfig.md}
-                  lg={gridConfig.lg}
-                  xl={gridConfig.xl}
-                  style={{
-                    paddingLeft: 0,
-                    paddingRight: gridConfig.gutter / 2,
-                    marginBottom: gridConfig.gutter
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`查看 ${item.name} 详情`}
+                  onClick={() => handleViewDetail(item)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      handleViewDetail(item);
+                    }
                   }}
                 >
-                  <Card
-                    hoverable
-                    style={{ 
-                      height: '100%', 
-                      borderRadius: 12,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      border: `1px solid ${token.colorBorderSecondary}`,
-                    }}
-                    bodyStyle={{ 
-                      padding: 16, 
-                      display: 'flex', 
-                      flexDirection: 'column', 
-                      flex: 1,
-                    }}
-                    actions={[
-                      <Tooltip title="查看详情" key="view">
-                        <EyeOutlined onClick={() => handleViewDetail(item)} />
-                      </Tooltip>,
-                      <Tooltip title={item.is_liked ? '取消点赞' : '点赞'} key="like">
-                        <span onClick={() => handleLike(item)}>
-                          {item.is_liked ? (
-                            <HeartFilled style={{ color: token.colorError }} />
-                          ) : (
-                            <HeartOutlined />
-                          )}
-                          <span style={{ marginLeft: 4 }}>{item.like_count || 0}</span>
-                        </span>
-                      </Tooltip>,
-                      <Tooltip title="导入到本地" key="import">
+                  <div className="pw-card-head">
+                    <span className="pw-card-name" title={item.name}>{item.name}</span>
+                    {item.is_official && <span className="pw-official">官方</span>}
+                  </div>
+
+                  <div className="pw-card-meta">
+                    <span
+                      className="pw-dot"
+                      style={{ background: getCategoryDot(item.category) }}
+                    />
+                    {getCategoryName(item.category)}
+                    {item.tags && item.tags.length > 0 && (
+                      <span className="pw-card-tags">
+                        {item.tags.slice(0, 2).map(tag => (
+                          <span key={tag}>· {tag}</span>
+                        ))}
+                        {item.tags.length > 2 && <span>· +{item.tags.length - 2}</span>}
+                      </span>
+                    )}
+                  </div>
+
+                  <p className={`pw-card-desc${item.description ? '' : ' pw-card-desc--empty'}`}>
+                    {item.description || '暂无简介'}
+                  </p>
+
+                  <p className="pw-card-prompt">{item.prompt_content}</p>
+
+                  <div
+                    className="pw-card-foot"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <span className="pw-card-author">
+                      <UserOutlined />
+                      {item.author_name || '匿名'}
+                    </span>
+                    <div className="pw-card-actions">
+                      <button
+                        type="button"
+                        className={`pw-action${item.is_liked ? ' pw-action--liked' : ''}`}
+                        onClick={() => handleLike(item)}
+                        aria-label={item.is_liked ? '取消点赞' : '点赞'}
+                      >
+                        {item.is_liked ? <HeartFilled /> : <HeartOutlined />}
+                        {item.like_count || 0}
+                      </button>
+                      <Tooltip title="导入到我的写作风格">
                         <Button
-                          type="link"
                           size="small"
+                          type="text"
+                          className="pw-import"
                           icon={<DownloadOutlined />}
                           loading={importingId === item.id}
                           onClick={() => handleImport(item)}
                         >
                           {item.download_count || 0}
                         </Button>
-                      </Tooltip>,
-                    ]}
-                  >
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                      <Space style={{ marginBottom: 12 }} wrap>
-                        <Text strong style={{ fontSize: 16 }}>{item.name}</Text>
-                        <Tag color={getCategoryColor(item.category)}>
-                          {getCategoryName(item.category)}
-                        </Tag>
-                      </Space>
-                      
-                      {item.description && (
-                        <Paragraph
-                          type="secondary"
-                          style={{ fontSize: 13, marginBottom: 12 }}
-                          ellipsis={{ rows: 2, tooltip: item.description }}
-                        >
-                          {item.description}
-                        </Paragraph>
-                      )}
-                      
-                      <Paragraph
-                        type="secondary"
-                        style={{
-                          fontSize: 12,
-                          marginBottom: 0,
-                          backgroundColor: token.colorFillQuaternary,
-                          padding: 8,
-                          borderRadius: 4,
-                          flex: 1,
-                          minHeight: 60,
-                        }}
-                        ellipsis={{ rows: 3 }}
-                      >
-                        {item.prompt_content}
-                      </Paragraph>
-                      
-                      {item.tags && item.tags.length > 0 && (
-                        <Space size={4} wrap style={{ marginTop: 8 }}>
-                          {item.tags.slice(0, 3).map(tag => (
-                            <Tag key={tag} style={{ fontSize: 11 }}>{tag}</Tag>
-                          ))}
-                          {item.tags.length > 3 && (
-                            <Tag style={{ fontSize: 11 }}>+{item.tags.length - 3}</Tag>
-                          )}
-                        </Space>
-                      )}
+                      </Tooltip>
                     </div>
-                    
-                    <div style={{ marginTop: 8, color: token.colorTextTertiary, fontSize: 12 }}>
-                      <Space>
-                        <span><UserOutlined /> {item.author_name || '匿名'}</span>
-                      </Space>
-                    </div>
-                  </Card>
-                </Col>
+                  </div>
+                </article>
               ))}
-              </Row>
+            </div>
           )}
         </Spin>
       </div>
 
       {total > 0 && (
         <div
+          className="pw-pagination"
           style={{
-            flexShrink: 0,
-            textAlign: 'center',
-            padding: '12px 0 0',
-            marginTop: 12,
             borderTop: `1px solid ${token.colorBorderSecondary}`,
             background: token.colorBgContainer,
           }}
@@ -554,98 +557,70 @@ export default function PromptWorkshop() {
 
   // 渲染我的提交
   const renderMySubmissions = () => (
-    <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text>查看您提交的提示词及审核状态</Text>
-        <Button icon={<SyncOutlined />} onClick={loadMySubmissions}>
+    <div className="pw-section">
+      <div className="pw-section-head">
+        <span className="pw-section-hint">提交后需管理员审核，通过后才会出现在工坊。</span>
+        <Button type="text" size="small" icon={<SyncOutlined />} onClick={loadMySubmissions}>
           刷新
         </Button>
       </div>
-      
+
       <Spin spinning={submissionsLoading}>
-          {mySubmissions.length === 0 ? (
+        {mySubmissions.length === 0 ? (
+          <div className="pw-empty">
             <Empty description="暂无提交记录" />
-          ) : (
-            <Row gutter={[0, gridConfig.gutter]} style={{ marginLeft: 0, marginRight: 0 }}>
-              {mySubmissions.map(sub => (
-              <Col 
-                key={sub.id} 
-                xs={gridConfig.xs} 
-                sm={gridConfig.sm} 
-                md={gridConfig.md} 
-                lg={gridConfig.lg}
-                xl={gridConfig.xl}
-                style={{
-                  paddingLeft: 0,
-                  paddingRight: gridConfig.gutter / 2,
-                  marginBottom: gridConfig.gutter
-                }}
-              >
-                <Card
-                  style={{ borderRadius: 12, height: '100%', border: `1px solid ${token.colorBorderSecondary}` }}
-                  bodyStyle={{ padding: 16 }}
-                >
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text strong>{sub.name}</Text>
-                      {getStatusTag(sub.status)}
-                    </div>
-                    
-                    <Tag color={getCategoryColor(sub.category)}>
-                      {getCategoryName(sub.category)}
-                    </Tag>
-                    
-                    <Paragraph
-                      type="secondary"
-                      style={{ fontSize: 12, marginBottom: 0 }}
-                      ellipsis={{ rows: 2 }}
-                    >
-                      {sub.prompt_content}
-                    </Paragraph>
-                    
-                    {sub.status === 'rejected' && sub.review_note && (
-                      <Alert
-                        type="error"
-                        message="拒绝原因"
-                        description={sub.review_note}
-                        style={{ fontSize: 12 }}
+          </div>
+        ) : (
+          <div className="pw-list">
+            {mySubmissions.map(sub => (
+              <article className="pw-row" key={sub.id}>
+                <div className="pw-row-main">
+                  <div className="pw-row-title">
+                    <span className="pw-card-name">{sub.name}</span>
+                    {getStatusTag(sub.status)}
+                    <span className="pw-row-cat">
+                      <span
+                        className="pw-dot"
+                        style={{ background: getCategoryDot(sub.category) }}
                       />
-                    )}
-                    
-                    <div style={{ fontSize: 12, color: token.colorTextTertiary }}>
-                      提交时间: {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}
-                    </div>
-                    
-                    <Space>
-                      {sub.status === 'pending' && (
-                        <Button
-                          type="link"
-                          danger
-                          size="small"
-                          icon={<DeleteOutlined />}
-                          onClick={() => handleWithdraw(sub.id)}
-                        >
-                          撤回
-                        </Button>
-                      )}
-                      {sub.status !== 'pending' && (
-                        <Button
-                          type="link"
-                          danger
-                          size="small"
-                          icon={<DeleteOutlined />}
-                          onClick={() => handleDeleteSubmission(sub)}
-                        >
-                          删除记录
-                        </Button>
-                      )}
-                    </Space>
-                  </Space>
-                </Card>
-              </Col>
+                      {getCategoryName(sub.category)}
+                    </span>
+                  </div>
+                  <p className="pw-row-desc">
+                    {sub.description || sub.prompt_content || '暂无简介'}
+                  </p>
+                  {sub.status === 'rejected' && sub.review_note && (
+                    <p className="pw-row-note">审核意见：{sub.review_note}</p>
+                  )}
+                </div>
+                <div className="pw-row-side">
+                  <span className="pw-row-date">
+                    {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}
+                  </span>
+                  {sub.status === 'pending' ? (
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      onClick={() => handleWithdraw(sub.id)}
+                    >
+                      撤回
+                    </Button>
+                  ) : (
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      onClick={() => handleDeleteSubmission(sub)}
+                    >
+                      删除
+                    </Button>
+                  )}
+                </div>
+              </article>
             ))}
-            </Row>
-          )}
+          </div>
+        )}
       </Spin>
     </div>
   );
@@ -747,6 +722,15 @@ export default function PromptWorkshop() {
   };
 
   // 审核提交
+  const openReview = (sub: PromptSubmission) => {
+    setReviewingSubmission(sub);
+    reviewForm.setFieldsValue({
+      category: sub.category,
+      tags: sub.tags?.join(', '),
+    });
+    setReviewModalOpen(true);
+  };
+
   const handleReview = async (action: 'approve' | 'reject') => {
     if (!reviewingSubmission) return;
     
@@ -799,264 +783,260 @@ export default function PromptWorkshop() {
 
   // 渲染管理员面板
   const renderAdminPanel = () => (
-    <div>
+    <div className="pw-section">
       {/* 统计数据 */}
       {adminStats && (
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic title="总提示词" value={adminStats.total_items} />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic title="官方提示词" value={adminStats.total_official} />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic title="待审核" value={adminStats.total_pending} valueStyle={{ color: token.colorWarning }} />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic title="总下载" value={adminStats.total_downloads} />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small">
-              <Statistic title="总点赞" value={adminStats.total_likes} />
-            </Card>
-          </Col>
-          <Col span={4}>
-            <Card size="small" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOfficialModalOpen(true)}>
-                添加官方
-              </Button>
-            </Card>
-          </Col>
-        </Row>
+        <div className="pw-overview">
+          <div className="pw-overview-stats">
+            {[
+              { label: '总提示词', value: adminStats.total_items },
+              { label: '官方', value: adminStats.total_official },
+              { label: '待审核', value: adminStats.total_pending, warn: true },
+              { label: '下载', value: adminStats.total_downloads },
+              { label: '点赞', value: adminStats.total_likes },
+            ].map(stat => (
+              <div
+                key={stat.label}
+                className="pw-overview-stat"
+              >
+                <span className="pw-overview-label">{stat.label}</span>
+                <span
+                  className="pw-overview-value"
+                  style={{ color: stat.warn ? token.colorWarning : token.colorText }}
+                >
+                  {stat.value}
+                </span>
+              </div>
+            ))}
+          </div>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setAddOfficialModalOpen(true)}
+          >
+            添加官方提示词
+          </Button>
+        </div>
       )}
-      
-      {/* 待审核列表 */}
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text strong>待审核提交 ({adminPendingCount})</Text>
-        <Button icon={<SyncOutlined />} onClick={loadAdminSubmissions}>
-          刷新
-        </Button>
-      </div>
-      
-      <Spin spinning={adminSubmissionsLoading}>
-        {adminSubmissions.length === 0 ? (
-          <Empty description="暂无待审核提交" />
-        ) : (
-          <Row gutter={[0, gridConfig.gutter]} style={{ marginLeft: 0, marginRight: 0 }}>
-            {adminSubmissions.map(sub => (
-              <Col 
-                key={sub.id} 
-                xs={gridConfig.xs} 
-                sm={gridConfig.sm} 
-                md={gridConfig.md} 
-                lg={gridConfig.lg}
-                xl={gridConfig.xl}
-                style={{
-                  paddingLeft: 0,
-                  paddingRight: gridConfig.gutter / 2,
-                  marginBottom: gridConfig.gutter
-                }}
-              >
-                <Card
-                  style={{ borderRadius: 12, border: `1px solid ${token.colorBorderSecondary}` }}
-                  bodyStyle={{ padding: 16 }}
-                  actions={[
-                    <Button
-                      key="approve"
-                      type="link"
-                      style={{ color: token.colorSuccess }}
-                      onClick={() => {
-                        setReviewingSubmission(sub);
-                        reviewForm.setFieldsValue({
-                          category: sub.category,
-                          tags: sub.tags?.join(', '),
-                        });
-                        setReviewModalOpen(true);
-                      }}
+
+      <div className="pw-admin-columns">
+        {/* 待审核列表 */}
+        <section className="pw-panel">
+          <div className="pw-panel-head">
+            <span className="pw-panel-title">
+              待审核
+              <span className={`pw-count${adminPendingCount > 0 ? ' pw-count--warn' : ''}`}>
+                {adminPendingCount}
+              </span>
+            </span>
+            <Tooltip title="刷新待审核列表">
+              <Button
+                type="text"
+                size="small"
+                icon={<SyncOutlined />}
+                aria-label="刷新待审核列表"
+                onClick={loadAdminSubmissions}
+              />
+            </Tooltip>
+          </div>
+
+          <div className="pw-panel-body">
+            <Spin spinning={adminSubmissionsLoading}>
+              {adminSubmissions.length === 0 ? (
+                <div className="pw-panel-empty">
+                  <InboxOutlined className="pw-panel-empty-icon" />
+                  <span>暂无待审核投稿</span>
+                </div>
+              ) : (
+                <div className="pw-panel-list">
+                  {adminSubmissions.map(sub => (
+                    <article
+                      className="pw-panel-item pw-panel-item--clickable"
+                      key={sub.id}
+                      onClick={() => openReview(sub)}
                     >
-                      审核
-                    </Button>,
-                  ]}
-                >
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Text strong>{sub.name}</Text>
-                    <Tag color={getCategoryColor(sub.category)}>
-                      {getCategoryName(sub.category)}
-                    </Tag>
-                    
-                    <Paragraph
-                      type="secondary"
-                      style={{ fontSize: 12, marginBottom: 0 }}
-                      ellipsis={{ rows: 3 }}
-                    >
-                      {sub.prompt_content}
-                    </Paragraph>
-                    
-                    <div style={{ fontSize: 11, color: token.colorTextTertiary }}>
-                      <div>提交者: {sub.submitter_name || '未知'}</div>
-                      <div>来源: {sub.source_instance}</div>
-                      <div>时间: {sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}</div>
-                    </div>
-                  </Space>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        )}
-      </Spin>
-      
-      {/* 已发布提示词管理 */}
-      <div style={{ marginTop: 32, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text strong>已发布提示词管理 ({publishedItems.length})</Text>
-        <Button icon={<SyncOutlined />} onClick={loadPublishedItems}>
-          刷新
-        </Button>
-      </div>
-      
-      <Spin spinning={publishedLoading}>
-        {publishedItems.length === 0 ? (
-          <Empty description="暂无已发布提示词" />
-        ) : (
-          <Row gutter={[0, gridConfig.gutter]} style={{ marginLeft: 0, marginRight: 0 }}>
-            {publishedItems.map(item => (
-              <Col 
-                key={item.id} 
-                xs={gridConfig.xs} 
-                sm={gridConfig.sm} 
-                md={gridConfig.md} 
-                lg={gridConfig.lg}
-                xl={gridConfig.xl}
-                style={{
-                  paddingLeft: 0,
-                  paddingRight: gridConfig.gutter / 2,
-                  marginBottom: gridConfig.gutter
-                }}
-              >
-                <Card
-                  style={{ borderRadius: 12, border: `1px solid ${token.colorBorderSecondary}` }}
-                  bodyStyle={{ padding: 16 }}
-                  actions={[
-                    <Tooltip title="编辑" key="edit">
+                      <div className="pw-panel-item-main">
+                        <div className="pw-panel-item-title">
+                          <span className="pw-card-name">{sub.name}</span>
+                          <span className="pw-row-cat">
+                            <span
+                              className="pw-dot"
+                              style={{ background: getCategoryDot(sub.category) }}
+                            />
+                            {getCategoryName(sub.category)}
+                          </span>
+                        </div>
+                        <p className="pw-panel-item-desc">{sub.description || sub.prompt_content || '暂无简介'}</p>
+                        <p className="pw-panel-item-meta">
+                          <span>{sub.submitter_name || '未知投稿者'}</span>
+                          <span>{sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '-'}</span>
+                        </p>
+                      </div>
                       <Button
-                        type="link"
-                        icon={<SettingOutlined />}
-                        onClick={() => openEditModal(item)}
-                      />
-                    </Tooltip>,
-                    <Tooltip title="删除" key="delete">
-                      <Button
-                        type="link"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={() => handleDeleteItem(item)}
-                      />
-                    </Tooltip>,
-                  ]}
-                >
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text strong ellipsis style={{ maxWidth: 120 }}>{item.name}</Text>
-                      {item.is_official && <Tag color="gold">官方</Tag>}
-                    </div>
-                    <Tag color={getCategoryColor(item.category)}>
-                      {getCategoryName(item.category)}
-                    </Tag>
-                    
-                    <Paragraph
-                      type="secondary"
-                      style={{ fontSize: 12, marginBottom: 0 }}
-                      ellipsis={{ rows: 2 }}
-                    >
-                      {item.prompt_content}
-                    </Paragraph>
-                    
-                    <div style={{ fontSize: 11, color: token.colorTextTertiary }}>
-                      <Space>
-                        <span><HeartOutlined /> {item.like_count || 0}</span>
-                        <span><DownloadOutlined /> {item.download_count || 0}</span>
-                      </Space>
-                    </div>
-                  </Space>
-                </Card>
-              </Col>
-            ))}
-          </Row>
-        )}
-      </Spin>
+                        size="small"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openReview(sub);
+                        }}
+                      >
+                        审核
+                      </Button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </Spin>
+          </div>
+        </section>
+
+        {/* 已发布提示词管理 */}
+        <section className="pw-panel">
+          <div className="pw-panel-head">
+            <span className="pw-panel-title">
+              已发布
+              <span className="pw-count">{publishedItems.length}</span>
+            </span>
+            <Tooltip title="刷新已发布列表">
+              <Button
+                type="text"
+                size="small"
+                icon={<SyncOutlined />}
+                aria-label="刷新已发布列表"
+                onClick={loadPublishedItems}
+              />
+            </Tooltip>
+          </div>
+
+          <div className="pw-panel-body">
+            <Spin spinning={publishedLoading}>
+              {publishedItems.length === 0 ? (
+                <div className="pw-panel-empty">
+                  <InboxOutlined className="pw-panel-empty-icon" />
+                  <span>还没有发布任何提示词</span>
+                </div>
+              ) : (
+                <div className="pw-panel-list">
+                  {publishedItems.map(item => (
+                    <article className="pw-panel-item" key={item.id}>
+                      <div className="pw-panel-item-main">
+                        <div className="pw-panel-item-title">
+                          <span className="pw-card-name">{item.name}</span>
+                          {item.is_official && <span className="pw-official">官方</span>}
+                          <span className="pw-row-cat">
+                            <span
+                              className="pw-dot"
+                              style={{ background: getCategoryDot(item.category) }}
+                            />
+                            {getCategoryName(item.category)}
+                          </span>
+                        </div>
+                        <p className="pw-panel-item-desc">{item.description || item.prompt_content}</p>
+                        <p className="pw-panel-item-meta">
+                          <span><HeartOutlined /> {item.like_count || 0}</span>
+                          <span><DownloadOutlined /> {item.download_count || 0}</span>
+                          {!item.is_official && (
+                            <span>{item.author_name || '匿名'}</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="pw-panel-item-actions">
+                        <Tooltip title="编辑">
+                          <Button
+                            type="text"
+                            size="small"
+                            aria-label="编辑提示词"
+                            icon={<SettingOutlined />}
+                            onClick={() => openEditModal(item)}
+                          />
+                        </Tooltip>
+                        <Tooltip title="删除">
+                          <Button
+                            type="text"
+                            size="small"
+                            aria-label="删除提示词"
+                            icon={<DeleteOutlined />}
+                            onClick={() => handleDeleteItem(item)}
+                          />
+                        </Tooltip>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </Spin>
+          </div>
+        </section>
+      </div>
     </div>
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <div
+      className="prompt-workshop-page"
+      style={themeVars}
+    >
       {/* 固定区域：标题 + Tabs切换栏 + 筛选栏 */}
-      <div style={{ flexShrink: 0 }}>
+      <div className="pw-fixed">
         {/* 标题和操作区 */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: isMobile ? '12px 0' : '16px 0',
-          marginBottom: isMobile ? 12 : 16,
-          borderBottom: `1px solid ${token.colorBorderSecondary}`,
-          flexWrap: 'wrap',
-          gap: 12,
-        }}>
-          <h2 style={{ margin: 0, fontSize: isMobile ? 18 : 24, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <CloudOutlined />
-            提示词工坊
-            {serviceStatus?.mode === 'server' && (
-              <Badge status="success" text="服务端模式" style={{ marginLeft: 8, fontSize: 12 }} />
-            )}
-          </h2>
+        <div className="pw-header">
+          <div className="pw-header-main">
+            <CloudOutlined style={{ fontSize: 20, color: token.colorTextSecondary, marginTop: 2 }} />
+            <div style={{ minWidth: 0 }}>
+              <h2 className="pw-title">提示词工坊</h2>
+              <p className="pw-subtitle">
+                浏览社区分享的提示词，一键导入为你的写作风格。
+              </p>
+            </div>
+          </div>
           <Button
             type="primary"
             icon={<CloudUploadOutlined />}
             onClick={() => setIsSubmitModalOpen(true)}
           >
-            分享我的提示词
+            分享提示词
           </Button>
         </div>
 
         {/* Tabs 切换栏（不含内容） */}
-        <Tabs
-          activeKey={activeTab}
-          onChange={key => {
-            setActiveTab(key);
-            if (key === 'submissions') loadMySubmissions();
-            if (key === 'admin') {
-              loadAdminSubmissions();
-              loadPublishedItems();
-            }
-          }}
-          items={[
-            { key: 'browse', label: '浏览工坊' },
-            {
-              key: 'submissions',
-              label: (
-                <Badge count={mySubmissions.filter(s => s.status === 'pending').length} size="small">
-                  我的提交
-                </Badge>
-              ),
-            },
-            ...(isServerAdmin ? [{
-              key: 'admin',
-              label: (
-                <Badge count={adminPendingCount} size="small">
-                  <span><SettingOutlined /> 管理审核</span>
-                </Badge>
-              ),
-            }] : []),
-          ]}
-          tabBarStyle={{ marginBottom: 16 }}
-        />
+        <div className="pw-tabs-row">
+          <Tabs
+            className="pw-tabs"
+            activeKey={activeTab}
+            onChange={key => {
+              setActiveTab(key);
+              if (key === 'submissions') loadMySubmissions();
+              if (key === 'admin') {
+                loadAdminSubmissions();
+                loadPublishedItems();
+              }
+            }}
+            items={[
+              { key: 'browse', label: '浏览工坊' },
+              {
+                key: 'submissions',
+                label: (
+                  <Badge count={mySubmissions.filter(s => s.status === 'pending').length} size="small" offset={[8, -2]}>
+                    我的提交
+                  </Badge>
+                ),
+              },
+              ...(isServerAdmin ? [{
+                key: 'admin',
+                label: (
+                  <Badge count={adminPendingCount} size="small" offset={[8, -2]}>
+                    <span>管理审核</span>
+                  </Badge>
+                ),
+              }] : []),
+            ]}
+          />
+          {serviceStatus?.mode === 'server' && (
+            <span className="pw-server-mode">
+              <span className="pw-server-dot" />
+              服务端模式
+            </span>
+          )}
+        </div>
 
         {/* 筛选栏（仅在浏览工坊时显示） */}
         {activeTab === 'browse' && renderFilterBar()}
@@ -1073,39 +1053,70 @@ export default function PromptWorkshop() {
         )}
       </div>
 
-      {/* 提交弹窗 */}
-      <Modal
-        title="分享提示词到工坊"
+      {/* 分享抽屉 */}
+      <Drawer
+        title={null}
         open={isSubmitModalOpen}
-        onCancel={() => {
+        onClose={() => {
           setIsSubmitModalOpen(false);
           submitForm.resetFields();
         }}
-        footer={null}
-        width={isMobile ? '100%' : 600}
-        centered
+        closable={false}
+        width={isMobile ? '100%' : 560}
+        className="pw-drawer"
+        style={themeVars}
+        styles={{ body: { padding: 0 } }}
+        footer={(
+          <div className="pw-drawer-foot">
+            <Button onClick={() => {
+              setIsSubmitModalOpen(false);
+              submitForm.resetFields();
+            }}>
+              取消
+            </Button>
+            <Button type="primary" loading={submitLoading} onClick={() => submitForm.submit()}>
+              提交审核
+            </Button>
+          </div>
+        )}
       >
-        <Alert
-          type="info"
-          message="提交须知"
-          description="您的提示词将提交给管理员审核，审核通过后会在工坊中展示。请确保内容原创且不含敏感信息。"
-          style={{ marginBottom: 16 }}
-          showIcon
-        />
-        
+        <div className="pw-drawer-head">
+          <div className="pw-drawer-head-main">
+            <span className="pw-drawer-title">分享提示词</span>
+            <span className="pw-drawer-subtitle">提交后由管理员审核，通过后展示在工坊。</span>
+          </div>
+          <Button
+            type="text"
+            size="small"
+            icon={<CloseOutlined />}
+            aria-label="关闭分享"
+            onClick={() => {
+              setIsSubmitModalOpen(false);
+              submitForm.resetFields();
+            }}
+            style={{ flexShrink: 0, color: token.colorTextTertiary }}
+          />
+        </div>
+
+        <div className="pw-drawer-note">
+          <InfoCircleOutlined style={{ color: token.colorTextTertiary, marginTop: 3 }} />
+          <span>请确保内容原创且不含敏感信息，审核通过后作者署名会公开显示。</span>
+        </div>
+
         <Form
           form={submitForm}
           layout="vertical"
           onFinish={handleSubmit}
+          className="pw-form"
         >
           <Form.Item
             name="name"
             label="名称"
             rules={[{ required: true, message: '请输入名称' }]}
           >
-            <Input placeholder="给您的提示词起个名字" maxLength={50} />
+            <Input placeholder="给提示词起个名字" maxLength={50} showCount />
           </Form.Item>
-          
+
           <Form.Item
             name="category"
             label="分类"
@@ -1117,220 +1128,314 @@ export default function PromptWorkshop() {
               ))}
             </Select>
           </Form.Item>
-          
+
           <Form.Item name="description" label="描述">
-            <TextArea rows={2} placeholder="简要描述这个提示词的用途和效果" maxLength={200} />
+            <TextArea
+              rows={2}
+              placeholder="一句话说明用途，例如：适合节奏紧凑的都市悬疑对话"
+              maxLength={200}
+              showCount
+            />
           </Form.Item>
-          
+
           <Form.Item
             name="prompt_content"
             label="提示词内容"
             rules={[{ required: true, message: '请输入提示词内容' }]}
           >
-            <TextArea rows={6} placeholder="输入完整的提示词内容..." />
+            <TextArea
+              className="pw-prompt-input"
+              rows={12}
+              placeholder="粘贴完整的提示词内容..."
+            />
           </Form.Item>
-          
+
           <Form.Item
             name="author_display_name"
             label="作者署名"
             rules={[{ required: true, message: '请输入作者署名' }]}
-            tooltip="发布后显示的作者名称"
+            extra="审核通过后公开展示"
           >
-            <Input placeholder="请输入作者署名（必填）" maxLength={50} />
+            <Input placeholder="你的笔名" maxLength={50} />
           </Form.Item>
-          
+
           <Form.Item name="tags" label="标签">
-            <Input placeholder="输入标签，多个用逗号分隔，如: 武侠,对话,细腻" />
-          </Form.Item>
-          
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setIsSubmitModalOpen(false);
-                submitForm.resetFields();
-              }}>
-                取消
-              </Button>
-              <Button type="primary" htmlType="submit" loading={submitLoading}>
-                提交审核
-              </Button>
-            </Space>
+            <Input placeholder="逗号分隔，如：武侠, 对话, 细腻" />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
-      {/* 详情弹窗 */}
-      <Modal
-        title={detailItem?.name}
+      {/* 详情抽屉 */}
+      <Drawer
+        title={null}
         open={isDetailModalOpen}
-        onCancel={() => {
+        onClose={() => {
           setIsDetailModalOpen(false);
           setDetailItem(null);
         }}
-        footer={[
-          <Button key="close" onClick={() => setIsDetailModalOpen(false)}>
-            关闭
-          </Button>,
-          <Button
-            key="import"
-            type="primary"
-            icon={<DownloadOutlined />}
-            loading={importingId === detailItem?.id}
-            onClick={() => detailItem && handleImport(detailItem)}
-          >
-            导入到本地
-          </Button>,
-        ]}
-        width={isMobile ? '100%' : 700}
-        centered
+        closable={false}
+        width={isMobile ? '100%' : 560}
+        className="pw-drawer pw-detail-drawer"
+        style={themeVars}
+        styles={{ body: { padding: 0 } }}
+        footer={detailItem ? (
+          <div className="pw-drawer-foot">
+            <Button
+              className="pw-detail-like"
+              icon={detailItem.is_liked ? <HeartFilled /> : <HeartOutlined />}
+              onClick={() => {
+                handleLike(detailItem);
+                setDetailItem(prev => prev ? {
+                  ...prev,
+                  is_liked: !prev.is_liked,
+                  like_count: (prev.like_count || 0) + (prev.is_liked ? -1 : 1),
+                } : prev);
+              }}
+            >
+              {detailItem.like_count || 0}
+            </Button>
+            <Button
+              type="primary"
+              icon={<DownloadOutlined />}
+              loading={importingId === detailItem.id}
+              onClick={() => handleImport(detailItem)}
+            >
+              导入到本地
+            </Button>
+          </div>
+        ) : null}
       >
         {detailItem && (
-          <div>
-            <Space style={{ marginBottom: 16 }} wrap>
-              <Tag color={getCategoryColor(detailItem.category)}>
-                {getCategoryName(detailItem.category)}
-              </Tag>
-              {detailItem.tags?.map(tag => (
-                <Tag key={tag}>{tag}</Tag>
-              ))}
-            </Space>
-            
-            {detailItem.description && (
-              <Paragraph style={{ marginBottom: 16 }}>
-                {detailItem.description}
-              </Paragraph>
-            )}
-            
-            <div style={{
-              backgroundColor: token.colorFillSecondary,
-              padding: 16,
-              borderRadius: 8,
-              marginBottom: 16,
-              maxHeight: 400,
-              overflow: 'auto',
-            }}>
-              <Text strong style={{ display: 'block', marginBottom: 8 }}>提示词内容</Text>
-              <pre style={{
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                margin: 0,
-                fontSize: 13,
-              }}>
-                {detailItem.prompt_content}
-              </pre>
+          <div className="pw-detail">
+            <div className="pw-detail-head">
+              <div className="pw-detail-head-main">
+                <div className="pw-detail-title-row">
+                  <span className="pw-detail-title">{detailItem.name}</span>
+                  {detailItem.is_official && <span className="pw-official">官方</span>}
+                </div>
+                <div className="pw-detail-meta">
+                  <span
+                    className="pw-dot"
+                    style={{ background: getCategoryDot(detailItem.category) }}
+                  />
+                  {getCategoryName(detailItem.category)}
+                  <span className="pw-detail-divider">·</span>
+                  <UserOutlined />
+                  {detailItem.author_name || '匿名'}
+                  <span className="pw-detail-divider">·</span>
+                  <DownloadOutlined />
+                  {detailItem.download_count || 0}
+                </div>
+              </div>
+              <Button
+                type="text"
+                size="small"
+                aria-label="关闭详情"
+                icon={<CloseOutlined />}
+                onClick={() => {
+                  setIsDetailModalOpen(false);
+                  setDetailItem(null);
+                }}
+                style={{ flexShrink: 0, color: token.colorTextTertiary }}
+              />
             </div>
-            
-            <Row gutter={16}>
-              <Col span={8}>
-                <Text type="secondary">作者</Text>
-                <div><UserOutlined /> {detailItem.author_name || '匿名'}</div>
-              </Col>
-              <Col span={8}>
-                <Text type="secondary">点赞</Text>
-                <div><HeartOutlined /> {detailItem.like_count || 0}</div>
-              </Col>
-              <Col span={8}>
-                <Text type="secondary">下载</Text>
-                <div><DownloadOutlined /> {detailItem.download_count || 0}</div>
-              </Col>
-            </Row>
+
+            <div className="pw-detail-body">
+              {detailItem.description && (
+                <p className="pw-detail-desc">{detailItem.description}</p>
+              )}
+
+              {detailItem.tags && detailItem.tags.length > 0 && (
+                <div className="pw-detail-tags">
+                  {detailItem.tags.map(tag => (
+                    <span key={tag} className="pw-chip">{tag}</span>
+                  ))}
+                </div>
+              )}
+
+              <section>
+                <div className="pw-detail-label">提示词内容</div>
+                <div className="pw-detail-prompt">{detailItem.prompt_content}</div>
+              </section>
+            </div>
           </div>
         )}
-      </Modal>
-      {/* 审核弹窗 */}
-      <Modal
-        title={`审核: ${reviewingSubmission?.name}`}
+      </Drawer>
+      {/* 审核抽屉 */}
+      <Drawer
+        title={null}
         open={reviewModalOpen}
-        onCancel={() => {
+        onClose={() => {
           setReviewModalOpen(false);
           setReviewingSubmission(null);
           reviewForm.resetFields();
         }}
-        footer={null}
-        width={700}
-        centered
-      >
-        {reviewingSubmission && (
-          <div>
-            <div style={{
-              backgroundColor: token.colorFillSecondary,
-              padding: 16,
-              borderRadius: 8,
-              marginBottom: 16,
-              maxHeight: 300,
-              overflow: 'auto',
-            }}>
-              <Text strong style={{ display: 'block', marginBottom: 8 }}>提示词内容预览</Text>
-              <pre style={{
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                margin: 0,
-                fontSize: 13,
-              }}>
-                {reviewingSubmission.prompt_content}
-              </pre>
+        closable={false}
+        width={isMobile ? '100%' : 620}
+        className="pw-drawer pw-review-drawer"
+        style={themeVars}
+        styles={{ body: { padding: 0 } }}
+        footer={(
+          <div className="pw-drawer-foot pw-review-foot">
+            <Button
+              onClick={() => {
+                setReviewModalOpen(false);
+                setReviewingSubmission(null);
+                reviewForm.resetFields();
+              }}
+            >
+              取消
+            </Button>
+            <div className="pw-review-foot-right">
+              <Button danger loading={reviewLoading} onClick={() => handleReview('reject')}>
+                拒绝
+              </Button>
+              <Button type="primary" loading={reviewLoading} onClick={() => handleReview('approve')}>
+                通过
+              </Button>
             </div>
-            
-            <Form form={reviewForm} layout="vertical">
-              <Form.Item name="category" label="分类（可修改）">
-                <Select>
-                  {categoryOptions.map(cat => (
-                    <Select.Option key={cat.value} value={cat.value}>{cat.label}</Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-              
-              <Form.Item name="tags" label="标签（可修改，逗号分隔）">
-                <Input placeholder="武侠, 对话, 细腻" />
-              </Form.Item>
-              
-              <Form.Item name="review_note" label="审核备注">
-                <TextArea rows={2} placeholder="拒绝时请填写原因..." />
-              </Form.Item>
-              
-              <Form.Item>
-                <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-                  <Button onClick={() => setReviewModalOpen(false)}>
-                    取消
-                  </Button>
-                  <Button danger loading={reviewLoading} onClick={() => handleReview('reject')}>
-                    拒绝
-                  </Button>
-                  <Button type="primary" loading={reviewLoading} onClick={() => handleReview('approve')}>
-                    通过
-                  </Button>
-                </Space>
-              </Form.Item>
-            </Form>
           </div>
         )}
-      </Modal>
+      >
+        <div className="pw-drawer-head pw-review-head">
+          <div className="pw-drawer-head-main">
+            <span className="pw-drawer-title">{reviewingSubmission?.name || '审核投稿'}</span>
+            <span className="pw-drawer-subtitle">
+              {reviewingSubmission?.submitter_name || '未知投稿者'}
+              {reviewingSubmission?.created_at
+                ? ` · ${new Date(reviewingSubmission.created_at).toLocaleDateString()}`
+                : ''}
+            </span>
+          </div>
+          <Button
+            type="text"
+            size="small"
+            icon={<CloseOutlined />}
+            aria-label="关闭审核"
+            onClick={() => {
+              setReviewModalOpen(false);
+              setReviewingSubmission(null);
+              reviewForm.resetFields();
+            }}
+            style={{ flexShrink: 0, color: token.colorTextTertiary }}
+          />
+        </div>
 
-      {/* 添加官方提示词弹窗 */}
-      <Modal
-        title="添加官方提示词"
+        {reviewingSubmission && (
+          <>
+            <div className="pw-review-meta">
+              <span className="pw-row-cat">
+                <span
+                  className="pw-dot"
+                  style={{ background: getCategoryDot(reviewingSubmission.category) }}
+                />
+                {getCategoryName(reviewingSubmission.category)}
+              </span>
+              {reviewingSubmission.tags?.length ? (
+                <span className="pw-review-tags">
+                  {reviewingSubmission.tags.map(tag => (
+                    <span className="pw-chip" key={tag}>{tag}</span>
+                  ))}
+                </span>
+              ) : null}
+            </div>
+
+            {reviewingSubmission.description && (
+              <p className="pw-review-desc">{reviewingSubmission.description}</p>
+            )}
+
+            <div className="pw-review-block">
+              <div className="pw-review-label">提示词内容</div>
+              <div className="pw-review-prompt">{reviewingSubmission.prompt_content}</div>
+            </div>
+
+            <Form form={reviewForm} layout="vertical" className="pw-form pw-form--flush">
+              <div className="pw-review-form-row">
+                <Form.Item name="category" label="分类">
+                  <Select>
+                    {categoryOptions.map(cat => (
+                      <Select.Option key={cat.value} value={cat.value}>{cat.label}</Select.Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+
+                <Form.Item name="tags" label="标签" extra="逗号分隔">
+                  <Input placeholder="武侠, 对话, 细腻" />
+                </Form.Item>
+              </div>
+
+              <Form.Item name="review_note" label="审核备注" extra="拒绝时建议填写原因，会展示给投稿者">
+                <TextArea rows={2} placeholder="例如：内容与现有提示词重复" />
+              </Form.Item>
+            </Form>
+          </>
+        )}
+      </Drawer>
+
+      {/* 添加官方提示词抽屉 */}
+      <Drawer
+        title={null}
         open={addOfficialModalOpen}
-        onCancel={() => {
+        onClose={() => {
           setAddOfficialModalOpen(false);
           addOfficialForm.resetFields();
         }}
-        footer={null}
-        width={600}
-        centered
+        closable={false}
+        width={isMobile ? '100%' : 560}
+        className="pw-drawer"
+        style={themeVars}
+        styles={{ body: { padding: 0 } }}
+        footer={(
+          <div className="pw-drawer-foot">
+            <Button onClick={() => {
+              setAddOfficialModalOpen(false);
+              addOfficialForm.resetFields();
+            }}>
+              取消
+            </Button>
+            <Button type="primary" loading={addOfficialLoading} onClick={() => addOfficialForm.submit()}>
+              添加
+            </Button>
+          </div>
+        )}
       >
+        <div className="pw-drawer-head">
+          <div className="pw-drawer-head-main">
+            <span className="pw-drawer-title">添加官方提示词</span>
+            <span className="pw-drawer-subtitle">官方条目直接发布到工坊，所有用户可见。</span>
+          </div>
+          <Button
+            type="text"
+            size="small"
+            icon={<CloseOutlined />}
+            aria-label="关闭添加"
+            onClick={() => {
+              setAddOfficialModalOpen(false);
+              addOfficialForm.resetFields();
+            }}
+            style={{ flexShrink: 0, color: token.colorTextTertiary }}
+          />
+        </div>
+
+        <div className="pw-drawer-note">
+          <InfoCircleOutlined style={{ color: token.colorTextTertiary, marginTop: 3 }} />
+          <span>官方提示词无需审核，保存后立即出现在工坊列表并标记为「官方」。</span>
+        </div>
+
         <Form
           form={addOfficialForm}
           layout="vertical"
           onFinish={handleAddOfficial}
+          className="pw-form"
         >
           <Form.Item
             name="name"
             label="名称"
             rules={[{ required: true, message: '请输入名称' }]}
           >
-            <Input placeholder="提示词名称" maxLength={50} />
+            <Input placeholder="给提示词起个名字" maxLength={50} showCount />
           </Form.Item>
-          
+
           <Form.Item
             name="category"
             label="分类"
@@ -1342,37 +1447,71 @@ export default function PromptWorkshop() {
               ))}
             </Select>
           </Form.Item>
-          
+
           <Form.Item name="description" label="描述">
-            <TextArea rows={2} placeholder="简要描述" maxLength={200} />
+            <TextArea
+              rows={2}
+              placeholder="一句话说明用途，例如：适合节奏紧凑的都市悬疑对话"
+              maxLength={200}
+              showCount
+            />
           </Form.Item>
-          
+
           <Form.Item
             name="prompt_content"
             label="提示词内容"
             rules={[{ required: true, message: '请输入提示词内容' }]}
           >
-            <TextArea rows={8} placeholder="输入完整的提示词内容..." />
+            <TextArea
+              className="pw-prompt-input"
+              rows={12}
+              placeholder="粘贴完整的提示词内容..."
+            />
           </Form.Item>
-          
-          <Form.Item name="tags" label="标签">
-            <Input placeholder="逗号分隔，如: 武侠,对话,细腻" />
-          </Form.Item>
-          
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => {
-                setAddOfficialModalOpen(false);
-                addOfficialForm.resetFields();
-              }}>
-                取消
-              </Button>
-              <Button type="primary" htmlType="submit" loading={addOfficialLoading}>
-                添加
-              </Button>
-            </Space>
+
+          <Form.Item name="tags" label="标签" extra="逗号分隔，用于筛选与检索">
+            <Input placeholder="如：武侠, 对话, 细腻" />
           </Form.Item>
         </Form>
+      </Drawer>
+
+      {/* 重复导入处理 */}
+      <Modal
+        open={Boolean(duplicateConflict)}
+        onCancel={() => {
+          if (duplicateActionLoading) return;
+          setDuplicateConflict(null);
+        }}
+        footer={null}
+        width={420}
+        centered
+        title="写作风格中已有相同提示词"
+      >
+        <p className="pw-duplicate-desc">
+          {duplicateConflict && duplicateConflict.existingName === duplicateConflict.item.name
+            ? `「${duplicateConflict.item.name}」已经在你的写作风格中，内容完全一致，无需重复导入。`
+            : `写作风格「${duplicateConflict?.existingName}」与「${duplicateConflict?.item.name}」的提示词内容完全一致，无需重复导入。`}
+        </p>
+        <p className="pw-duplicate-hint">你仍可以覆盖现有风格，或另建一份副本。</p>
+        <div className="pw-duplicate-actions">
+          <Button onClick={() => setDuplicateConflict(null)} disabled={duplicateActionLoading}>
+            保留现有
+          </Button>
+          <Button
+            loading={duplicateActionLoading}
+            onClick={() => handleDuplicateAction('copy')}
+          >
+            另建副本
+          </Button>
+          <Button
+            type="primary"
+            danger
+            loading={duplicateActionLoading}
+            onClick={() => handleDuplicateAction('overwrite')}
+          >
+            覆盖现有
+          </Button>
+        </div>
       </Modal>
 
       {/* 编辑提示词弹窗 */}

@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import type { ReactNode } from 'react';
-import { Alert, Button, Dropdown, Space, Spin, theme } from 'antd';
+import { useEffect, useState } from 'react';
+import './BookshelfPage.css';
+import { Button, Dropdown, Spin, theme } from 'antd';
 import {
-  BookOutlined,
   BulbOutlined,
   ClockCircleOutlined,
+  CloseOutlined,
   DeleteOutlined,
   DownloadOutlined,
   InfoCircleOutlined,
@@ -13,7 +13,6 @@ import {
   PictureOutlined,
   PlusOutlined,
   ReloadOutlined,
-  RocketOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import type { Project } from '../types';
@@ -23,7 +22,7 @@ interface BookshelfPageProps {
   loading: boolean;
   projects: Project[];
   showApiTip: boolean;
-  setShowApiTip: (show: boolean) => void;
+  onDismissApiTip: () => void;
   exportableProjectsCount: number;
   onOpenImportModal: () => void;
   onOpenExportModal: () => void;
@@ -33,12 +32,8 @@ interface BookshelfPageProps {
   onEnterProject: (project: Project) => void;
   onDeleteProject: (projectId: string) => void;
   onGenerateCover: (project: Project, overwrite?: boolean) => void | Promise<void>;
+  onRefreshProjects?: () => void | Promise<unknown>;
   onDownloadCover: (project: Project) => void;
-  formatWordCount: (count: number) => string;
-  getProgress: (current: number, target: number) => number;
-  getProgressColor: (progress: number) => string;
-  getDisplayStatus: (status: string, progress: number) => string;
-  getStatusTag: (status: string) => ReactNode;
   formatDate: (dateString: string) => string;
 }
 
@@ -47,7 +42,7 @@ export default function BookshelfPage({
   loading,
   projects,
   showApiTip,
-  setShowApiTip,
+  onDismissApiTip,
   exportableProjectsCount,
   onOpenImportModal,
   onOpenExportModal,
@@ -57,31 +52,68 @@ export default function BookshelfPage({
   onEnterProject,
   onDeleteProject,
   onGenerateCover,
+  onRefreshProjects,
   onDownloadCover,
-  formatWordCount,
-  getProgress,
-  getProgressColor,
-  getDisplayStatus,
-  getStatusTag,
   formatDate,
 }: BookshelfPageProps) {
   const { token } = theme.useToken();
   const [coverBusyIds, setCoverBusyIds] = useState<Record<string, boolean>>({});
 
+  const hasGeneratingCover = projects.some((project) => project.cover_status === 'generating');
+
+  // 生成任务在服务端执行，轮询以便刷新页面后仍能自动拿到生成完成的封面
+  useEffect(() => {
+    if (!hasGeneratingCover || !onRefreshProjects) return;
+    const timer = window.setInterval(() => {
+      void onRefreshProjects();
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [hasGeneratingCover, onRefreshProjects]);
+
   const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
+
+  const formatWords = (count: number) => {
+    if (!count) return '0 字';
+    if (count < 10000) return `${count} 字`;
+    return `${(count / 10000).toFixed(1).replace(/\.0$/, '')} 万字`;
+  };
 
   const totalWords = projects.reduce((sum, p) => sum + (p.current_words || 0), 0);
   const completedCount = projects.filter(
-    (p) => getProgress(p.current_words || 0, p.target_words || 0) >= 100
+    (p) => (p.target_words || 0) > 0 && (p.current_words || 0) >= (p.target_words || 0)
   ).length;
   const writingCount = projects.length - completedCount;
 
-  const coverPalettes = [
-    { bg: alphaColor(token.colorPrimary, 0.14), fg: token.colorPrimary },
-    { bg: alphaColor(token.colorSuccess, 0.14), fg: token.colorSuccess },
-    { bg: alphaColor(token.colorWarning, 0.16), fg: token.colorWarning },
-    { bg: alphaColor(token.colorInfo, 0.14), fg: token.colorInfo },
+  const stats = [
+    { label: '作品', value: `${projects.length}` },
+    { label: '创作中', value: `${writingCount}` },
+    { label: '已完结', value: `${completedCount}` },
+    { label: '累计字数', value: formatWords(totalWords) },
   ];
+
+  const coverPalettes = [
+    { bg: '#26333F', deep: '#152029', fg: '#F1E9DB', accent: '#C9AA78' },
+    { bg: '#5B392F', deep: '#35201B', fg: '#F7EDDF', accent: '#D8B98C' },
+    { bg: '#344433', deep: '#1D291C', fg: '#F0EBDD', accent: '#C5B782' },
+    { bg: '#3B3E45', deep: '#23252B', fg: '#F1EFE9', accent: '#C2B296' },
+    { bg: '#D8CEBC', deep: '#C3B59F', fg: '#302A23', accent: '#8B6A45' },
+  ];
+
+  const getCoverTitleStyle = (title: string) => {
+    const length = Array.from(title || '').length;
+    const fontSize = length <= 6
+      ? 26
+      : length <= 12
+        ? 22
+        : length <= 20
+          ? 19
+          : length <= 32
+            ? 17
+            : length <= 48
+              ? 15
+              : 13;
+    return { fontSize, lineClamp: 6 };
+  };
 
   const handleGenerateCover = async (project: Project, overwrite: boolean) => {
     if (coverBusyIds[project.id]) return;
@@ -93,78 +125,40 @@ export default function BookshelfPage({
     }
   };
 
-  const stats = [
-    { label: '作品', value: `${projects.length}` },
-    { label: '创作中', value: `${writingCount}` },
-    { label: '已完结', value: `${completedCount}` },
-    { label: '累计字数', value: `${formatWordCount(totalWords)}` },
-  ];
-
-  const renderEmptyState = () => (
+  const renderApiTip = () => (
     <div
       style={{
-        display: 'flex',
+        display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: isMobile ? '52vh' : 'calc(100vh - 320px)',
-        padding: isMobile ? '24px 0 40px' : '24px 0 48px',
+        gap: 6,
+        height: 28,
+        padding: '0 3px 0 10px',
+        borderRadius: 999,
+        border: `1px solid ${token.colorBorderSecondary}`,
+        background: token.colorBgContainer,
+        fontSize: 12,
+        color: token.colorTextSecondary,
+        flexShrink: 0,
       }}
     >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: 440,
-          textAlign: 'center',
-          background: token.colorBgContainer,
-          border: `1px solid ${token.colorBorderSecondary}`,
-          borderRadius: 16,
-          padding: isMobile ? '32px 24px' : '40px 44px',
-        }}
+      <InfoCircleOutlined style={{ fontSize: 12, color: token.colorTextTertiary }} />
+      <span style={{ whiteSpace: 'nowrap' }}>尚未配置 AI 接口</span>
+      <Button
+        type="link"
+        size="small"
+        onClick={onGoSettings}
+        style={{ padding: '0 2px', height: 20, fontSize: 12, fontWeight: 500 }}
       >
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            margin: '0 auto 18px',
-            borderRadius: 16,
-            background: alphaColor(token.colorPrimary, 0.12),
-            color: token.colorPrimary,
-            display: 'grid',
-            placeItems: 'center',
-            fontSize: 24,
-          }}
-        >
-          <BookOutlined />
-        </div>
-
-        <div style={{ fontSize: 16, fontWeight: 600, color: token.colorText }}>书架还是空的</div>
-        <div
-          style={{
-            fontSize: 13,
-            color: token.colorTextSecondary,
-            lineHeight: 1.7,
-            marginTop: 8,
-          }}
-        >
-          从一个想法开始，或导入你已经在写的故事。
-        </div>
-
-        <Space size={10} style={{ marginTop: 24, justifyContent: 'center', width: '100%' }}>
-          <Button type="primary" icon={<RocketOutlined />} onClick={onStartWizard} size={isMobile ? 'middle' : 'large'}>
-            快速开始
-          </Button>
-          <Button icon={<BulbOutlined />} onClick={onOpenInspiration} size={isMobile ? 'middle' : 'large'}>
-            灵感模式
-          </Button>
-        </Space>
-
-        <div style={{ marginTop: 16, fontSize: 12, color: token.colorTextTertiary }}>
-          已有成稿？
-          <Button type="link" size="small" style={{ padding: '0 4px', fontSize: 12 }} onClick={onOpenImportModal}>
-            导入项目
-          </Button>
-        </div>
-      </div>
+        去配置
+      </Button>
+      <Button
+        type="text"
+        size="small"
+        icon={<CloseOutlined style={{ fontSize: 10 }} />}
+        onClick={onDismissApiTip}
+        aria-label="关闭提醒"
+        style={{ width: 20, height: 20, minWidth: 20, color: token.colorTextTertiary }}
+      />
     </div>
   );
 
@@ -175,66 +169,82 @@ export default function BookshelfPage({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        height: '100%',
-        minHeight: isMobile ? 180 : 220,
-        borderRadius: 12,
-        border: `1px dashed ${token.colorBorder}`,
+        minWidth: 0,
+        padding: 0,
+        border: 0,
         background: 'transparent',
-        color: token.colorTextTertiary,
+        textAlign: 'left',
         cursor: 'pointer',
-        transition: 'border-color 0.2s ease, color 0.2s ease, background 0.2s ease',
-        padding: 16,
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = token.colorPrimary;
-        e.currentTarget.style.color = token.colorPrimary;
-        e.currentTarget.style.background = alphaColor(token.colorPrimary, 0.04);
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = token.colorBorder;
-        e.currentTarget.style.color = token.colorTextTertiary;
-        e.currentTarget.style.background = 'transparent';
+        font: 'inherit',
       }}
     >
       <div
         style={{
-          width: 34,
-          height: 34,
-          borderRadius: '50%',
-          border: `1px solid currentColor`,
+          position: 'relative',
+          aspectRatio: '2 / 3',
+          borderRadius: 8,
+          border: `1.5px dashed ${token.colorBorder}`,
+          background: alphaColor(token.colorPrimary, 0.025),
           display: 'grid',
           placeItems: 'center',
-          fontSize: 15,
+          transition: 'border-color 0.2s ease, background 0.2s ease',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = token.colorPrimary;
+          e.currentTarget.style.background = alphaColor(token.colorPrimary, 0.05);
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = token.colorBorder;
+          e.currentTarget.style.background = alphaColor(token.colorPrimary, 0.025);
         }}
       >
-        <PlusOutlined />
+        <div
+          style={{
+            width: 46,
+            height: 46,
+            borderRadius: '50%',
+            border: `1px solid ${token.colorBorderSecondary}`,
+            background: token.colorBgContainer,
+            color: token.colorTextSecondary,
+            display: 'grid',
+            placeItems: 'center',
+            fontSize: 17,
+          }}
+        >
+          <PlusOutlined />
+        </div>
       </div>
-      <span style={{ fontSize: 13 }}>新建作品</span>
+
+      <div style={{ padding: isMobile ? '8px 2px 0' : '10px 2px 0' }}>
+        <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 600, color: token.colorText }}>新建作品</div>
+        <div style={{ marginTop: 2, fontSize: 11, color: token.colorTextTertiary }}>从零开始一段新故事</div>
+      </div>
     </button>
   );
 
   const renderProjectCard = (project: Project, index: number) => {
-    const progress = getProgress(project.current_words || 0, project.target_words || 0);
-    const progressColor = progress > 0 ? getProgressColor(progress) : token.colorBorder;
-    const displayStatus = getDisplayStatus(project.status, progress);
     const coverReady = project.cover_status === 'ready' && !!project.cover_image_url;
+    const hasCoverImage = !!project.cover_image_url;
     const coverBusy = coverBusyIds[project.id] || project.cover_status === 'generating';
     const coverFailed = project.cover_status === 'failed' && !coverBusy;
     const wizardIncomplete = project.wizard_status === 'incomplete';
     const palette = coverPalettes[index % coverPalettes.length];
-    const tags = project.genre
-      ? project.genre.split(/[,、，]/).map((t) => t.trim()).filter(Boolean)
-      : [];
-    const initial = project.title?.trim().charAt(0) || '书';
+    const coverTitle = project.title || '未命名';
+    const coverTitleStyle = getCoverTitleStyle(coverTitle);
+    const categoryLabel = (project.genre || project.theme || '未分类').trim();
+    const statusLabel = project.status === 'completed'
+      ? '已完结'
+      : project.status === 'revising'
+        ? '修订中'
+        : project.status === 'planning'
+          ? '筹备中'
+          : '创作中';
 
     const menuItems = [
       {
         key: 'cover',
-        icon: coverReady ? <ReloadOutlined /> : <PictureOutlined />,
-        label: coverReady ? '重新生成封面' : '生成封面',
+        icon: coverBusy ? <LoadingOutlined /> : coverReady ? <ReloadOutlined /> : <PictureOutlined />,
+        label: coverBusy ? '封面生成中…' : coverReady ? '重新生成封面' : '生成封面',
         disabled: coverBusy,
       },
       {
@@ -253,7 +263,7 @@ export default function BookshelfPage({
     ];
 
     return (
-      <div
+      <article
         key={project.id}
         role="button"
         tabIndex={0}
@@ -267,91 +277,244 @@ export default function BookshelfPage({
         style={{
           display: 'flex',
           flexDirection: 'column',
-          borderRadius: 12,
-          overflow: 'hidden',
-          background: token.colorBgContainer,
-          border: `1px solid ${token.colorBorderSecondary}`,
+          minWidth: 0,
           cursor: 'pointer',
-          transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
+          transition: 'transform 0.2s ease',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.transform = 'translateY(-3px)';
-          e.currentTarget.style.boxShadow = `0 12px 24px ${alphaColor(token.colorText, 0.1)}`;
-          e.currentTarget.style.borderColor = alphaColor(token.colorPrimary, 0.4);
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.transform = 'translateY(0)';
-          e.currentTarget.style.boxShadow = 'none';
-          e.currentTarget.style.borderColor = token.colorBorderSecondary;
         }}
       >
         <div
           style={{
             position: 'relative',
-            aspectRatio: '3 / 4',
-            background: palette.bg,
+            aspectRatio: '2 / 3',
+            borderRadius: 8,
             overflow: 'hidden',
+            background: palette.bg,
+            boxShadow: '0 14px 30px rgba(28, 24, 18, 0.16), 0 3px 8px rgba(28, 24, 18, 0.09)',
           }}
         >
-          {coverReady ? (
-            <img
-              src={project.cover_image_url || ''}
-              alt={project.title}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            />
+          {hasCoverImage ? (
+            <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+              {/* 模糊同图铺底，保证封面完整显示且不出现空白边 */}
+              <img
+                src={project.cover_image_url || ''}
+                alt=""
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  inset: -18,
+                  width: 'calc(100% + 36px)',
+                  height: 'calc(100% + 36px)',
+                  objectFit: 'cover',
+                  filter: 'blur(18px) saturate(1.1)',
+                  transform: 'scale(1.04)',
+                }}
+              />
+              <div
+                aria-hidden="true"
+                style={{ position: 'absolute', inset: 0, background: 'rgba(20, 16, 12, 0.18)' }}
+              />
+              <img
+                src={project.cover_image_url || ''}
+                alt={project.title}
+                style={{
+                  position: 'relative',
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  display: 'block',
+                }}
+              />
+            </div>
           ) : (
             <div
               style={{
+                position: 'relative',
                 width: '100%',
                 height: '100%',
-                display: 'grid',
-                placeItems: 'center',
+                overflow: 'hidden',
+                background: `linear-gradient(145deg, ${palette.bg} 0%, ${palette.deep} 100%)`,
                 color: palette.fg,
-                fontFamily: 'Georgia, "Times New Roman", "Noto Serif SC", serif',
-                fontSize: isMobile ? 40 : 52,
-                fontWeight: 700,
-                opacity: 0.9,
               }}
             >
-              {coverBusy ? <LoadingOutlined spin style={{ fontSize: 28 }} /> : initial}
+              <div
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      opacity: 0.26,
+                      backgroundImage:
+                        'repeating-linear-gradient(0deg, rgba(255,255,255,0.035) 0, rgba(255,255,255,0.035) 1px, transparent 1px, transparent 4px)',
+                    }}
+              />
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      top: -42,
+                      right: -38,
+                      width: 132,
+                      height: 132,
+                      borderRadius: '50%',
+                      border: `1px solid ${alphaColor(palette.accent, 0.24)}`,
+                      boxShadow: `0 0 0 22px ${alphaColor(palette.accent, 0.045)}, 0 0 0 44px ${alphaColor(palette.accent, 0.03)}`,
+                    }}
+                  />
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: 9,
+                      background:
+                        'linear-gradient(90deg, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.12) 55%, rgba(255,255,255,0.14) 100%)',
+                      boxShadow: 'inset -1px 0 0 rgba(0,0,0,0.16)',
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'relative',
+                      zIndex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      height: '100%',
+                      padding: isMobile
+                        ? '17px 14px 14px 22px'
+                        : '19px 16px 15px 24px',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 7,
+                        color: alphaColor(palette.fg, 0.66),
+                        fontSize: 8.5,
+                        fontWeight: 600,
+                        letterSpacing: '0.16em',
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          width: 13,
+                          height: 1,
+                          background: palette.accent,
+                          opacity: 0.8,
+                        }}
+                      />
+                      NOVEL
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        flex: 1,
+                        alignItems: 'center',
+                        minHeight: 0,
+                        padding: '10px 0 12px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: '-webkit-box',
+                          WebkitBoxOrient: 'vertical',
+                          WebkitLineClamp: coverTitleStyle.lineClamp,
+                          overflow: 'hidden',
+                          fontFamily: '"Songti SC", "Noto Serif SC", Georgia, "Times New Roman", serif',
+                          fontSize: coverTitleStyle.fontSize,
+                          fontWeight: 600,
+                          letterSpacing: '0.025em',
+                          lineHeight: 1.32,
+                          overflowWrap: 'anywhere',
+                          wordBreak: 'break-word',
+                          textWrap: 'balance',
+                        }}
+                        title={coverTitle}
+                      >
+                        {coverTitle}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-end',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        paddingTop: 9,
+                        borderTop: `1px solid ${alphaColor(palette.accent, 0.34)}`,
+                        color: alphaColor(palette.fg, 0.72),
+                        fontSize: 9,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      <span
+                        style={{
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          letterSpacing: '0.06em',
+                        }}
+                        title={categoryLabel}
+                      >
+                        {categoryLabel}
+                      </span>
+                      <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+                        {statusLabel} · {formatWords(project.current_words || 0)}
+                      </span>
+                    </div>
+                  </div>
             </div>
           )}
 
-          <div style={{ position: 'absolute', top: 8, left: 8 }}>
-            {getStatusTag(displayStatus)}
-          </div>
+          {hasCoverImage && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                background:
+                  'linear-gradient(90deg, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.08) 5%, rgba(255,255,255,0.06) 8%, rgba(255,255,255,0) 16%)',
+                boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.08)',
+              }}
+            />
+          )}
 
-          <div
-            style={{ position: 'absolute', top: 6, right: 6 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Dropdown
-              trigger={['click']}
-              menu={{
-                items: menuItems,
-                onClick: ({ key, domEvent }) => {
-                  domEvent.stopPropagation();
-                  if (key === 'cover') void handleGenerateCover(project, true);
-                  if (key === 'download') onDownloadCover(project);
-                  if (key === 'delete') onDeleteProject(project.id);
-                },
+          {coverBusy && (
+            <div
+              role="status"
+              aria-live="polite"
+              aria-label={`正在为《${coverTitle}》生成封面`}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                // 占位封面内部有 z-index 层级，这里必须抬到最上层才能盖住文字
+                zIndex: 3,
+                background:
+                  'linear-gradient(180deg, rgba(12, 12, 14, 0.58) 0%, rgba(12, 12, 14, 0.74) 55%, rgba(12, 12, 14, 0.86) 100%)',
+                backdropFilter: 'blur(6px) saturate(0.9)',
+                WebkitBackdropFilter: 'blur(6px) saturate(0.9)',
               }}
             >
-              <Button
-                size="small"
-                shape="circle"
-                icon={<MoreOutlined />}
-                style={{
-                  background: alphaColor(token.colorBgContainer, 0.88),
-                  borderColor: token.colorBorderSecondary,
-                  color: token.colorTextSecondary,
-                  backdropFilter: 'blur(6px)',
-                }}
-              />
-            </Dropdown>
-          </div>
+              <div className="cover-glitch-loader">
+                <div className="glitch" data-glitch="封面生成中...">
+                  封面生成中...
+                </div>
+              </div>
+            </div>
+          )}
 
-          {wizardIncomplete && (
+          {!coverBusy && wizardIncomplete && (
             <div
               style={{
                 position: 'absolute',
@@ -360,20 +523,19 @@ export default function BookshelfPage({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 4,
-                fontSize: 11,
+                fontSize: 10,
                 color: token.colorTextSecondary,
                 background: alphaColor(token.colorBgContainer, 0.92),
-                border: `1px solid ${token.colorBorderSecondary}`,
                 borderRadius: 999,
-                padding: '1px 8px',
+                padding: '1px 7px',
               }}
             >
-              <ClockCircleOutlined style={{ fontSize: 10 }} />
+              <ClockCircleOutlined style={{ fontSize: 9 }} />
               向导未完成
             </div>
           )}
 
-          {coverFailed && !wizardIncomplete && (
+          {!coverBusy && coverFailed && !wizardIncomplete && (
             <div
               style={{
                 position: 'absolute',
@@ -381,12 +543,11 @@ export default function BookshelfPage({
                 left: 8,
                 display: 'inline-flex',
                 alignItems: 'center',
-                fontSize: 11,
+                fontSize: 10,
                 color: token.colorError,
                 background: alphaColor(token.colorBgContainer, 0.92),
-                border: `1px solid ${alphaColor(token.colorError, 0.3)}`,
                 borderRadius: 999,
-                padding: '1px 8px',
+                padding: '1px 7px',
               }}
             >
               封面生成失败
@@ -394,168 +555,161 @@ export default function BookshelfPage({
           )}
         </div>
 
-        <div style={{ padding: isMobile ? '10px 10px 12px' : '11px 12px 13px' }}>
-          <div
-            style={{
-              fontSize: isMobile ? 13 : 14,
-              fontWeight: 600,
-              color: token.colorText,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-            title={project.title}
-          >
-            {project.title}
-          </div>
-
-          <div
-            style={{
-              marginTop: 3,
-              fontSize: 11,
-              color: token.colorTextTertiary,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {tags.length > 0 ? tags.slice(0, 2).join(' · ') : '未分类'} · {formatDate(project.updated_at)}
-          </div>
-
-          <div
-            style={{
-              marginTop: 10,
-              height: 4,
-              borderRadius: 999,
-              background: alphaColor(token.colorText, 0.08),
-              overflow: 'hidden',
-            }}
-          >
-            <div
+        <div style={{ padding: isMobile ? '8px 2px 0' : '10px 2px 0', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+            <span
               style={{
-                width: `${progress}%`,
-                height: '100%',
-                borderRadius: 999,
-                background: progressColor,
-                transition: 'width 0.3s ease',
+                flex: 1,
+                minWidth: 0,
+                fontSize: isMobile ? 13 : 14,
+                fontWeight: 600,
+                color: token.colorText,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
               }}
-            />
+              title={project.title}
+            >
+              {project.title}
+            </span>
+            <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+              <Dropdown
+                trigger={['click']}
+                menu={{
+                  items: menuItems,
+                  onClick: ({ key, domEvent }) => {
+                    domEvent.stopPropagation();
+                    if (key === 'cover') void handleGenerateCover(project, true);
+                    if (key === 'download') onDownloadCover(project);
+                    if (key === 'delete') onDeleteProject(project.id);
+                  },
+                }}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<MoreOutlined />}
+                  aria-label="作品操作"
+                  style={{
+                    width: 22,
+                    height: 22,
+                    minWidth: 22,
+                    flexShrink: 0,
+                    color: token.colorTextSecondary,
+                  }}
+                />
+              </Dropdown>
+            </div>
           </div>
 
           <div
             style={{
-              marginTop: 6,
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
+              marginTop: 2,
               fontSize: 11,
-              color: token.colorTextSecondary,
+              color: coverBusy ? token.colorPrimary : token.colorTextTertiary,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
             }}
           >
-            <span>
-              {formatWordCount(project.current_words || 0)} / {formatWordCount(project.target_words || 0)}
-            </span>
-            <span style={{ color: progressColor, fontWeight: 600 }}>{progress}%</span>
+            {coverBusy ? (
+              <>
+                <LoadingOutlined spin style={{ fontSize: 10 }} />
+                <span>封面生成中，请稍候</span>
+              </>
+            ) : (
+              <>{formatDate(project.updated_at)} · {formatWords(project.current_words || 0)}</>
+            )}
           </div>
         </div>
-      </div>
+      </article>
     );
   };
 
+  const isEmpty = projects.length === 0;
+  const gridColumns = isMobile
+    ? `repeat(auto-fill, minmax(0, ${isEmpty ? 148 : 134}px))`
+    : `repeat(auto-fill, ${isEmpty ? 164 : 152}px)`;
+
   return (
     <div>
-      {projects.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-            marginBottom: isMobile ? 14 : 18,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 14 : 22, flexWrap: 'wrap' }}>
-            {stats.map((item) => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                <span style={{ fontSize: 12, color: token.colorTextTertiary }}>{item.label}</span>
-                <span style={{ fontSize: isMobile ? 17 : 19, fontWeight: 600, color: token.colorText }}>
-                  {item.value}
-                </span>
-              </div>
-            ))}
-          </div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          flexWrap: 'wrap',
+          marginBottom: isMobile ? 14 : 18,
+          minHeight: 28,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 14 : 22, flexWrap: 'wrap' }}>
+          {projects.length > 0 && stats.map((item) => (
+            <div key={item.label} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ fontSize: 12, color: token.colorTextTertiary }}>{item.label}</span>
+              <span style={{ fontSize: isMobile ? 16 : 18, fontWeight: 600, color: token.colorText }}>
+                {item.value}
+              </span>
+            </div>
+          ))}
+        </div>
 
-          <Space size={8} wrap>
-            <Button size={isMobile ? 'small' : 'middle'} icon={<UploadOutlined />} onClick={onOpenImportModal}>
-              导入
-            </Button>
-            <Button
-              size={isMobile ? 'small' : 'middle'}
-              icon={<DownloadOutlined />}
-              disabled={exportableProjectsCount === 0}
-              onClick={onOpenExportModal}
-            >
-              导出
-            </Button>
-            <Button size={isMobile ? 'small' : 'middle'} type="primary" icon={<PlusOutlined />} onClick={onStartWizard}>
-              新建作品
-            </Button>
-          </Space>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          {showApiTip && renderApiTip()}
+          <Button
+            type="text"
+            size="small"
+            icon={<BulbOutlined />}
+            onClick={onOpenInspiration}
+            style={{ color: token.colorTextSecondary }}
+          >
+            灵感
+          </Button>
+          <Button
+            type="text"
+            size="small"
+            icon={<UploadOutlined />}
+            onClick={onOpenImportModal}
+            style={{ color: token.colorTextSecondary }}
+          >
+            导入
+          </Button>
+          <Button
+            type="text"
+            size="small"
+            icon={<DownloadOutlined />}
+            disabled={exportableProjectsCount === 0}
+            onClick={onOpenExportModal}
+            style={{ color: token.colorTextSecondary }}
+          >
+            导出
+          </Button>
+        </div>
+      </div>
+
+      {isEmpty && !loading && (
+        <div style={{ marginBottom: 14, fontSize: 12, color: token.colorTextTertiary }}>
+          书架还是空的，点「新建作品」开始第一本。
         </div>
       )}
 
-      {showApiTip && projects.length === 0 && (
-        <Alert
-          message="还没有配置 AI 接口"
-          description={
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: isMobile ? 'column' : 'row',
-                alignItems: isMobile ? 'flex-start' : 'center',
-                gap: isMobile ? 10 : 16,
-                justifyContent: 'space-between',
-              }}
-            >
-              <span style={{ fontSize: isMobile ? 12 : 13 }}>
-                创作前需要先填写模型供应商、API Key 与模型名称。
-              </span>
-              <Button size="small" type="primary" onClick={onGoSettings} style={{ flexShrink: 0 }}>
-                去配置
-              </Button>
-            </div>
-          }
-          type="info"
-          showIcon
-          icon={<InfoCircleOutlined style={{ color: token.colorTextSecondary }} />}
-          closable
-          onClose={() => setShowApiTip(false)}
-          style={{
-            marginBottom: 16,
-            borderRadius: 10,
-            background: token.colorBgContainer,
-            border: `1px solid ${token.colorBorderSecondary}`,
-          }}
-        />
-      )}
-
       <Spin spinning={loading}>
-        {projects.length === 0 ? (
-          renderEmptyState()
-        ) : (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fill, minmax(180px, 1fr))',
-              gap: isMobile ? 12 : 16,
-              paddingBottom: 24,
-            }}
-          >
-            {renderNewCard()}
-            {projects.map((project, index) => renderProjectCard(project, index))}
-          </div>
-        )}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: gridColumns,
+            gap: isMobile ? 12 : 18,
+            justifyContent: 'start',
+            paddingBottom: 24,
+          }}
+        >
+          {projects.map((project, index) => renderProjectCard(project, index))}
+          {renderNewCard()}
+        </div>
       </Spin>
     </div>
   );

@@ -4,6 +4,24 @@
 
 const API_BASE = '/api/tasks';
 
+/**
+ * 后台任务接口统一错误处理。
+ * 这些接口使用原生 fetch，不会经过 axios 拦截器，因此这里补齐 401 跳转。
+ */
+async function readTaskError(response: Response, fallback: string): Promise<string> {
+  const err = await response.json().catch(() => ({ detail: response.statusText }));
+  const detail = typeof err.detail === 'string' ? err.detail : fallback;
+
+  if (response.status === 401) {
+    if (window.location.pathname !== '/login') {
+      const redirect = `${window.location.pathname}${window.location.search}`;
+      window.location.href = `/login?redirect=${encodeURIComponent(redirect)}`;
+    }
+  }
+
+  return detail || fallback;
+}
+
 export interface TaskStatus {
   id: string;
   task_type: string;
@@ -67,7 +85,7 @@ interface ActiveBatchTaskResponse {
 export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
   const response = await fetch(`${API_BASE}/${taskId}`);
   if (!response.ok) {
-    throw new Error(`查询任务状态失败: ${response.statusText}`);
+    throw new Error(await readTaskError(response, '查询任务状态失败'));
   }
   return response.json();
 }
@@ -84,7 +102,7 @@ export async function getProjectTasks(
   if (taskType) params.set('task_type', taskType);
   const response = await fetch(`${API_BASE}?${params}`);
   if (!response.ok) {
-    throw new Error(`获取任务列表失败: ${response.statusText}`);
+    throw new Error(await readTaskError(response, '获取任务列表失败'));
   }
   return response.json();
 }
@@ -95,7 +113,7 @@ export async function getProjectTasks(
 export async function getActiveBatchTasks(projectId: string): Promise<BatchTaskStatus[]> {
   const response = await fetch(`/api/chapters/project/${projectId}/batch-generate/active`);
   if (!response.ok) {
-    throw new Error(`获取批量生成任务失败: ${response.statusText}`);
+    throw new Error(await readTaskError(response, '获取批量生成任务失败'));
   }
   const data: ActiveBatchTaskResponse = await response.json();
   return data.has_active_task && data.task ? [data.task] : [];
@@ -118,7 +136,7 @@ export async function cancelBatchTask(batchId: string): Promise<void> {
 export async function cancelTask(taskId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/${taskId}/cancel`, { method: 'POST' });
   if (!response.ok) {
-    throw new Error(`取消任务失败: ${response.statusText}`);
+    throw new Error(await readTaskError(response, '取消任务失败'));
   }
 }
 
@@ -128,7 +146,7 @@ export async function cancelTask(taskId: string): Promise<void> {
 export async function clearProjectTasks(projectId: string): Promise<{ deleted_count: number }> {
   const response = await fetch(`${API_BASE}/project/${projectId}/clear`, { method: 'DELETE' });
   if (!response.ok) {
-    throw new Error(`清理任务记录失败: ${response.statusText}`);
+    throw new Error(await readTaskError(response, '清理任务记录失败'));
   }
   return response.json();
 }
@@ -139,7 +157,7 @@ export async function clearProjectTasks(projectId: string): Promise<{ deleted_co
 export async function deleteTask(taskId: string): Promise<void> {
   const response = await fetch(`${API_BASE}/${taskId}`, { method: 'DELETE' });
   if (!response.ok) {
-    throw new Error(`删除任务失败: ${response.statusText}`);
+    throw new Error(await readTaskError(response, '删除任务失败'));
   }
 }
 
@@ -235,9 +253,7 @@ export async function generateOutlineBackground(
   });
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ detail: response.statusText }));
-    onError(err.detail || '创建任务失败', {} as TaskStatus);
-    return () => {};
+    throw new Error(await readTaskError(response, '创建任务失败'));
   }
 
   const { task_id } = await response.json();
@@ -276,9 +292,7 @@ export async function generateChapterBackground(
   });
 
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ detail: response.statusText }));
-    onError(err.detail || '创建章节生成任务失败', {} as TaskStatus);
-    return () => {};
+    throw new Error(await readTaskError(response, '创建章节生成任务失败'));
   }
 
   const { task_id } = await response.json();

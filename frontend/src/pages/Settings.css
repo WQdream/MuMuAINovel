@@ -1,0 +1,1139 @@
+/* API 设置：延续项目内的暖灰轻量面板语言 */
+.st-page {
+  --st-radius-panel: 14px;
+  --st-radius-card: 11px;
+  --st-radius-control: 8px;
+  --st-ok: #4f7a52;
+  min-height: 100%;
+  padding: 26px 24px 72px;
+  background: var(--st-page-bg);
+  color: var(--st-text);
+}
+
+.st-shell {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+/* 页头 */
+.st-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 2px 18px;
+}
+
+.st-header-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  min-width: 0;
+}
+
+.st-header-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 31px;
+  margin-top: 2px;
+  border: 1px solid var(--st-border);
+  border-radius: 9px;
+  background: var(--st-card-bg);
+  color: var(--st-secondary);
+  font-size: 15px;
+}
+
+.st-header-copy {
+  min-width: 0;
+}
+
+.st-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.st-title {
+  margin: 0;
+  color: var(--st-text);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+
+.st-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 21px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--st-fill);
+  color: var(--st-secondary);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.st-status::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.st-status--saved {
+  background: color-mix(in srgb, var(--st-ok) 10%, transparent);
+  color: var(--st-ok);
+}
+
+.st-subtitle {
+  margin: 4px 0 0;
+  color: var(--st-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 已保存的文本模型配置 */
+.st-models {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.st-models-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.st-models-head-copy {
+  min-width: 0;
+}
+
+.st-models-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--st-text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.st-models-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 19px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--st-fill);
+  color: var(--st-secondary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.st-models-desc {
+  margin-top: 2px;
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.st-models-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 176px;
+  padding: 32px 24px;
+  border: 1px solid var(--st-border);
+  border-radius: var(--st-radius-card);
+  background:
+    radial-gradient(120% 90% at 50% -20%, color-mix(in srgb, var(--st-accent) 6%, transparent), transparent 62%),
+    color-mix(in srgb, var(--st-text) 1.2%, var(--st-card-bg));
+  text-align: center;
+}
+
+.st-models-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 3px;
+  border: 1px solid var(--st-border);
+  border-radius: 10px;
+  background: var(--st-card-bg);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--st-text) 4%, transparent);
+  color: var(--st-tertiary);
+  font-size: 15px;
+}
+
+.st-models-empty-title {
+  color: var(--st-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.st-models-empty-desc {
+  max-width: 360px;
+  margin: 0;
+  color: var(--st-tertiary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.st-models-hint {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--st-accent) 16%, var(--st-border));
+  border-radius: var(--st-radius-control);
+  background: color-mix(in srgb, var(--st-accent) 4%, transparent);
+  color: var(--st-secondary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* 章节分析角色行：轻量、单行，与列表标题同层级 */
+.st-role-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: -4px;
+}
+
+.st-role-row-label {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.st-role-row-label .anticon {
+  font-size: 11px;
+}
+
+.st-role-row-label:hover {
+  color: var(--st-secondary);
+}
+
+.st-role-row-select {
+  width: auto;
+  min-width: 180px;
+  max-width: 360px;
+  flex-shrink: 0;
+}
+
+.st-role-row-select .ant-select-selector {
+  border-color: var(--st-border) !important;
+  border-radius: 6px !important;
+  background: var(--st-card-bg) !important;
+  box-shadow: none !important;
+}
+
+.st-role-row-select .ant-select-selection-item,
+.st-role-row-select .ant-select-selection-placeholder {
+  font-size: 11.5px;
+}
+
+.st-model-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: 12px;
+}
+
+.st-model-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 13px 14px 10px;
+  border: 1px solid var(--st-border);
+  border-radius: var(--st-radius-card);
+  background: var(--st-card-bg);
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.22s ease,
+    background 0.16s ease,
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.st-model-card:hover {
+  border-color: color-mix(in srgb, var(--st-accent) 30%, var(--st-border));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--st-text) 9%, transparent);
+  transform: translateY(-3px);
+}
+
+.st-model-card:active {
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--st-text) 7%, transparent);
+  transform: translateY(-1px);
+}
+
+.st-model-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--st-accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.st-model-card--active {
+  border-color: color-mix(in srgb, var(--st-ok) 58%, var(--st-border));
+  background: color-mix(in srgb, var(--st-ok) 4%, var(--st-card-bg));
+}
+
+.st-model-card--active:hover {
+  border-color: color-mix(in srgb, var(--st-ok) 72%, var(--st-border));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--st-text) 9%, transparent);
+}
+
+.st-model-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.st-model-card-name {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  color: var(--st-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.st-model-card-flags {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.st-model-card-role {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--st-border);
+  border-radius: 999px;
+  color: var(--st-tertiary);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.st-model-card-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--st-ok) 12%, transparent);
+  color: var(--st-ok);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.st-model-card-model {
+  overflow: hidden;
+  margin-top: 6px;
+  color: var(--st-secondary);
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.st-model-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 7px;
+  color: var(--st-tertiary);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.st-model-card-quota {
+  color: color-mix(in srgb, var(--st-ok) 82%, var(--st-secondary));
+  font-weight: 550;
+}
+
+.st-model-card-quota--empty {
+  color: var(--st-danger);
+}
+
+.st-model-card-note {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 7px 0 0;
+  color: var(--st-tertiary);
+  font-size: 11px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.st-model-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--st-border);
+  cursor: default;
+}
+
+.st-model-card-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--st-ok);
+  font-size: 11px;
+}
+
+.st-model-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.st-model-card-actions .ant-btn {
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: var(--st-tertiary);
+  font-size: 11px;
+  box-shadow: none;
+}
+
+.st-model-card-actions .ant-btn:not(:disabled):hover {
+  background: var(--st-fill) !important;
+  color: var(--st-text) !important;
+}
+
+/* 服务商圆点：卡片头部的小色块，按渠道区分（用户端与管理后台共用） */
+.st-provider-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--st-tertiary);
+}
+
+.st-provider-dot--mumu {
+  background: #7a8f6f;
+}
+
+.st-provider-dot--openai {
+  background: #5f7a8f;
+}
+
+.st-provider-dot--gemini {
+  background: #8f7a5f;
+}
+
+.st-provider-dot--anthropic {
+  background: #8f6f5f;
+}
+
+.st-provider-dot--xiaomi_mimo {
+  background: #7f6f96;
+}
+
+/* 文本模型配置抽屉 */
+.st-drawer-body {
+  padding: 22px 24px 28px;
+  background: var(--st-card-bg);
+}
+
+.st-drawer .ant-drawer-header {
+  border-bottom: 1px solid var(--st-border);
+  background: var(--st-card-bg);
+}
+
+.st-drawer .ant-drawer-title {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.st-drawer .ant-drawer-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--st-border);
+  background: var(--st-card-bg);
+}
+
+.st-drawer .st-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.st-drawer .st-section--last {
+  margin-bottom: 0;
+}
+
+.st-drawer .st-form {
+  max-width: none;
+}
+
+.st-drawer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.st-drawer-footer-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.st-drawer-test {
+  margin-bottom: 18px;
+  font-size: 12px;
+}
+
+/* 公共配置概览：只展示对用户有意义的运行参数 */
+.st-shared-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.st-shared-meta-item {
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid var(--st-border);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--st-text) 1.4%, var(--st-card-bg));
+}
+
+.st-shared-meta-item dt {
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.st-shared-meta-item dd {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--st-text);
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-shared-meta-mono {
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+}
+
+@media (max-width: 520px) {
+  .st-shared-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* 主面板 */
+.st-panel {
+  overflow: hidden;
+  border: 1px solid var(--st-border);
+  border-radius: var(--st-radius-panel);
+  background: var(--st-card-bg);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--st-text) 3%, transparent);
+}
+
+/* Tabs */
+.st-tabs .ant-tabs-nav {
+  margin: 0;
+  padding: 0 22px;
+  background: color-mix(in srgb, var(--st-text) 1.1%, var(--st-card-bg));
+}
+
+.st-tabs .ant-tabs-nav::before {
+  border-bottom-color: var(--st-border);
+}
+
+.st-tabs .ant-tabs-tab {
+  gap: 0;
+  padding: 15px 1px 13px;
+  color: var(--st-tertiary);
+  font-size: 12.5px;
+  transition: color 0.16s ease;
+}
+
+.st-tabs .ant-tabs-tab + .ant-tabs-tab {
+  margin-left: 28px;
+}
+
+.st-tabs .ant-tabs-tab:hover {
+  color: var(--st-text);
+}
+
+.st-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--st-text);
+  font-weight: 600;
+}
+
+.st-tabs .ant-tabs-ink-bar {
+  height: 2px;
+  background: var(--st-accent);
+}
+
+.st-tabs .ant-tabs-content-holder {
+  min-width: 0;
+}
+
+.st-tab-body {
+  padding: 24px 26px 26px;
+}
+
+.st-form {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* 小节 */
+.st-section + .st-section {
+  margin-top: 26px;
+  padding-top: 24px;
+  border-top: 1px solid var(--st-border);
+}
+
+.st-section-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.st-section-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 7px;
+  background: var(--st-fill);
+  color: var(--st-secondary);
+  font-size: 14px;
+}
+
+.st-section-head-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.st-section-title {
+  margin: 0;
+  color: var(--st-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.st-section-desc {
+  margin: 2px 0 0;
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+/* 字段 */
+.st-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px;
+}
+
+.st-field-full {
+  grid-column: 1 / -1;
+}
+
+.st-form .ant-form-item {
+  margin-bottom: 18px;
+}
+
+.st-form .ant-form-item-label {
+  padding-bottom: 6px;
+}
+
+.st-form .ant-form-item-label > label {
+  height: auto;
+  color: var(--st-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.st-field-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.st-field-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-form .st-field-label-hint {
+  color: var(--st-tertiary);
+  font-size: 12px;
+  cursor: help;
+}
+
+.st-value-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--st-fill);
+  color: var(--st-text);
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.st-form .ant-form-item-extra {
+  padding-top: 5px;
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.st-form .ant-alert {
+  margin-bottom: 18px;
+  border-radius: 9px;
+}
+
+/* 输入控件统一外观 */
+.st-form .ant-input,
+.st-form .ant-input-affix-wrapper,
+.st-form .ant-select-selector,
+.st-form .ant-input-number,
+.st-form .ant-picker {
+  border-color: var(--st-border) !important;
+  background: var(--st-card-bg) !important;
+  box-shadow: none !important;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.st-form .ant-input:hover,
+.st-form .ant-input-affix-wrapper:hover,
+.st-form .ant-select-selector:hover,
+.st-form .ant-input-number:hover,
+.st-form .ant-input-number-affix-wrapper:hover {
+  border-color: color-mix(in srgb, var(--st-accent) 34%, var(--st-border)) !important;
+}
+
+.st-form .ant-input:focus,
+.st-form .ant-input-affix-wrapper-focused,
+.st-form .ant-select-focused .ant-select-selector,
+.st-form .ant-input-number-focused {
+  border-color: var(--st-accent) !important;
+}
+
+.st-input-mono .ant-input,
+.st-input-mono.ant-input,
+.st-input-mono.ant-input-affix-wrapper .ant-input {
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.st-input-unit {
+  color: var(--st-tertiary);
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.st-form .ant-input-number-group-addon {
+  border-color: var(--st-border) !important;
+  background: color-mix(in srgb, var(--st-text) 1.8%, var(--st-card-bg)) !important;
+}
+
+/* 模型选择行 */
+.st-model-row {
+  display: flex;
+  width: 100%;
+}
+
+.st-model-row .ant-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.st-model-row .ant-select-selector {
+  border-radius: var(--st-radius-control) 0 0 var(--st-radius-control) !important;
+}
+
+.st-model-row .st-model-refresh {
+  flex-shrink: 0;
+  color: var(--st-secondary);
+  box-shadow: none;
+}
+
+.st-model-row .st-model-refresh:not(:disabled):hover {
+  color: var(--st-text);
+  background: var(--st-fill) !important;
+}
+
+.st-model-option {
+  padding: 1px 0;
+}
+
+.st-model-option-name {
+  color: var(--st-text);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.st-model-option-desc {
+  margin-top: 1px;
+  color: var(--st-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.st-model-option-icon {
+  color: var(--st-accent);
+}
+
+.st-dropdown-tip {
+  padding: 9px 12px;
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.st-dropdown-tip--error {
+  color: #b4544e;
+}
+
+/* 滑块 */
+.st-form .ant-slider {
+  margin: 12px 7px 26px;
+}
+
+.st-form .ant-slider-track {
+  background: var(--st-accent);
+}
+
+.st-form .ant-slider-handle::after {
+  box-shadow: 0 0 0 2px var(--st-accent);
+}
+
+.st-form .ant-slider-dot {
+  border-color: var(--st-border);
+}
+
+.st-form .ant-slider-dot-active {
+  border-color: var(--st-accent);
+}
+
+.st-form .ant-slider-mark-text {
+  color: var(--st-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 开关行 */
+.st-inline-setting {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 11px;
+  padding: 13px 15px;
+  border: 1px solid var(--st-border);
+  border-radius: var(--st-radius-card);
+  background: color-mix(in srgb, var(--st-text) 1.4%, var(--st-card-bg));
+}
+
+.st-inline-setting-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--st-fill);
+  color: var(--st-secondary);
+  font-size: 12px;
+}
+
+.st-inline-setting-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.st-inline-setting-label {
+  color: var(--st-text);
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.st-inline-setting-desc {
+  margin-top: 1px;
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.st-inline-setting .ant-switch {
+  flex: 0 0 auto;
+}
+
+/* 底部操作条 */
+.st-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--st-border);
+}
+
+.st-form-actions-main,
+.st-form-actions-secondary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.st-form-actions .ant-btn {
+  box-shadow: none;
+}
+
+.st-form-actions-secondary .ant-btn-dangerous.ant-btn-default {
+  border-color: transparent;
+  background: transparent;
+  color: var(--st-tertiary);
+}
+
+.st-form-actions-secondary .ant-btn-dangerous.ant-btn-default:not(:disabled):hover {
+  border-color: color-mix(in srgb, #b4544e 40%, var(--st-border));
+  background: color-mix(in srgb, #b4544e 6%, transparent);
+  color: #b4544e;
+}
+
+/* ============ 图片模型 ============ */
+.st-cover-enable {
+  margin-bottom: -2px;
+}
+
+.st-cover-enable .ant-form-item {
+  margin-bottom: 0;
+}
+
+.st-cover-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--st-border);
+  border-radius: var(--st-radius-card);
+  background: color-mix(in srgb, var(--st-text) 1.4%, var(--st-card-bg));
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.st-cover-status--on {
+  border-color: color-mix(in srgb, var(--st-ok) 26%, var(--st-border));
+  background: color-mix(in srgb, var(--st-ok) 3.5%, var(--st-card-bg));
+}
+
+.st-cover-status-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--st-fill);
+  color: var(--st-secondary);
+  font-size: 14px;
+}
+
+.st-cover-status--on .st-cover-status-icon {
+  background: color-mix(in srgb, var(--st-ok) 11%, transparent);
+  color: var(--st-ok);
+}
+
+.st-cover-status-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.st-cover-status-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--st-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.st-cover-status-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--st-fill);
+  color: var(--st-tertiary);
+  font-size: 10.5px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+
+.st-cover-status--on .st-cover-status-badge {
+  background: color-mix(in srgb, var(--st-ok) 12%, transparent);
+  color: var(--st-ok);
+}
+
+.st-cover-status-copy p {
+  margin: 2px 0 0;
+  color: var(--st-tertiary);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.st-cover-status .ant-switch {
+  flex-shrink: 0;
+}
+
+/* 响应式 */
+@media (max-width: 900px) {
+  .st-field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .st-tab-body {
+    padding: 20px 20px 22px;
+  }
+}
+
+@media (max-width: 640px) {
+  .st-page {
+    padding: 20px 14px 72px;
+  }
+
+  .st-header {
+    padding-bottom: 14px;
+  }
+
+  .st-form {
+    max-width: none;
+  }
+
+  .st-tabs .ant-tabs-nav {
+    padding: 0 14px;
+  }
+
+  .st-tabs .ant-tabs-tab + .ant-tabs-tab {
+    margin-left: 20px;
+  }
+
+  .st-tab-body {
+    padding: 18px 15px 20px;
+  }
+
+  .st-section + .st-section {
+    margin-top: 22px;
+    padding-top: 20px;
+  }
+
+  .st-form-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .st-form-actions-main,
+  .st-form-actions-secondary {
+    width: 100%;
+  }
+
+  .st-form-actions .ant-btn {
+    flex: 1;
+  }
+
+  .st-role-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .st-role-row-select {
+    flex: 1 1 160px;
+    width: auto;
+    max-width: none;
+  }
+
+  .st-model-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .st-models-head > .ant-btn {
+    width: 100%;
+  }
+
+  /* 卡片内的按钮保持紧凑，避免被全局 44px 规则撑成巨块 */
+  .st-model-card .ant-btn {
+    width: auto;
+    min-width: 0;
+    height: 30px;
+    min-height: 30px;
+    padding: 0 10px;
+  }
+
+  .st-model-card-actions .ant-btn {
+    padding: 0 8px;
+  }
+
+  /* 全局移动端样式会把 button 撑到 44px，开关需要保持原有比例 */
+  .st-inline-setting .ant-switch,
+  .st-cover-status .ant-switch,
+  .st-thinking-switch .ant-switch {
+    width: 44px;
+    min-width: 44px;
+    height: 22px;
+    min-height: 22px;
+  }
+}

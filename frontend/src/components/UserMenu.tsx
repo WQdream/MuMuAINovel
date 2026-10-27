@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Dropdown, Avatar, Space, Typography, message, Modal, Form, Input, Button, theme } from 'antd';
-import { UserOutlined, LogoutOutlined, TeamOutlined, CrownOutlined, LockOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, ControlOutlined, CrownOutlined, LockOutlined } from '@ant-design/icons';
 import { authApi } from '../services/api';
 import type { User } from '../types';
 import type { MenuProps } from 'antd';
@@ -48,12 +48,12 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
     }
   };
 
-  const handleShowUserManagement = () => {
+  const handleShowAdminConsole = () => {
     if (!currentUser?.is_admin) {
-      message.warning('只有管理员可以访问用户管理');
+      message.warning('只有管理员可以访问管理后台');
       return;
     }
-    navigate('/user-management');
+    navigate('/admin');
   };
 
   const handleChangePassword = async (values: { oldPassword: string; newPassword: string }) => {
@@ -92,10 +92,10 @@ export default function UserMenu({ showFullInfo = false, compact = false }: User
     },
     ...(currentUser?.is_admin ? [
       {
-        key: 'user-management',
-        icon: <TeamOutlined />,
-        label: '用户管理',
-        onClick: handleShowUserManagement,
+        key: 'admin-console',
+        icon: <ControlOutlined />,
+        label: '管理后台',
+        onClick: handleShowAdminConsole,
       },
       {
         type: 'divider' as const,

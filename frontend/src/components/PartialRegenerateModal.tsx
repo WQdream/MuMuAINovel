@@ -76,6 +76,7 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
     setGeneratedText('');
     setProgress(0);
     setProgressMessage('准备生成...');
+    let streamErrorShown = false;
 
     // 创建 AbortController 用于取消请求
     abortControllerRef.current = new AbortController();
@@ -108,17 +109,25 @@ export const PartialRegenerateModal: React.FC<PartialRegenerateModalProps> = ({
           },
           onError: (error) => {
             console.error('SSE错误:', error);
+            streamErrorShown = true;
             message.error(error || '生成过程中发生错误');
           },
           onComplete: () => {
             setIsGenerating(false);
             setHasGenerated(true);
+            setGeneratedText(prev => {
+              if (!prev.trim()) {
+                message.error('AI 未返回重写内容，请重试或更换模型');
+                setProgressMessage('未生成内容');
+              }
+              return prev;
+            });
           },
         }
       );
     } catch (error) {
       console.error('生成失败:', error);
-      if ((error as Error).name !== 'AbortError') {
+      if ((error as Error).name !== 'AbortError' && !streamErrorShown) {
         message.error('生成失败，请重试');
       }
       setIsGenerating(false);

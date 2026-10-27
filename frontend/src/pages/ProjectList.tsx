@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme, Badge } from 'antd';
-import { BookOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined, MailOutlined, BellOutlined } from '@ant-design/icons';
-import { authApi, projectApi } from '../services/api';
+import { BookOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined, ControlOutlined, BellOutlined } from '@ant-design/icons';
+import { authApi, projectApi, settingsApi } from '../services/api';
 import { useStore } from '../store';
 import { useProjectSync } from '../store/hooks';
 import { eventBus, EventNames } from '../store/eventBus';
@@ -43,7 +43,7 @@ const formatWordCount = (count: number): string => {
   }
 };
 
-type ProjectListView = 'projects' | 'settings' | 'system-settings' | 'mcp' | 'prompts' | 'book-import';
+type ProjectListView = 'projects' | 'settings' | 'system-settings' | 'admin-console' | 'mcp' | 'prompts' | 'book-import';
 
 const parseViewFromSearch = (search: string): ProjectListView => {
   const view = new URLSearchParams(search).get('view');
@@ -62,7 +62,8 @@ export default function ProjectList() {
   const [collapsed, setCollapsed] = useState<boolean>(() => getStoredSidebarCollapsed());
   const [modal, contextHolder] = Modal.useModal();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [showApiTip, setShowApiTip] = useState(true);
+  const [apiConfigured, setApiConfigured] = useState<boolean | null>(null);
+  const [apiTipDismissed, setApiTipDismissed] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [exportModalVisible, setExportModalVisible] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -86,6 +87,33 @@ export default function ProjectList() {
   const { announcements, loading: announcementsLoading, hasUnread: hasUnreadAnnouncements, refresh: refreshAnnouncements, markAllRead: markAllAnnouncementsRead } = useAnnouncements();
 
   const activeView = useMemo<ProjectListView>(() => parseViewFromSearch(location.search), [location.search]);
+  const showApiTip = apiConfigured === false && !apiTipDismissed;
+  const dismissApiTip = useCallback(() => setApiTipDismissed(true), []);
+
+  useEffect(() => {
+    if (activeView !== 'projects') return;
+
+    let cancelled = false;
+    settingsApi.getSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        const provider = (settings.api_provider || '').trim();
+        const model = (settings.llm_model || '').trim();
+        const hasKey = Boolean((settings.api_key || '').trim());
+        // 公共配置由管理员托管密钥，前端拿不到 Key，但配置本身是可用的
+        setApiConfigured(Boolean(
+          provider && model && (hasKey || provider === 'xiaomi_mimo' || settings.shared_config_active)
+        ));
+      })
+      .catch(() => {
+        if (!cancelled) setApiConfigured(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView]);
+
   const cycleThemeMode = () => {
     const nextMode = mode === 'light' ? 'dark' : mode === 'dark' ? 'system' : 'light';
     setMode(nextMode);
@@ -93,6 +121,10 @@ export default function ProjectList() {
   const collapsedThemeIcon = mode === 'light' ? <BulbOutlined /> : mode === 'dark' ? <MoonOutlined /> : <DesktopOutlined />;
 
   const changeView = useCallback((view: ProjectListView) => {
+    if (view === 'admin-console') {
+      navigate('/admin');
+      return;
+    }
     const searchParams = new URLSearchParams(location.search);
     if (view === 'projects') {
       searchParams.delete('view');
@@ -181,7 +213,7 @@ export default function ProjectList() {
 
   const handleGenerateCover = async (project: Project, overwrite: boolean = true) => {
     try {
-      message.loading({ content: `正在为《${project.title}》生成封面...`, key: `cover-${project.id}` });
+      // 生成中的状态由书架卡片上的 loading 覆盖层呈现，避免顶部 toast 一闪而过造成误解
       await projectApi.generateCover(project.id, overwrite);
       message.success({ content: `《${project.title}》封面生成成功`, key: `cover-${project.id}` });
       await refreshProjects();
@@ -243,13 +275,6 @@ export default function ProjectList() {
   const getProgress = (current: number, target: number) => {
     if (!target) return 0;
     return Math.min(Math.round((current / target) * 100), 100);
-  };
-
-  const getProgressColor = (progress: number) => {
-    if (progress >= 80) return token.colorSuccess;
-    if (progress >= 50) return token.colorPrimary;
-    if (progress >= 20) return token.colorWarning;
-    return token.colorTextTertiary;
   };
 
   const formatDate = (dateString: string) => {
@@ -446,7 +471,7 @@ export default function ProjectList() {
     },
     {
       type: 'group' as const,
-      label: '系统设置',
+      label: '设置',
       children: [
         {
           key: 'settings',
@@ -454,9 +479,9 @@ export default function ProjectList() {
           label: 'API 设置',
         },
         ...(isAdmin ? [{
-          key: 'system-settings',
-          icon: <MailOutlined />,
-          label: '系统设置',
+          key: 'admin-console',
+          icon: <ControlOutlined />,
+          label: '管理后台',
         }] : []),
       ],
     },
@@ -489,9 +514,9 @@ export default function ProjectList() {
       label: 'API 设置',
     },
     ...(isAdmin ? [{
-      key: 'system-settings',
-      icon: <MailOutlined />,
-      label: '系统设置',
+      key: 'admin-console',
+      icon: <ControlOutlined />,
+      label: '管理后台',
     }] : []),
   ];
 
@@ -827,7 +852,7 @@ export default function ProjectList() {
               loading={loading}
               projects={projects}
               showApiTip={showApiTip}
-              setShowApiTip={setShowApiTip}
+              onDismissApiTip={dismissApiTip}
               exportableProjectsCount={exportableProjects.length}
               onOpenImportModal={() => setImportModalVisible(true)}
               onOpenExportModal={handleOpenExportModal}
@@ -837,12 +862,8 @@ export default function ProjectList() {
               onEnterProject={handleEnterProject}
               onDeleteProject={handleDelete}
               onGenerateCover={handleGenerateCover}
+              onRefreshProjects={refreshProjects}
               onDownloadCover={handleDownloadCover}
-              formatWordCount={formatWordCount}
-              getProgress={getProgress}
-              getProgressColor={getProgressColor}
-              getDisplayStatus={getDisplayStatus}
-              getStatusTag={getStatusTag}
               formatDate={formatDate}
             />
           )}

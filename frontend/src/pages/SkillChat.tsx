@@ -1,14 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Input, Button, Tag, List, Typography, Space, Spin, message, Tooltip, Tabs, theme } from 'antd';
-import { SendOutlined, RobotOutlined, UserOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import type { CSSProperties } from 'react';
+import { Input, Button, Spin, message, Tooltip, Tabs, theme } from 'antd';
+import {
+  SendOutlined,
+  RobotOutlined,
+  UserOutlined,
+  ThunderboltOutlined,
+  ArrowLeftOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
 import axios from 'axios';
+import './SkillChat.css';
+
 // 使用简单的文本渲染替代 react-markdown
 const MarkdownRender: React.FC<{ content: string }> = ({ content }) => {
-  return <div style={{ whiteSpace: 'pre-wrap' }}>{content}</div>;
+  return <div className="sk-markdown">{content}</div>;
 };
 
 const { TextArea } = Input;
-const { Title, Text, Paragraph } = Typography;
 
 interface Skill {
   template_key: string;
@@ -34,6 +43,15 @@ const SkillChat: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<string>('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const themeVars = {
+    '--sk-text': token.colorText,
+    '--sk-secondary': token.colorTextSecondary,
+    '--sk-tertiary': token.colorTextTertiary,
+    '--sk-border': token.colorBorderSecondary,
+    '--sk-fill': token.colorFillQuaternary,
+    '--sk-card-bg': token.colorBgContainer,
+    '--sk-accent': token.colorPrimary,
+  } as CSSProperties;
 
   useEffect(() => {
     fetchSkills();
@@ -165,248 +183,212 @@ const SkillChat: React.FC = () => {
 
   if (selectedSkill) {
     return (
-      <div style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column', padding: '0 16px', minWidth: 0, overflow: 'hidden' }}>
-        {/* 顶部栏 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
-          <Button size="small" onClick={() => { setSelectedSkill(null); setMessages([]); }}>← 返回</Button>
-          <ThunderboltOutlined style={{ color: '#1890ff' }} />
-          <Text strong>{selectedSkill.template_name}</Text>
-          <Tag color={categoryColors[selectedSkill.category] || '#default'} style={{ marginLeft: 4 }}>{selectedSkill.category}</Tag>
-          <Tooltip title={selectedSkill.description} placement="bottom">
-            <Text
-              type="secondary"
-              style={{
-                fontSize: 12,
-                flex: 1,
-                minWidth: 0,
-                maxWidth: 420,
-              }}
-              ellipsis
-            >
-              {selectedSkill.description}
-            </Text>
-          </Tooltip>
+      <div className="sk-page" style={themeVars}>
+        <div className="sk-chat-head">
+          <Button
+            type="text"
+            size="small"
+            className="sk-back"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => { setSelectedSkill(null); setMessages([]); }}
+          >
+            返回
+          </Button>
+          <div className="sk-chat-head-main">
+            <div className="sk-chat-title-row">
+              <span className="sk-chat-title">{selectedSkill.template_name}</span>
+              <span className="sk-row-cat">
+                <span
+                  className="sk-dot"
+                  style={{ background: categoryColors[selectedSkill.category] || 'var(--sk-accent)' }}
+                />
+                {selectedSkill.category}
+              </span>
+            </div>
+            <p className="sk-chat-subtitle">{selectedSkill.description}</p>
+          </div>
         </div>
 
         {/* 消息区域 */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+        <div className="sk-messages">
           {messages.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#999' }}>
-              <RobotOutlined style={{ fontSize: 48, marginBottom: 16 }} />
-              <div style={{ fontSize: 16, marginBottom: 8 }}>{'已选择「'}{selectedSkill.template_name}{'」'}</div>
-              <div>输入你的需求开始对话，或直接使用触发词：{selectedSkill.triggers.join('、')}</div>
+            <div className="sk-chat-empty">
+              <span className="sk-chat-empty-icon">
+                <RobotOutlined />
+              </span>
+              <p className="sk-chat-empty-title">{selectedSkill.template_name}</p>
+              <p className="sk-chat-empty-desc">
+                输入你的需求开始对话，也可以直接用触发词唤起对应工作流。
+              </p>
+              <div className="sk-trigger-list">
+                {selectedSkill.triggers.map(t => (
+                  <button
+                    type="button"
+                    className="sk-chip sk-chip--action"
+                    key={t}
+                    onClick={() => setInputValue(t)}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {messages.map((msg, idx) => (
-            <div key={idx} style={{
-              display: 'flex', gap: 12, marginBottom: 16,
-              flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-            }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: msg.role === 'user' ? '#1890ff' : '#f0f0f0', color: msg.role === 'user' ? '#fff' : '#333',
-                flexShrink: 0,
-              }}>
+            <div
+              key={idx}
+              className={`sk-msg sk-msg--${msg.role}`}
+            >
+              <span className="sk-avatar">
                 {msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
-              </div>
-              <div style={{
-                maxWidth: '75%', padding: '10px 16px', borderRadius: 12,
-                background: msg.role === 'user' ? '#1890ff' : '#f5f5f5',
-                color: msg.role === 'user' ? '#fff' : '#333',
-              }}>
-                {msg.role === 'assistant' ? (
-                  <div className="markdown-body" style={{ fontSize: 14, lineHeight: 1.7 }}>
-                    <MarkdownRender content={msg.content || '...'} />
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{msg.content}</div>
-                )}
+              </span>
+              <div className="sk-bubble">
+                <MarkdownRender content={msg.content || '...'} />
               </div>
             </div>
           ))}
           {loading && messages[messages.length - 1]?.content === '' && (
-            <div style={{ textAlign: 'center', color: '#999', padding: 8 }}><Spin size="small" /> 思考中...</div>
+            <div className="sk-thinking">
+              <Spin size="small" />
+              <span>正在生成</span>
+            </div>
           )}
           <div ref={messagesEndRef} />
         </div>
 
         {/* 输入区域 */}
-        <div style={{ padding: '12px 0', borderTop: '1px solid #f0f0f0', display: 'flex', gap: 8 }}>
+        <div className="sk-composer">
           <TextArea
+            className="sk-composer-input"
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
             onPressEnter={e => { if (!e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder="输入你的需求..."
-            autoSize={{ minRows: 1, maxRows: 4 }}
+            placeholder="描述你的需求，Shift + Enter 换行"
+            autoSize={{ minRows: 1, maxRows: 6 }}
             disabled={loading}
           />
-          <Button type="primary" icon={<SendOutlined />} onClick={handleSend} loading={loading} />
+          <div className="sk-composer-foot">
+            <span className="sk-composer-hint">
+              {loading ? '生成中，可等待完成' : `触发词：${selectedSkill.triggers.slice(0, 3).join('、')}`}
+            </span>
+            <Button
+              type="primary"
+              className="sk-send"
+              icon={loading ? <StopOutlined /> : <SendOutlined />}
+              onClick={handleSend}
+              loading={loading}
+            >
+              {loading ? '生成中' : '发送'}
+            </Button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const renderSkillList = (items: Skill[]) => (
-    <List
-      grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 4, xl: 4, xxl: 4 }}
-      dataSource={items}
-      renderItem={(skill) => (
-        <List.Item style={{ marginBottom: 16 }}>
-          <Card
-            hoverable
-            onClick={() => handleSkillSelect(skill)}
-            bodyStyle={{ height: '100%', padding: 16 }}
-            style={{
-              cursor: 'pointer',
-              height: '100%',
-              aspectRatio: '4 / 3',
-              minHeight: 210,
-              maxHeight: 260,
-              borderRadius: 14,
-              overflow: 'hidden',
-              border: `1px solid ${token.colorBorderSecondary}`,
-              boxShadow: token.boxShadowTertiary,
-            }}
-          >
-            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12, minWidth: 0 }}>
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 12,
-                    flexShrink: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#fff',
-                    background: `linear-gradient(135deg, ${categoryColors[skill.category] || '#1890ff'}, #8ec5ff)`,
-                    boxShadow: '0 6px 14px rgba(24, 144, 255, 0.22)',
-                  }}
-                >
-                  <ThunderboltOutlined />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <Tooltip title={skill.template_name}>
-                    <Text
-                      strong
-                      style={{
-                        display: 'block',
-                        marginBottom: 6,
-                        fontSize: 15,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {skill.template_name}
-                    </Text>
-                  </Tooltip>
-                  <Tag
-                    color={categoryColors[skill.category] || '#default'}
-                    style={{ maxWidth: '100%', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
-                    {skill.category}
-                  </Tag>
-                </div>
-              </div>
-
-              <Tooltip title={skill.description} placement="bottom">
-                <Paragraph
-                  type="secondary"
-                  ellipsis={{ rows: 3 }}
-                  style={{
-                    flex: 1,
-                    minHeight: 66,
-                    marginBottom: 12,
-                    fontSize: 13,
-                    lineHeight: 1.65,
-                  }}
-                >
-                  {skill.description}
-                </Paragraph>
-              </Tooltip>
-
-              <div
-                style={{
-                  minHeight: 30,
-                  paddingTop: 10,
-                  borderTop: `1px solid ${token.colorBorderSecondary}`,
-                  overflow: 'hidden',
-                }}
-              >
-                <Space size={[4, 4]} wrap>
-                  {skill.triggers.slice(0, 3).map(t => (
-                    <Tooltip key={t} title={t}>
-                      <Tag
-                        style={{
-                          fontSize: 11,
-                          maxWidth: 92,
-                          marginInlineEnd: 0,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {t}
-                      </Tag>
-                    </Tooltip>
-                  ))}
-                  {skill.triggers.length > 3 && (
-                    <Tooltip title={skill.triggers.slice(3).join('、')}>
-                      <Tag style={{ fontSize: 11, marginInlineEnd: 0 }}>+{skill.triggers.length - 3}</Tag>
-                    </Tooltip>
-                  )}
-                </Space>
-              </div>
-            </div>
-          </Card>
-        </List.Item>
-      )}
-    />
-  );
-
   // Skill 选择页
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', minWidth: 0 }}>
-      <div style={{ flexShrink: 0, minWidth: 0, padding: '16px 0', borderBottom: '1px solid #f0f0f0' }}>
-        <Title level={4} style={{ marginBottom: 8 }}><ThunderboltOutlined /> Skill 工具箱</Title>
-        <Paragraph type="secondary" style={{ marginBottom: 0 }}>选择一个 Skill 开始创作对话。每个 Skill 都有专业的写作工作流和知识库。</Paragraph>
+    <div className="sk-page" style={themeVars}>
+      <div className="sk-header">
+        <div className="sk-header-main">
+          <ThunderboltOutlined className="sk-header-icon" />
+          <div style={{ minWidth: 0 }}>
+            <h2 className="sk-title">Skill 工具箱</h2>
+            <p className="sk-subtitle">选择一个 Skill 开始创作对话，每个 Skill 都有独立的写作工作流。</p>
+          </div>
+        </div>
       </div>
 
       {skillsLoading ? (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="sk-loading">
           <Spin />
         </div>
       ) : (
         <>
-          <Tabs
-            activeKey={currentCategory}
-            onChange={setActiveCategory}
-            items={categories.map((category) => ({
-              key: category,
-              label: (
-                <span>
-                  <Tag color={categoryColors[category] || '#default'}>{category}</Tag>
-                  {groupedSkills[category].length} 个 Skill
-                </span>
-              ),
-            }))}
-            style={{ flexShrink: 0, minWidth: 0, maxWidth: '100%' }}
-            tabBarStyle={{ marginBottom: 16 }}
-          />
+          <div className="sk-tabs-row">
+            <Tabs
+              className="sk-tabs"
+              activeKey={currentCategory}
+              onChange={setActiveCategory}
+              items={categories.map((category) => ({
+                key: category,
+                label: (
+                  <span className="sk-tab-label">
+                    <span
+                      className="sk-dot"
+                      style={{ background: categoryColors[category] || 'var(--sk-accent)' }}
+                    />
+                    {category.replace('Skill·', '')}
+                    <span className="sk-tab-count">{groupedSkills[category].length}</span>
+                  </span>
+                ),
+              }))}
+            />
+          </div>
 
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              minWidth: 0,
-              overflowY: 'auto',
-              overflowX: 'hidden',
-              padding: '0 8px',
-            }}
-          >
-            {renderSkillList(currentSkills)}
+          <div className="sk-scroll">
+            {currentSkills.length === 0 ? (
+              <div className="sk-empty">该分类下暂无 Skill</div>
+            ) : (
+              <div className="sk-grid">
+                {currentSkills.map(skill => (
+                  <article
+                    className="sk-card"
+                    key={skill.template_key}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleSkillSelect(skill)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        handleSkillSelect(skill);
+                      }
+                    }}
+                  >
+                    <div className="sk-card-head">
+                      <span
+                        className="sk-card-icon"
+                        style={{
+                          color: categoryColors[skill.category] || 'var(--sk-accent)',
+                        }}
+                      >
+                        <ThunderboltOutlined />
+                      </span>
+                      <div className="sk-card-title">
+                        <span className="sk-card-name" title={skill.template_name}>
+                          {skill.template_name}
+                        </span>
+                        <span className="sk-row-cat">
+                          <span
+                            className="sk-dot"
+                            style={{ background: categoryColors[skill.category] || 'var(--sk-accent)' }}
+                          />
+                          {skill.category.replace('Skill·', '')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <Tooltip title={skill.description} placement="bottom">
+                      <p className="sk-card-desc">{skill.description}</p>
+                    </Tooltip>
+
+                    <div className="sk-card-foot">
+                      <div className="sk-card-triggers">
+                        {skill.triggers.slice(0, 3).map(t => (
+                          <span className="sk-chip" key={t}>{t}</span>
+                        ))}
+                        {skill.triggers.length > 3 && (
+                          <Tooltip title={skill.triggers.slice(3).join('、')}>
+                            <span className="sk-chip sk-chip--more">+{skill.triggers.length - 3}</span>
+                          </Tooltip>
+                        )}
+                      </div>
+                      <span className="sk-card-go">开始</span>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         </>
       )}
