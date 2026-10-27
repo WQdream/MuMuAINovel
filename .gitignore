@@ -81,6 +81,9 @@ backend/data/users.json
 backend/data/admins.json
 backend/storage/
 
+# Local runtime data (generated covers, ChromaDB vectors)
+storage/
+
 # Temporary files
 *.bak
 *.swp
