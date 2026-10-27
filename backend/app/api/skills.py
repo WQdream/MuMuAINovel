@@ -61,6 +61,8 @@ async def list_skills(user: User = Depends(require_login)):
             "category": s["category"],
             "description": s["description"],
             "triggers": s.get("triggers", []),
+            "version": s.get("version", ""),
+            "prompt_chars": len(s.get("content", "")),
         }
         for s in skills
     ]

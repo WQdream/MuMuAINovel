@@ -22,6 +22,17 @@ logger = get_logger(__name__)
 # Skills 目录路径：backend/app/skills/ （本文件在 backend/app/services/ 下）
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "skills")
 
+# 上游 oh-story 的 SKILL.md 会区分「必读」与「按需查阅」，把参考文件拆成几十个小文件。
+# 全量拼接会让单个 Skill 的提示词膨胀到几十万字符，因此按引用关系分级注入：
+# 被 SKILL.md 直接引用的参考文件全文内联，其余只进索引由模型自行取用。
+INLINE_REF_LIMIT = 120_000       # 单个 Skill 内联参考的字符上限
+INDEX_REF_MIN_CHARS = 1_500      # 低于此体积的未引用文件直接内联，不值得为它走索引
+
+# 上游 Skill 假定运行在编程 Agent 里（有 shell、文件系统、subagent）。本项目是 Web 后端，
+# 模型拿不到这些能力，必须显式说明降级方式，否则模型会反复尝试执行脚本或读写文件。
+# 只在正文出现这些宿主假设时注入，用户自建的简单 Skill 不受影响。
+HOST_ENV_MARKERS = ("references/", "scripts/", "spawn", "subagent", "narrative-writer")
+
 
 class _SkillYamlDumper(yaml.SafeDumper):
     pass
@@ -56,7 +67,7 @@ def _parse_yaml_frontmatter(content: str) -> Dict[str, Any]:
         return {}
 
     result: Dict[str, Any] = {}
-    for key in ("name", "display_name", "category", "description", "triggers"):
+    for key in ("name", "display_name", "category", "description", "triggers", "version"):
         value = metadata.get(key)
         if key == "triggers" and isinstance(value, list):
             result[key] = [str(item).strip() for item in value if str(item).strip()]
@@ -64,6 +75,33 @@ def _parse_yaml_frontmatter(content: str) -> Dict[str, Any]:
             result[key] = str(value).strip()
 
     return result
+
+
+def _parse_frontmatter_raw(content: str) -> Dict[str, Any]:
+    """读取 frontmatter 的完整原始字典，用于回写时保留未识别字段"""
+    match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        raw = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _reference_path(refs_dir: str, ref_name: str) -> Optional[str]:
+    """把参考文件名解析为 refs_dir 内的安全路径，越界或非法则返回 None"""
+    if not ref_name or not isinstance(ref_name, str):
+        return None
+    name = ref_name.strip().replace("\\", "/").strip("/")
+    if not name or ".." in name.split("/"):
+        logger.warning(f"忽略非法参考文件名: {ref_name}")
+        return None
+    target = os.path.normpath(os.path.join(refs_dir, f"{name}.md"))
+    if target != os.path.normpath(refs_dir) and not target.startswith(os.path.normpath(refs_dir) + os.sep):
+        logger.warning(f"忽略越出 references 目录的参考文件名: {ref_name}")
+        return None
+    return target
 
 
 def _template_key(name: str) -> str:
@@ -117,6 +155,13 @@ def _format_skill_frontmatter(metadata: Dict[str, Any]) -> str:
         "description": _LiteralString(metadata.get("description", "")),
         "triggers": metadata.get("triggers", []),
     }
+    # 回写时保留上游带来的额外字段（version、metadata.openclaw.source 等 MIT 署名信息）
+    version = str(metadata.get("version", "")).strip()
+    if version:
+        data["version"] = version
+    extra = metadata.get("metadata")
+    if isinstance(extra, dict) and extra:
+        data["metadata"] = extra
     yaml_text = yaml.dump(
         data,
         Dumper=_SkillYamlDumper,
@@ -135,25 +180,140 @@ def _get_skill_body(content: str) -> str:
     return content.strip()
 
 
-def _get_references(skill_dir: str) -> Dict[str, str]:
-    """读取 skill 目录下 references/ 中的所有 .md 文件"""
+def _iter_reference_files(refs_dir: str) -> List[str]:
+    """递归列出 references/ 下所有 .md，返回相对 refs_dir 的路径（不含 .md）"""
+    found: List[str] = []
+    for root, _dirs, files in os.walk(refs_dir):
+        for filename in sorted(files):
+            if not filename.endswith('.md'):
+                continue
+            rel = os.path.relpath(os.path.join(root, filename), refs_dir)
+            found.append(rel[:-3].replace(os.sep, "/"))
+    return sorted(found)
+
+
+def _load_references(skill_dir: str) -> Dict[str, str]:
+    """读取 references/ 下所有 .md（含子目录），key 为相对路径去后缀"""
     refs_dir = os.path.join(skill_dir, "references")
-    references = {}
-    
+    references: Dict[str, str] = {}
+
     if not os.path.isdir(refs_dir):
         return references
-    
-    for filename in sorted(os.listdir(refs_dir)):
-        if filename.endswith('.md'):
-            filepath = os.path.join(refs_dir, filename)
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    ref_name = filename[:-3]  # 去掉 .md 后缀
-                    references[ref_name] = f.read().strip()
-            except Exception as e:
-                logger.warning(f"读取参考文件失败: {filepath}, 错误: {e}")
-    
+
+    for rel in _iter_reference_files(refs_dir):
+        filepath = os.path.join(refs_dir, f"{rel}.md")
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                references[rel] = f.read().strip()
+        except Exception as e:
+            logger.warning(f"读取参考文件失败: {filepath}, 错误: {e}")
+
     return references
+
+
+def _cited_reference_keys(body: str) -> set:
+    """从 SKILL.md 正文提取它显式引用的参考文件名"""
+    if not body:
+        return set()
+    cited = set()
+    # 上游参考文件名含中文，匹配范围要放宽；无法解析的占位路径会在下游按 key 过滤掉
+    for match in re.finditer(r'references/([^\s`“”"\'\(\)\[\]<>，。；：、|]+?)\.md', body):
+        cited.add(match.group(1).strip("/"))
+    return cited
+
+
+def _reference_summary(content: str) -> str:
+    """取参考文件的首个非标题文本行，作为索引用途说明"""
+    for line in content.splitlines():
+        text = line.strip().lstrip("#*>-| ").strip()
+        if len(text) >= 6:
+            return text[:60]
+    return ""
+
+
+def _needs_host_notes(body: str) -> bool:
+    """正文是否假设了编程 Agent 宿主（读写文件、跑脚本、派发 subagent）"""
+    return any(marker in body for marker in HOST_ENV_MARKERS)
+
+
+def _host_env_notes(has_index: bool) -> str:
+    """说明当前 Web 宿主与上游 Agent 宿主的差异，避免模型空转执行脚本或读文件"""
+    ref_rule = (
+        "- 上文「参考资料索引」中的文件未附带，你无法自行读取。若某一步确实依赖缺失的参考内容，"
+        "向作者说明缺少哪一份，凭已有上文与通用网文经验继续，不要虚构该文件的内容。\n"
+        if has_index else
+        "- 只使用上文已附带的参考资料，不要假设有其他参考文件存在。\n"
+    )
+    return f"""
+
+---
+
+## 当前运行环境（Web 创作应用，非编程 Agent）
+
+你现在没有 shell、没有文件系统读写、没有 Node、也没有可派发的 subagent。按以下规则执行本 Skill：
+
+- 正文由作者在对话中提供，或来自应用注入的上下文；不要尝试读写本地文件、创建目录或运行 `node scripts/...`。
+- 文中要求「运行脚本 / 门禁自检 / spawn agent」的环节，按上游约定如实降级为人工语义检查，并在报告的技术备注里写明「本次环境无脚本与 subagent，检查为模型自查，未做机器校验」。不要假装脚本已运行或通过。
+{ref_rule}- 输出直接给正文或报告本身，不要写入文件，也不要输出创建/删除文件的指令。
+"""
+
+
+def _compose_skill_content(body: str, references: Dict[str, str]) -> str:
+    """按引用关系组装提示词：必读全文内联，其余进索引"""
+    if not references:
+        return body
+
+    cited = _cited_reference_keys(body)
+    inline: Dict[str, str] = {}
+    indexed: Dict[str, str] = {}
+    inline_chars = 0
+
+    # 先放 SKILL.md 明确引用的必读文件，再用体积小的顶层文件补齐，
+    # 避免上限被零碎文件占满后把关键参考挤到索引里。
+    def try_inline(key: str) -> bool:
+        nonlocal inline_chars
+        content = references[key]
+        size = len(content)
+        if inline_chars + size > INLINE_REF_LIMIT:
+            return False
+        inline[key] = content
+        inline_chars += size
+        return True
+
+    for key in sorted(k for k in references if k in cited):
+        try_inline(key)
+
+    for key in sorted(k for k in references if k not in inline):
+        # 顶层小文件直接内联；子目录分卡只在被引用时内联
+        if "/" not in key and len(references[key]) < INDEX_REF_MIN_CHARS:
+            try_inline(key)
+
+    for key, content in references.items():
+        if key not in inline:
+            indexed[key] = content
+
+    parts = [body]
+
+    if inline:
+        section = ["\n\n---\n\n## 附录：参考资料知识库\n",
+                   "（以下内容根据用户需求按需引用，不需要全部使用）\n"]
+        for ref_name, ref_content in inline.items():
+            section.append(f"\n### 参考资料：{ref_name}\n\n{ref_content}\n")
+        parts.append("".join(section))
+
+    if indexed:
+        section = ["\n\n---\n\n## 参考资料索引（未随本文附带）\n",
+                   "以下参考文件未内联以控制提示词长度。需要时向作者说明缺失，"
+                   "或依据上文工作流中标注的加载条件判断；不要凭记忆虚构其内容。\n"]
+        for ref_name in sorted(indexed):
+            summary = _reference_summary(indexed[ref_name])
+            section.append(f"- `references/{ref_name}.md`" + (f"：{summary}" if summary else "") + "\n")
+        parts.append("".join(section))
+
+    if _needs_host_notes(body):
+        parts.append(_host_env_notes(bool(indexed)))
+
+    return "".join(parts)
 
 
 def load_skills() -> List[Dict]:
@@ -197,8 +357,8 @@ def load_skills() -> List[Dict]:
             # 获取工作流指令（去掉 YAML 部分）
             body = _get_skill_body(content)
             
-            # 读取参考知识库
-            references = _get_references(skill_dir)
+            # 读取参考知识库（含子目录）
+            references = _load_references(skill_dir)
             
             name = metadata.get('name', skill_name)
             desc = metadata.get('description', '')
@@ -206,15 +366,8 @@ def load_skills() -> List[Dict]:
             category = metadata.get('category') or _infer_category(name)
             triggers = _extract_triggers(name, desc, metadata.get('triggers'))
             
-            # 拼接参考知识库到内容（作为按需加载的附录）
-            if references:
-                ref_section = "\n\n---\n\n## 附录：参考资料知识库\n"
-                ref_section += "（以下内容根据用户需求按需引用，不需要全部使用）\n"
-                for ref_name, ref_content in references.items():
-                    ref_section += f"\n### 参考资料：{ref_name}\n\n{ref_content}\n"
-                full_content = body + ref_section
-            else:
-                full_content = body
+            # 按引用关系分级注入参考知识库，控制提示词长度
+            full_content = _compose_skill_content(body, references)
             
             skill_template = {
                 "template_key": _template_key(name),
@@ -223,6 +376,7 @@ def load_skills() -> List[Dict]:
                 "display_name": display_name,
                 "category": category,
                 "description": desc,
+                "version": metadata.get('version', ''),
                 "parameters": ["user_input"],
                 "content": full_content,
                 "references": references,
@@ -231,7 +385,10 @@ def load_skills() -> List[Dict]:
             }
             
             skills.append(skill_template)
-            logger.info(f"加载 Skill: {name} (分类: {category}, 参考: {len(references)} 个)")
+            logger.info(
+                f"加载 Skill: {name} (分类: {category}, 参考: {len(references)} 个, "
+                f"提示词: {len(full_content)} 字符)"
+            )
             
         except Exception as e:
             logger.error(f"加载 Skill 失败: {skill_name}, 错误: {e}")
@@ -249,7 +406,9 @@ def get_skill_by_trigger(user_input: str) -> Optional[Dict]:
     Returns:
         匹配到的 Skill 模板，未匹配返回 None
     """
-    skills = load_skills()
+    # 每条聊天消息都会走到这里，必须用缓存；新版 skill 有 200+ 参考文件，
+    # 直接 load_skills() 会重复读盘并重新拼装全部提示词。
+    skills = get_all_skills_cached()
     user_input_lower = user_input.lower().strip()
     
     for skill in skills:
@@ -286,7 +445,6 @@ def get_skill_by_trigger(user_input: str) -> Optional[Dict]:
         "去味": ["SKILL_STORY_DESLOP"],
         "太ai了": ["SKILL_STORY_DESLOP"],
         "润色": ["SKILL_STORY_DESLOP"],
-        "浏览器": ["SKILL_BROWSER_CDP"],
     }
     
     for keyword, skill_keys in keyword_map.items():
@@ -346,18 +504,8 @@ def get_skill_detail(skill_key: str) -> Optional[Dict]:
                 with open(skill_md_path, 'r', encoding='utf-8') as f:
                     raw_content = f.read()
 
-            # 读取独立的 references（不拼接到 content 中）
-            standalone_refs = {}
-            refs_dir = os.path.join(skill_dir, "references")
-            if os.path.isdir(refs_dir):
-                for filename in sorted(os.listdir(refs_dir)):
-                    if filename.endswith('.md'):
-                        filepath = os.path.join(refs_dir, filename)
-                        try:
-                            with open(filepath, 'r', encoding='utf-8') as f:
-                                standalone_refs[filename[:-3]] = f.read()
-                        except:
-                            pass
+            # 读取独立的 references（不拼接到 content 中，含子目录）
+            standalone_refs = _load_references(skill_dir)
 
             return {
                 **s,
@@ -432,7 +580,10 @@ def create_skill_files(
         refs_dir = os.path.join(skill_dir, "references")
         os.makedirs(refs_dir, exist_ok=True)
         for ref_name, ref_content in references.items():
-            ref_path = os.path.join(refs_dir, f"{ref_name}.md")
+            ref_path = _reference_path(refs_dir, ref_name)
+            if not ref_path:
+                continue
+            os.makedirs(os.path.dirname(ref_path), exist_ok=True)
             with open(ref_path, 'w', encoding='utf-8') as f:
                 f.write(ref_content)
     
@@ -474,6 +625,7 @@ def update_skill_files(
     # 解析现有元数据
     metadata = _parse_yaml_frontmatter(raw)
     name = metadata.get('name', '')
+    raw_metadata = _parse_frontmatter_raw(raw)
     
     # 更新 SKILL.md
     final_desc = description if description is not None else metadata.get('description', '')
@@ -489,6 +641,9 @@ def update_skill_files(
         "category": final_category.strip(),
         "description": final_desc.strip(),
         "triggers": final_triggers,
+        # 保留上游 frontmatter 字段，避免管理后台保存时抹掉版本号与来源署名
+        "version": raw_metadata.get("version", ""),
+        "metadata": raw_metadata.get("metadata", {}),
     })
     new_content = f"{frontmatter}\n\n{final_body.strip()}"
     
@@ -500,16 +655,21 @@ def update_skill_files(
         refs_dir = os.path.join(skill_dir, "references")
         # 删除旧的 reference 文件
         if os.path.isdir(refs_dir):
-            for f in os.listdir(refs_dir):
-                if f.endswith('.md'):
-                    os.remove(os.path.join(refs_dir, f))
+            for rel in _iter_reference_files(refs_dir):
+                try:
+                    os.remove(os.path.join(refs_dir, f"{rel}.md"))
+                except OSError as e:
+                    logger.warning(f"删除旧参考文件失败: {rel}, 错误: {e}")
         else:
             os.makedirs(refs_dir, exist_ok=True)
-        
+
         # 写入新的 references
         for ref_name, ref_content in references.items():
             if ref_content.strip():  # 只写入非空内容
-                ref_path = os.path.join(refs_dir, f"{ref_name}.md")
+                ref_path = _reference_path(refs_dir, ref_name)
+                if not ref_path:
+                    continue
+                os.makedirs(os.path.dirname(ref_path), exist_ok=True)
                 with open(ref_path, 'w', encoding='utf-8') as f:
                     f.write(ref_content)
     

@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/zenstory-ai/oh-story-claudecode",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2025-2026 oh-story-claudecode",
+  "tag": "v0.9.1",
+  "commit": "70d1cf426f8cbe3d374e2b06e4c2cbdbd986da06",
+  "released_at": "2026-10-26",
+  "synced_at": "2026-10-27",
+  "skills": [
+    "story-deslop",
+    "story-long-write",
+    "story-short-write",
+    "story-long-scan",
+    "story-short-scan",
+    "story-long-analyze",
+    "story-short-analyze"
+  ],
+  "notes": "上游假定运行在有 shell / 文件系统 / subagent 的编程 Agent 中。本项目为 Web 后端，skill_loader 会把未内联的参考文件降级为索引，并在提示词中注入 Web 宿主降级说明。更新方式见 backend/scripts/update_story_skills.sh。"
+}
