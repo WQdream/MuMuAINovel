@@ -289,7 +289,8 @@ export function useChapterSync() {
     onProgressUpdate?: (message: string, progress: number) => void,
     model?: string,
     narrativePerspective?: string,
-    skillKey?: string
+    skillKey?: string,
+    autoPolish?: boolean
   ) => {
     const controller = new AbortController();
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -311,7 +312,8 @@ export function useChapterSync() {
           target_word_count: targetWordCount,
           model: model,
           narrative_perspective: narrativePerspective,
-          skill_key: skillKey
+          skill_key: skillKey,
+          auto_polish: Boolean(autoPolish),
         }),
         signal: controller.signal,
       });
@@ -395,6 +397,20 @@ export function useChapterSync() {
           onProgressUpdate?.('章节分析已开始...', 100);
         } else if (messageType === 'analysis_queued') {
           if (typeof message.task_id === 'string') analysisTaskId = message.task_id;
+        } else if (messageType === 'auto_polish') {
+          const applied = message.applied === true;
+          const skipped = typeof message.skipped === 'string' ? message.skipped : '';
+          if (applied) {
+            const before = typeof message.score_before === 'number' ? message.score_before : -1;
+            const after = typeof message.score_after === 'number' ? message.score_after : -1;
+            const punctuation = typeof message.punctuation_fixed === 'number' ? message.punctuation_fixed : 0;
+            onProgressUpdate?.(
+              `自动去味完成：干净度 ${before} → ${after}${punctuation ? `，整理标点 ${punctuation} 处` : ''}`,
+              95,
+            );
+          } else {
+            onProgressUpdate?.(`自动去味已跳过：${skipped || '模型未交付完整正文'}`, 95);
+          }
         }
       };
 

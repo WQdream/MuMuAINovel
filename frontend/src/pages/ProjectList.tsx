@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme, Badge } from 'antd';
+import { Card, Button, Modal, message, notification, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme, Badge } from 'antd';
 import { BookOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined, ControlOutlined, BellOutlined } from '@ant-design/icons';
 import { authApi, projectApi, settingsApi } from '../services/api';
 import { useStore } from '../store';
@@ -18,6 +18,7 @@ import PromptTemplates from './PromptTemplates';
 import BookImport from './BookImport';
 import BookshelfPage from './BookshelfPage';
 import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
+import { extractCoverError, isCoverRequestTimeout } from '../utils/coverError';
 import AnnouncementTimelineModal from '../components/AnnouncementTimelineModal';
 import { useAnnouncements } from '../hooks/useAnnouncements';
 
@@ -219,7 +220,31 @@ export default function ProjectList() {
       await refreshProjects();
     } catch (error) {
       console.error('生成封面失败:', error);
-      message.error({ content: `《${project.title}》封面生成失败`, key: `cover-${project.id}` });
+      const detail = extractCoverError(error);
+      const timedOut = isCoverRequestTimeout(error);
+
+      notification[timedOut ? 'warning' : 'error']({
+        key: `cover-failed-${project.id}`,
+        message: timedOut
+          ? `《${project.title}》封面生成请求超时`
+          : `《${project.title}》封面生成失败`,
+        description: (
+          <div>
+            <div style={{ lineHeight: 1.65 }}>{detail}</div>
+            <div style={{ marginTop: 8, color: token.colorTextSecondary, lineHeight: 1.55 }}>
+              {timedOut
+                ? '图片服务可能仍在后台处理。页面会自动刷新；如果长时间没有结果，请检查图片配置。'
+                : '失败原因会保留在书架顶部，方便你稍后回来处理。'}
+            </div>
+          </div>
+        ),
+        duration: 0,
+        closable: true,
+        placement: 'topRight',
+      });
+
+      // 失败时也必须刷新，否则本地仍会保留 generating 状态，卡片会一直显示生成中。
+      await refreshProjects();
     }
   };
 

@@ -12,6 +12,7 @@ from app.database import get_db
 from app.user_manager import User
 from app.api.settings import require_login
 from app.services.skill_loader import get_all_skills_cached, get_skill_by_trigger, get_skill_detail, create_skill_files, update_skill_files, delete_skill_files, refresh_skills_cache, _get_skill_body
+from app.services.skill_loader import creation_prompt_content, is_creation_capable
 from app.services.ai_service import AIService, create_user_ai_service
 from app.utils.sse_response import SSEResponse, create_sse_response, wrap_stream_with_heartbeat, HEARTBEAT
 from app.logger import get_logger
@@ -52,20 +53,30 @@ class SkillUpdateRequest(BaseModel):
 async def list_skills(user: User = Depends(require_login)):
     """获取所有可用 Skill 列表"""
     skills = get_all_skills_cached()
-    return [
-        {
-            "template_key": s["template_key"],
-            "name": s.get("name", ""),
-            "template_name": s["template_name"],
-            "display_name": s.get("display_name", s["template_name"]),
-            "category": s["category"],
-            "description": s["description"],
-            "triggers": s.get("triggers", []),
-            "version": s.get("version", ""),
-            "prompt_chars": len(s.get("content", "")),
-        }
-        for s in skills
-    ]
+    payload = []
+    for s in skills:
+        # 创作注入长度单独算一次：下拉要告诉用户选它会给提示词加多少字
+        creation_chars = len(creation_prompt_content(s))
+        payload.append(
+            {
+                "template_key": s["template_key"],
+                "name": s.get("name", ""),
+                "template_name": s["template_name"],
+                "display_name": s.get("display_name", s["template_name"]),
+                "category": s["category"],
+                "description": s["description"],
+                "triggers": s.get("triggers", []),
+                "version": s.get("version", ""),
+                "prompt_chars": len(s.get("content", "")),
+                # 章节生成下拉按这两个字段分组：改稿/拆文/扫榜类不能指导创作
+                "creation_capable": is_creation_capable(
+                    s.get("name", ""), s.get("description", "")
+                ),
+                "creation_prompt_chars": creation_chars,
+                "creation_prompt_trimmed": creation_chars < len(s.get("content", "")),
+            }
+        )
+    return payload
 
 
 @router.post("/match")

@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Button, Modal, Form, Input, Select, message, Empty, Space, Tag, Card, InputNumber, Alert, Radio, Descriptions, Pagination, theme, Dropdown } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, FormOutlined, PlusOutlined, ReadOutlined, MoreOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Modal, Form, Input, Select, message, Empty, Space, Tag, Card, InputNumber, Alert, Radio, Descriptions, Pagination, theme, Dropdown, Switch, Tooltip } from 'antd';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, FormOutlined, PlusOutlined, ReadOutlined, MoreOutlined, SearchOutlined, HistoryOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus, EventNames } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
 import { generateChapterBackground } from '../services/backgroundTaskService';
 import { projectApi, writingStyleApi, chapterApi } from '../services/api';
-import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData } from '../types';
+import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, PolishSnapshot } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
 import ChapterAnalysis from '../components/ChapterAnalysis';
 import ExpansionPlanEditor from '../components/ExpansionPlanEditor';
@@ -88,8 +88,20 @@ export default function Chapters() {
   const [batchSelectedModel, setBatchSelectedModel] = useState<string | undefined>(); // 批量生成的模型选择
   const [batchSelectedSkillKey, setBatchSelectedSkillKey] = useState<string | undefined>(); // 批量生成的Skill选择
   const [temporaryNarrativePerspective, setTemporaryNarrativePerspective] = useState<string | undefined>(); // 临时人称选择
-  const [availableSkills, setAvailableSkills] = useState<Array<{ template_key: string; template_name: string; description: string; category: string }>>([]);
+  const [availableSkills, setAvailableSkills] = useState<Array<{
+    template_key: string;
+    template_name: string;
+    description: string;
+    category: string;
+    creation_capable: boolean;
+    creation_prompt_chars: number;
+    creation_prompt_trimmed: boolean;
+  }>>([]);
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | undefined>();
+  const [autoPolish, setAutoPolish] = useState(false);
+  const [batchAutoPolish, setBatchAutoPolish] = useState(false);
+  const [polishSnapshot, setPolishSnapshot] = useState<PolishSnapshot | null>(null);
+  const [restoringPolishSnapshot, setRestoringPolishSnapshot] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [analysisChapterId, setAnalysisChapterId] = useState<string | null>(null);
   const [monitorOpen, setMonitorOpen] = useState(false);
@@ -525,6 +537,16 @@ export default function Chapters() {
     }
   };
 
+  const loadPolishSnapshot = useCallback(async (chapterId: string) => {
+    try {
+      const snapshot = await chapterApi.getPolishSnapshot(chapterId);
+      setPolishSnapshot(snapshot.available ? snapshot : null);
+    } catch (error) {
+      console.warn('查询自动去味快照失败:', error);
+      setPolishSnapshot(null);
+    }
+  }, []);
+
   const loadAvailableModels = async () => {
     const options: Array<{ value: string; label: string }> = [];
     const seen = new Set<string>();
@@ -894,10 +916,13 @@ export default function Chapters() {
       setEditingId(id);
       setTemporaryNarrativePerspective(undefined); // 重置人称选择
       setSelectedSkillKey(undefined); // 重置Skill选择
+      setAutoPolish(false); // 自动去味默认关闭，避免无意中多一次模型调用
+      setPolishSnapshot(null);
       setIsEditorOpen(true);
       // 打开编辑窗口时加载模型列表和Skill列表
       loadAvailableModels();
       loadAvailableSkills();
+      void loadPolishSnapshot(id);
     }
   };
 
@@ -916,6 +941,35 @@ export default function Chapters() {
     } catch {
       message.error('保存失败');
     }
+  };
+
+  const handleRestorePolishSnapshot = () => {
+    if (!editingId || !polishSnapshot?.available) return;
+    modal.confirm({
+      title: '恢复自动去味前的原文？',
+      content: '当前章节正文会被替换为最近一次自动去味前的完整原文。去味分析记录会保留。',
+      okText: '恢复原文',
+      cancelText: '取消',
+      centered: true,
+      onOk: async () => {
+        setRestoringPolishSnapshot(true);
+        try {
+          const restored = await chapterApi.restorePolishSnapshot(editingId);
+          editorForm.setFieldsValue({ content: restored.content });
+          setPolishSnapshot(null);
+          await refreshChapters();
+          if (currentProject?.id) {
+            const updatedProject = await projectApi.getProject(currentProject.id);
+            setCurrentProject(updatedProject);
+          }
+          message.success(restored.message || '已恢复自动去味前的原文');
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '恢复原文失败');
+        } finally {
+          setRestoringPolishSnapshot(false);
+        }
+      },
+    });
   };
 
   const handleGenerate = async () => {
@@ -948,11 +1002,26 @@ export default function Chapters() {
         },
         selectedModel,  // 传递选中的模型
         temporaryNarrativePerspective,  // 传递临时人称参数
-        selectedSkillKey  // 传递选中的Skill
+        selectedSkillKey,  // 传递选中的Skill
+        autoPolish  // 生成后自动去味
       );
 
       message.success('AI创作成功，正在分析章节内容...');
       setSingleChapterProgressMessage('');
+      // 自动去味后的正文不会作为流式 chunk 回传，必须重新取一次章节，
+      // 否则编辑框仍显示去味前的流式内容，用户保存时会把去味结果覆盖掉。
+      try {
+        const latestChapter = await chapterApi.getChapter(editingId);
+        editorForm.setFieldsValue({
+          title: latestChapter.title,
+          content: latestChapter.content,
+        });
+      } catch (refreshError) {
+        console.warn('生成完成后刷新章节正文失败:', refreshError);
+      }
+      if (autoPolish) {
+        void loadPolishSnapshot(editingId);
+      }
 
       // 如果返回了分析任务ID，启动轮询
       if (result?.analysis_task_id) {
@@ -990,6 +1059,7 @@ export default function Chapters() {
     ).sort((a, b) => a.chapter_number - b.chapter_number);
 
     const selectedStyle = writingStyles.find(s => s.id === selectedStyleId);
+    const selectedSkill = availableSkills.find(s => s.template_key === selectedSkillKey);
     const infoItems = [
       '章节大纲与项目世界观',
       '相关角色、职业与伏笔',
@@ -997,6 +1067,8 @@ export default function Chapters() {
         ? `前 ${previousChapters.length} 章正文与剧情摘要`
         : '本章开篇，无前置章节',
       selectedStyle ? `写作风格：${selectedStyle.name}` : '写作风格：未选择',
+      selectedSkill ? `应用 Skill：${selectedSkill.template_name}` : '应用 Skill：标准创作流程',
+      autoPolish ? '生成后自动去味：开（原文快照可回滚）' : '生成后自动去味：关',
       `目标字数：${targetWordCount.toLocaleString('zh-CN')} 字`,
     ];
 
@@ -1134,6 +1206,8 @@ export default function Chapters() {
           target_word_count: targetWordCount,
           model: selectedModel,
           narrative_perspective: temporaryNarrativePerspective,
+          skill_key: selectedSkillKey,
+          auto_polish: autoPolish,
         },
         async (status) => {
           if (status.progress_details?.stage !== 'analyzing' || analysisTrackingStarted) return;
@@ -1146,6 +1220,9 @@ export default function Chapters() {
           message.success("后台章节生成和分析完成！");
           const latestChapters = await refreshGeneratedChapter();
           await loadAnalysisTasks(latestChapters);
+          if (autoPolish) {
+            await loadPolishSnapshot(generatedChapterId);
+          }
         },
         async (error) => {
           message.error("后台章节任务失败: " + error);
@@ -1277,12 +1354,14 @@ export default function Chapters() {
         target_word_count: number;
         model?: string;
         skill_key?: string;
+        auto_polish: boolean;
       } = {
         start_chapter_number: values.startChapterNumber,
         count: values.count,
         enable_analysis: values.enableAnalysis,
         style_id: styleId,
         target_word_count: wordCount,
+        auto_polish: batchAutoPolish,
       };
 
       // 如果有模型参数，添加到请求体中
@@ -1495,6 +1574,7 @@ export default function Chapters() {
 
     // 设置批量生成的模型选择状态
     setBatchSelectedModel(defaultModel || undefined);
+    setBatchAutoPolish(false);
 
     // 重置表单并设置初始值（使用缓存的字数）
     batchForm.setFieldsValue({
@@ -2714,10 +2794,25 @@ export default function Chapters() {
                 optionFilterProp="label"
               >
                 {availableSkills.map(skill => (
-                  <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Select.Option
+                    key={skill.template_key}
+                    value={skill.template_key}
+                    label={skill.template_name}
+                    disabled={!skill.creation_capable}
+                  >
+                    <div
+                      title={skill.creation_capable
+                        ? skill.description
+                        : '去味请去「AI 去味」页；拆文、扫榜请用分析页'}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                    >
                       <span>{skill.template_name}</span>
-                      <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
+                      <Tag
+                        color={skill.creation_capable ? undefined : 'default'}
+                        style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}
+                      >
+                        {skill.creation_capable ? skill.category : '不可用于创作'}
+                      </Tag>
                     </div>
                   </Select.Option>
                 ))}
@@ -2727,6 +2822,10 @@ export default function Chapters() {
                 return skill ? (
                   <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
                     ✓ {skill.description}
+                    <span style={{ color: token.colorTextTertiary }}>
+                      {' '}· 注入 {skill.creation_prompt_chars.toLocaleString('zh-CN')} 字
+                      {skill.creation_prompt_trimmed ? '（已精简参考附录）' : ''}
+                    </span>
                   </div>
                 ) : null;
               })()}
@@ -2780,9 +2879,54 @@ export default function Chapters() {
                 ))}
               </Select>
             </Form.Item>
+
+            <Form.Item
+              label="生成后自动去味"
+              tooltip="额外调用 1 次模型：一轮去味改写 + 标点整理，不复改。原文会存快照，可在章节内容上方一键恢复。"
+              style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
+            >
+              <div style={{
+                minHeight: 32,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                color: token.colorTextSecondary,
+                fontSize: 12,
+              }}>
+                <Switch
+                  checked={autoPolish}
+                  onChange={setAutoPolish}
+                  disabled={isGenerating || isBackgroundGenerating}
+                  checkedChildren="开"
+                  unCheckedChildren="关"
+                />
+                <span>{autoPolish ? '生成后跑一轮去味，可回滚' : '默认关闭，不额外消耗 token'}</span>
+              </div>
+            </Form.Item>
           </div>
 
-          <Form.Item label="章节内容" name="content">
+          <Form.Item
+            label={(
+              <Space size={8}>
+                <span>章节内容</span>
+                {polishSnapshot?.available && (
+                  <Tooltip title={polishSnapshot.note || '恢复最近一次自动去味前的完整原文'}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<HistoryOutlined />}
+                      loading={restoringPolishSnapshot}
+                      onClick={handleRestorePolishSnapshot}
+                      style={{ paddingInline: 0, height: 'auto', fontSize: 12 }}
+                    >
+                      恢复去味前原文
+                    </Button>
+                  </Tooltip>
+                )}
+              </Space>
+            )}
+            name="content"
+          >
             <TextArea
               ref={contentTextAreaRef}
               rows={isMobile ? 12 : 20}
@@ -3054,14 +3198,61 @@ export default function Chapters() {
                   optionFilterProp="label"
                 >
                   {availableSkills.map(skill => (
-                    <Select.Option key={skill.template_key} value={skill.template_key} label={skill.template_name}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Select.Option
+                      key={skill.template_key}
+                      value={skill.template_key}
+                      label={skill.template_name}
+                      disabled={!skill.creation_capable}
+                    >
+                      <div
+                        title={skill.creation_capable
+                          ? skill.description
+                          : '去味请去「AI 去味」页；拆文、扫榜请用分析页'}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                      >
                         <span>{skill.template_name}</span>
-                        <Tag style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}>{skill.category}</Tag>
+                        <Tag
+                          color={skill.creation_capable ? undefined : 'default'}
+                          style={{ fontSize: 11, lineHeight: '18px', padding: '0 4px' }}
+                        >
+                          {skill.creation_capable ? skill.category : '不可用于创作'}
+                        </Tag>
                       </div>
                     </Select.Option>
                   ))}
                 </Select>
+                {batchSelectedSkillKey && (() => {
+                  const skill = availableSkills.find(s => s.template_key === batchSelectedSkillKey);
+                  return skill ? (
+                    <div style={{ color: token.colorSuccess, fontSize: 12, marginTop: 4 }}>
+                      ✓ 注入 {skill.creation_prompt_chars.toLocaleString('zh-CN')} 字
+                      {skill.creation_prompt_trimmed ? '（已精简参考附录）' : ''}
+                    </div>
+                  ) : null;
+                })()}
+              </Form.Item>
+
+              <Form.Item
+                label="生成后自动去味"
+                tooltip="每章生成后额外调用 1 次模型做一轮去味改写 + 标点整理；原文快照可回滚。"
+                style={{ flex: 1, marginBottom: 12 }}
+              >
+                <div style={{
+                  minHeight: 32,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  color: token.colorTextSecondary,
+                  fontSize: 12,
+                }}>
+                  <Switch
+                    checked={batchAutoPolish}
+                    onChange={setBatchAutoPolish}
+                    checkedChildren="开"
+                    unCheckedChildren="关"
+                  />
+                  <span>{batchAutoPolish ? '每章生成后自动去味' : '默认关闭'}</span>
+                </div>
               </Form.Item>
             </div>
 

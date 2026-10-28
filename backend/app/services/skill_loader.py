@@ -33,6 +33,16 @@ INDEX_REF_MIN_CHARS = 1_500      # 低于此体积的未引用文件直接内联
 # 只在正文出现这些宿主假设时注入，用户自建的简单 Skill 不受影响。
 HOST_ENV_MARKERS = ("references/", "scripts/", "spawn", "subagent", "narrative-writer")
 
+# 章节生成（AI 创作）只该用「怎么把这一章写出来」的 Skill。
+# 去味、拆文、扫榜三类是改稿或分析流程：它们在创作时没有草稿可改、没有榜单可查，
+# 注入进去只会让模型把诊断报告当正文交付。名字匹配不到时按可用处理，
+# 用户自建 Skill 不应被这套上游分类误伤。
+CREATION_EXCLUDED_SKILL_NAMES = ("deslop", "-analyze", "-scan")
+
+# 创作时注入的 Skill 提示词上限：完整内联参考知识库的工作流可达 9 万字符，
+# 对单次章节生成既超预算又抢注意力，超过上限时只保留工作流正文。
+CREATION_PROMPT_LIMIT = 30_000
+
 
 class _SkillYamlDumper(yaml.SafeDumper):
     pass
@@ -145,6 +155,29 @@ def _extract_triggers(name: str, description: str, explicit_triggers: Any = None
         triggers.insert(0, f"/{name}")
 
     return list(dict.fromkeys(triggers))
+
+
+def is_creation_capable(name: str, description: str = "") -> bool:
+    """该 Skill 能否用来指导章节正文创作
+
+    按 name 判定（description 只是补充线索）：改稿、拆文、扫榜类流程在创作阶段
+    没有输入可处理，选它们只会污染提示词，甚至让模型把报告写进正文。
+    """
+    text = f"{name} {description}".lower()
+    return not any(marker in text for marker in CREATION_EXCLUDED_SKILL_NAMES)
+
+
+def creation_prompt_content(skill: Dict[str, Any]) -> str:
+    """取用于章节生成注入的 Skill 提示词，必要时剥掉附录与宿主说明
+
+    工作流正文是模型能执行的部分；内联的参考知识库、附录索引和「Web 宿主没有
+    shell」的说明在单次生成里读不到也用不上，剥掉可省一个数量级的 input token。
+    """
+    content = skill.get("content") or ""
+    if len(content) <= CREATION_PROMPT_LIMIT:
+        return content
+    body = skill.get("body") or ""
+    return body.strip() or content[:CREATION_PROMPT_LIMIT]
 
 
 def _format_skill_frontmatter(metadata: Dict[str, Any]) -> str:
@@ -379,6 +412,8 @@ def load_skills() -> List[Dict]:
                 "version": metadata.get('version', ''),
                 "parameters": ["user_input"],
                 "content": full_content,
+                # 工作流正文（不含内联参考与宿主说明）：章节生成注入用得起的那一份
+                "body": body,
                 "references": references,
                 "triggers": triggers,
                 "is_skill": True,

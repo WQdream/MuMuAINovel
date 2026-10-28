@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import './BookshelfPage.css';
-import { Button, Dropdown, Spin, theme } from 'antd';
+import { Button, Dropdown, Spin, theme, Tooltip } from 'antd';
 import {
   BulbOutlined,
   ClockCircleOutlined,
@@ -14,8 +14,16 @@ import {
   PlusOutlined,
   ReloadOutlined,
   UploadOutlined,
+  WarningFilled,
 } from '@ant-design/icons';
 import type { Project } from '../types';
+import {
+  dismissCoverFailure,
+  formatCoverError,
+  getCoverFailureDismissKey,
+  isCoverFailureDismissed as isCoverFailureDismissedInStorage,
+  restoreCoverFailure,
+} from '../utils/coverError';
 
 interface BookshelfPageProps {
   isMobile: boolean;
@@ -58,8 +66,57 @@ export default function BookshelfPage({
 }: BookshelfPageProps) {
   const { token } = theme.useToken();
   const [coverBusyIds, setCoverBusyIds] = useState<Record<string, boolean>>({});
+  const [dismissedCoverFailureKeys, setDismissedCoverFailureKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const hasGeneratingCover = projects.some((project) => project.cover_status === 'generating');
+
+  const getFailureKey = (project: Project) =>
+    getCoverFailureDismissKey(project.id, project.cover_error);
+
+  const isFailureDismissed = (project: Project) => {
+    const key = getFailureKey(project);
+    return dismissedCoverFailureKeys.has(key) || isCoverFailureDismissedInStorage(key);
+  };
+
+  const dismissFailure = (project: Project) => {
+    const key = getFailureKey(project);
+    dismissCoverFailure(key);
+    setDismissedCoverFailureKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  };
+
+  const restoreFailure = (project: Project) => {
+    const key = getFailureKey(project);
+    restoreCoverFailure(key);
+    setDismissedCoverFailureKeys((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  const visibleCoverFailures = projects.filter(
+    (project) =>
+      project.cover_status === 'failed'
+      && !coverBusyIds[project.id]
+      && !isFailureDismissed(project),
+  );
+
+  const dismissVisibleCoverFailures = () => {
+    visibleCoverFailures.forEach(dismissFailure);
+  };
+
+  const coverNoticeButtonStyle = {
+    height: 26,
+    padding: '0 6px',
+    fontSize: 12,
+  } as const;
 
   // 生成任务在服务端执行，轮询以便刷新页面后仍能自动拿到生成完成的封面
   useEffect(() => {
@@ -117,6 +174,7 @@ export default function BookshelfPage({
 
   const handleGenerateCover = async (project: Project, overwrite: boolean) => {
     if (coverBusyIds[project.id]) return;
+    restoreFailure(project);
     setCoverBusyIds((prev) => ({ ...prev, [project.id]: true }));
     try {
       await onGenerateCover(project, overwrite);
@@ -519,7 +577,7 @@ export default function BookshelfPage({
               style={{
                 position: 'absolute',
                 bottom: 8,
-                left: 8,
+                right: 8,
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 4,
@@ -535,23 +593,26 @@ export default function BookshelfPage({
             </div>
           )}
 
-          {!coverBusy && coverFailed && !wizardIncomplete && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 8,
-                left: 8,
-                display: 'inline-flex',
-                alignItems: 'center',
-                fontSize: 10,
-                color: token.colorError,
-                background: alphaColor(token.colorBgContainer, 0.92),
-                borderRadius: 999,
-                padding: '1px 7px',
-              }}
-            >
-              封面生成失败
-            </div>
+          {!coverBusy && coverFailed && (
+            <Tooltip title={formatCoverError(project.cover_error)}>
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 8,
+                  left: 8,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  fontSize: 10,
+                  color: token.colorError,
+                  background: alphaColor(token.colorBgContainer, 0.92),
+                  borderRadius: 999,
+                  padding: '1px 7px',
+                  cursor: 'help',
+                }}
+              >
+                封面生成失败
+              </div>
+            </Tooltip>
           )}
         </div>
 
@@ -636,6 +697,187 @@ export default function BookshelfPage({
 
   return (
     <div>
+      {visibleCoverFailures.length > 0 && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: isMobile ? 12 : 14,
+            border: `1px solid ${alphaColor(token.colorError, 0.16)}`,
+            borderRadius: 10,
+            overflow: 'hidden',
+            background: `linear-gradient(90deg, ${alphaColor(token.colorError, 0.06)} 0%, ${alphaColor(token.colorBgContainer, 0.94)} 58%)`,
+            boxShadow: `inset 3px 0 0 ${token.colorError}, 0 1px 2px rgba(0, 0, 0, 0.025)`,
+          }}
+        >
+          {visibleCoverFailures.length > 1 && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+                minHeight: 38,
+                padding: '5px 8px 5px 12px',
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  display: 'grid',
+                  placeItems: 'center',
+                  flexShrink: 0,
+                  color: token.colorError,
+                  background: alphaColor(token.colorError, 0.11),
+                  fontSize: 11,
+                }}
+              >
+                <WarningFilled />
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
+                {visibleCoverFailures.length} 个封面生成失败
+              </span>
+              <span
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 12,
+                  color: token.colorTextTertiary,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                可在下方逐个重试，或先检查图片配置。
+              </span>
+              <Button
+                size="small"
+                type="text"
+                onClick={onGoSettings}
+                style={coverNoticeButtonStyle}
+              >
+                检查图片配置
+              </Button>
+              <Tooltip title="关闭全部失败提示">
+                <Button
+                  size="small"
+                  type="text"
+                  aria-label="关闭全部封面失败提示"
+                  icon={<CloseOutlined />}
+                  onClick={dismissVisibleCoverFailures}
+                  style={{ ...coverNoticeButtonStyle, width: 26, minWidth: 26, padding: 0 }}
+                />
+              </Tooltip>
+            </div>
+          )}
+
+          {visibleCoverFailures.map((project, index) => (
+            <div
+              key={project.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+                minHeight: 40,
+                padding: '5px 8px 5px 12px',
+                borderTop: visibleCoverFailures.length > 1 || index > 0
+                  ? `1px solid ${alphaColor(token.colorError, 0.1)}`
+                  : undefined,
+              }}
+            >
+              {visibleCoverFailures.length === 1 && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: '50%',
+                    display: 'grid',
+                    placeItems: 'center',
+                    flexShrink: 0,
+                    color: token.colorError,
+                    background: alphaColor(token.colorError, 0.11),
+                    fontSize: 11,
+                  }}
+                >
+                  <WarningFilled />
+                </span>
+              )}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 6,
+                  flex: '1 1 220px',
+                  minWidth: 0,
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ flexShrink: 0, fontWeight: 600, color: token.colorText }}>
+                  {visibleCoverFailures.length === 1 ? '封面生成失败' : `《${project.title}》`}
+                </span>
+                <span
+                  title={formatCoverError(project.cover_error)}
+                  style={{
+                    minWidth: 0,
+                    color: token.colorTextSecondary,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {visibleCoverFailures.length === 1
+                    ? `《${project.title}》 · ${formatCoverError(project.cover_error)}`
+                    : formatCoverError(project.cover_error)}
+                </span>
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  flexShrink: 0,
+                  marginLeft: 'auto',
+                }}
+              >
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<ReloadOutlined />}
+                  onClick={() => void handleGenerateCover(project, true)}
+                  style={coverNoticeButtonStyle}
+                >
+                  重新生成
+                </Button>
+                {visibleCoverFailures.length === 1 && (
+                  <Button
+                    size="small"
+                    type="text"
+                    onClick={onGoSettings}
+                    style={coverNoticeButtonStyle}
+                  >
+                    检查配置
+                  </Button>
+                )}
+                <Tooltip title="关闭此提示">
+                  <Button
+                    size="small"
+                    type="text"
+                    aria-label={`关闭《${project.title}》的封面失败提示`}
+                    icon={<CloseOutlined />}
+                    onClick={() => dismissFailure(project)}
+                    style={{ ...coverNoticeButtonStyle, width: 26, minWidth: 26, padding: 0 }}
+                  />
+                </Tooltip>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div
         style={{
           display: 'flex',

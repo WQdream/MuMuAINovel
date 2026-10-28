@@ -59,6 +59,11 @@ from app.services.analysis_monitor import analysis_monitor
 from app.services.memory_service import memory_service
 from app.services.foreshadow_service import foreshadow_service
 from app.services.chapter_regenerator import ChapterRegenerator
+from app.services.writing_guards import build_creation_system_prompt, guard_for_generation
+from app.services.chapter_polish import (
+    latest_polish_snapshot,
+    polish_chapter_after_generation,
+)
 from app.logger import get_logger
 from app.utils.provider_policy import detect_policy_refusal, policy_refusal_error
 from app.api.settings import get_user_ai_service, get_user_ai_service_from_db_by_usage
@@ -570,6 +575,81 @@ async def update_chapter(
             chapter_dict["outline_order"] = outline.order_index
     
     return chapter_dict
+
+
+@router.get("/{chapter_id}/polish-snapshot", summary="查询最近一次自动去味的原文快照")
+async def get_polish_snapshot(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """返回快照元信息（不返回全文），供章节编辑器决定是否显示「恢复去味前原文」"""
+    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    snapshot = await latest_polish_snapshot(db, chapter_id)
+    if not snapshot:
+        return {"available": False}
+    return {
+        "available": True,
+        "note": snapshot["note"],
+        "word_count": len(snapshot["content"]),
+        "created_at": snapshot["created_at"],
+    }
+
+
+@router.post("/{chapter_id}/polish-snapshot/restore", summary="恢复自动去味前的原文")
+async def restore_polish_snapshot(
+    chapter_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+    """把章节正文换回最近一次自动去味前的快照
+
+    自动去味会改写整章，人工改过的内容也可能被覆盖；这里提供一键回滚，
+    只恢复正文与字数，不删除去味留下的分析记录。
+    """
+    result = await db.execute(select(Chapter).where(Chapter.id == chapter_id))
+    chapter = result.scalar_one_or_none()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    user_id = getattr(request.state, 'user_id', None)
+    await verify_project_access(chapter.project_id, user_id, db)
+
+    snapshot = await latest_polish_snapshot(db, chapter_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="没有可恢复的去味前原文")
+
+    old_word_count = chapter.word_count or 0
+    chapter.content = snapshot["content"]
+    chapter.word_count = len(snapshot["content"])
+    chapter.summary = _build_lightweight_chapter_summary(chapter.content)
+
+    project_result = await db.execute(
+        select(Project).where(Project.id == chapter.project_id)
+    )
+    project = project_result.scalar_one_or_none()
+    if project:
+        project.current_words = (
+            (project.current_words or 0) - old_word_count + chapter.word_count
+        )
+
+    await db.commit()
+    await db.refresh(chapter)
+    logger.info(f"↩️ 已恢复章节 {chapter_id[:8]} 自动去味前的原文")
+
+    return {
+        "success": True,
+        "content": chapter.content,
+        "word_count": chapter.word_count,
+        "message": "已恢复自动去味前的原文",
+    }
 
 
 @router.delete("/{chapter_id}", summary="删除章节")
@@ -1650,6 +1730,7 @@ async def generate_chapter_content_stream(
     custom_model = generate_request.model if hasattr(generate_request, 'model') else None
     temp_narrative_perspective = generate_request.narrative_perspective if hasattr(generate_request, 'narrative_perspective') else None
     skill_key = generate_request.skill_key if hasattr(generate_request, 'skill_key') else None
+    auto_polish = bool(getattr(generate_request, 'auto_polish', False))
     current_user_id = getattr(request.state, "user_id", "system")
     temp_db = await _create_db_session(current_user_id)
     try:
@@ -1923,55 +2004,19 @@ async def generate_chapter_content_stream(
                         )
                         logger.debug(f"创建第一章提示词完成: prompt_length={len(base_prompt)}")
                 
-                # 应用写作风格
-                if style_content:
-                    prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
-                else:
-                    prompt = base_prompt
-                
+                # 应用写作风格（风格内容本身只走 system prompt，这里只补输出格式）
+                prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
+
                 # === 准备阶段 ===
                 yield await tracker.preparing("准备AI提示词...")
-                
+
                 logger.info(f"开始AI流式创作章节 {chapter_id}")
-                
-                # 🎨 方案一：将写作风格注入到系统提示词（最高优先级）
-                system_prompt_with_style = None
-                
-                # ⚡ Skill 支持：当指定 skill_key 时，将 Skill 工作流注入系统提示词
-                if skill_key:
-                    try:
-                        from app.services.skill_loader import get_all_skills_cached
-                        skills = get_all_skills_cached()
-                        skill = next((s for s in skills if s["template_key"] == skill_key), None)
-                        if skill:
-                            skill_content = skill["content"]
-                            skill_name = skill["template_name"]
-                            system_prompt_with_style = f"""【⚡ Skill 工作流：{skill_name}】
 
-{skill_content}
-
-⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"""
-                            if style_content:
-                                system_prompt_with_style += f"""
-
-【🎨 写作风格要求 - 补充】
-
-{style_content}"""
-                            logger.info(f"⚡ 已将 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
-                        else:
-                            logger.warning(f"⚠️ 未找到 Skill: {skill_key}")
-                    except Exception as skill_err:
-                        logger.warning(f"⚠️ 加载 Skill 失败: {skill_err}")
-                
-                if not system_prompt_with_style and style_content:
-                    system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
-
-{style_content}
-
-⚠️ 请严格遵循上述写作风格要求进行创作，这是最重要的指令！
-确保在整个章节创作过程中始终保持风格的一致性。"""
-                    logger.info(f"✅ 已将写作风格注入系统提示词（{len(style_content)}字符）")
-                
+                # ⚡ Skill + 🎨 写作风格 + 表达防线统一组装
+                system_prompt_with_style, skill_injected = build_creation_system_prompt(
+                    skill_key, style_content
+                )
+                prompt += guard_for_generation(skill_injected)
 
                 # 🔢 计算 max_tokens 限制
                 # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
@@ -2029,7 +2074,34 @@ async def generate_chapter_content_stream(
                 )
                 if generation_error:
                     raise RuntimeError(generation_error)
-                
+
+                # === 生成后自动去味（可选）===
+                polish_result = None
+                if auto_polish:
+                    yield await tracker.saving("正在自动去味（一轮改写 + 标点整理）...", 0.1)
+                    full_content, polish_result = await polish_chapter_after_generation(
+                        db=db_session,
+                        chapter=current_chapter,
+                        project=project,
+                        generated_content=full_content,
+                        ai_service=user_ai_service,
+                        model=custom_model,
+                        user_id=current_user_id,
+                    )
+                    yield await SSEResponse.send_event(
+                        event='auto_polish',
+                        data={
+                            'applied': 'skipped' not in polish_result,
+                            'skipped': polish_result.get('skipped'),
+                            'score_before': polish_result.get('score_before', -1),
+                            'score_after': polish_result.get('score_after', -1),
+                            'blocking_before': polish_result.get('blocking_before', 0),
+                            'blocking_after': polish_result.get('blocking_after', 0),
+                            'punctuation_fixed': polish_result.get('punctuation_fixed', 0),
+                            'word_count': len(full_content),
+                        },
+                    )
+
                 # === 保存阶段 ===
                 yield await tracker.saving("正在保存章节...", 0.3)
                 
@@ -2200,6 +2272,7 @@ async def generate_chapter_content_background(
                 "model": generate_request.model,
                 "narrative_perspective": generate_request.narrative_perspective,
                 "skill_key": generate_request.skill_key,
+                "auto_polish": generate_request.auto_polish,
             },
             db=db
         )
@@ -2236,6 +2309,7 @@ async def generate_chapter_content_background(
                             "model": generate_request.model,
                             "narrative_perspective": generate_request.narrative_perspective,
                             "skill_key": generate_request.skill_key,
+                            "auto_polish": generate_request.auto_polish,
                         },
                         db=bg_db,
                         ai_service=bg_ai_service,
@@ -2448,23 +2522,17 @@ async def _run_chapter_generation_bg(
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
 
-    # 应用写作风格
-    if style_content:
-        prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
-    else:
-        prompt = base_prompt
+    # 应用写作风格（风格内容本身只走 system prompt，这里只补输出格式）
+    prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
 
     # === 准备阶段 ===
     await tracker.preparing("准备AI提示词...")
 
-    system_prompt_with_style = None
-    if style_content:
-        system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
-
-{style_content}
-
-⚠️ 请严格遵循上述写作风格要求进行创作，这是最重要的指令！
-确保在整个章节创作过程中始终保持风格的一致性。"""
+    # ⚡ Skill + 🎨 写作风格 + 表达防线统一组装
+    system_prompt_with_style, skill_injected = build_creation_system_prompt(
+        skill_key, style_content
+    )
+    prompt += guard_for_generation(skill_injected)
 
     calculated_max_tokens = int(target_word_count * 3)
     calculated_max_tokens = max(2000, min(calculated_max_tokens + 4096, 20000))
@@ -2510,6 +2578,21 @@ async def _run_chapter_generation_bg(
     generation_error = _chapter_generation_error(full_content, target_word_count)
     if generation_error:
         raise RuntimeError(generation_error)
+
+    # === 生成后自动去味（可选）===
+    if auto_polish:
+        await tracker.saving("正在自动去味（一轮改写 + 标点整理）...", 0.2)
+        full_content, polish_result = await polish_chapter_after_generation(
+            db=db,
+            chapter=current_chapter,
+            project=project,
+            generated_content=full_content,
+            ai_service=ai_service,
+            model=custom_model,
+            user_id=user_id,
+        )
+        if 'skipped' in polish_result:
+            await tracker.saving(f"自动去味已跳过：{polish_result['skipped']}", 0.3)
 
     # === 保存阶段 ===
     if await tracker.check_cancelled():
@@ -2731,6 +2814,8 @@ async def generate_chapter_content_background_legacy(
             "enable_mcp": generate_request.enable_mcp,
             "model": generate_request.model,
             "narrative_perspective": generate_request.narrative_perspective,
+            "skill_key": generate_request.skill_key,
+            "auto_polish": generate_request.auto_polish,
         },
         db=db
     )
@@ -2760,6 +2845,8 @@ async def generate_chapter_content_background_legacy(
                         "enable_mcp": generate_request.enable_mcp,
                         "model": generate_request.model,
                         "narrative_perspective": generate_request.narrative_perspective,
+                        "skill_key": generate_request.skill_key,
+                        "auto_polish": generate_request.auto_polish,
                     },
                     db=bg_db,
                     ai_service=bg_ai_service,
@@ -2805,6 +2892,7 @@ async def _run_chapter_generation_bg(
     temp_narrative_perspective = task_input.get("narrative_perspective")
     enable_mcp = task_input.get("enable_mcp", False)
     skill_key = task_input.get("skill_key")
+    auto_polish = bool(task_input.get("auto_polish", False))
     write_lock = await get_db_write_lock(user_id)
 
     # === 加载阶段 ===
@@ -2967,48 +3055,17 @@ async def _run_chapter_generation_bg(
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
 
-    # 应用写作风格
-    if style_content:
-        prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
-    else:
-        prompt = base_prompt
+    # 应用写作风格（风格内容本身只走 system prompt，这里只补输出格式）
+    prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
 
     # === 准备阶段 ===
     await tracker.preparing("准备AI提示词...")
 
-    system_prompt_with_style = None
-    if skill_key:
-        try:
-            from app.services.skill_loader import get_all_skills_cached
-            skills = get_all_skills_cached()
-            skill = next((s for s in skills if s["template_key"] == skill_key), None)
-            if skill:
-                skill_content = skill["content"]
-                skill_name = skill["template_name"]
-                system_prompt_with_style = f"""【⚡ Skill 工作流：{skill_name}】
-
-{skill_content}
-
-⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"""
-                if style_content:
-                    system_prompt_with_style += f"""
-
-【🎨 写作风格要求 - 补充】
-
-{style_content}"""
-                logger.info(f"⚡ 后台生成 - 已将 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
-            else:
-                logger.warning(f"⚠️ 后台生成 - 未找到 Skill: {skill_key}")
-        except Exception as skill_err:
-            logger.warning(f"⚠️ 后台生成 - 加载 Skill 失败: {skill_err}")
-
-    if not system_prompt_with_style and style_content:
-        system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
-
-{style_content}
-
-⚠️ 请严格遵循上述写作风格要求进行创作，这是最重要的指令！
-确保在整个章节创作过程中始终保持风格的一致性。"""
+    # ⚡ Skill + 🎨 写作风格 + 表达防线统一组装
+    system_prompt_with_style, skill_injected = build_creation_system_prompt(
+        skill_key, style_content
+    )
+    prompt += guard_for_generation(skill_injected)
 
     calculated_max_tokens = int(target_word_count * 3)
     calculated_max_tokens = max(2000, min(calculated_max_tokens + 4096, 20000))
@@ -3050,6 +3107,28 @@ async def _run_chapter_generation_bg(
             )
 
         await asyncio.sleep(0)
+
+    # === 生成后自动去味（可选）===
+    if auto_polish:
+        await tracker.saving("正在自动去味（一轮改写 + 标点整理）...", 0.2)
+        full_content, polish_result = await polish_chapter_after_generation(
+            db=db,
+            chapter=current_chapter,
+            project=project,
+            generated_content=full_content,
+            ai_service=ai_service,
+            model=custom_model,
+            user_id=user_id,
+        )
+        if 'skipped' in polish_result:
+            await tracker.saving(f"自动去味已跳过：{polish_result['skipped']}", 0.3)
+        else:
+            await tracker.saving(
+                "自动去味完成：干净度 "
+                f"{polish_result['score_before']}→{polish_result['score_after']}，"
+                f"必须改 {polish_result['blocking_before']}→{polish_result['blocking_after']}",
+                0.3,
+            )
 
     # === 保存阶段 ===
     await tracker.saving("正在保存章节...", 0.3)
@@ -3913,7 +3992,8 @@ async def batch_generate_chapters_in_order(
         custom_model=batch_request.model,
         skill_key=batch_request.skill_key,
         enable_mcp=batch_request.enable_mcp,
-        narrative_perspective=batch_request.narrative_perspective
+        narrative_perspective=batch_request.narrative_perspective,
+        auto_polish=batch_request.auto_polish,
     )
     
     return BatchGenerateResponse(
@@ -4063,7 +4143,8 @@ async def execute_batch_generation_in_order(
     custom_model: Optional[str] = None,
     skill_key: Optional[str] = None,
     enable_mcp: bool = True,
-    narrative_perspective: Optional[str] = None
+    narrative_perspective: Optional[str] = None,
+    auto_polish: bool = False,
 ):
     """
     按顺序执行批量生成任务（后台任务）
@@ -4187,7 +4268,8 @@ async def execute_batch_generation_in_order(
                         skill_key=skill_key,
                         batch_id=batch_id,
                         enable_mcp=enable_mcp,
-                        temp_narrative_perspective=narrative_perspective
+                        temp_narrative_perspective=narrative_perspective,
+                        auto_polish=auto_polish,
                     )
 
                     await db_session.refresh(task)
@@ -4373,7 +4455,8 @@ async def generate_single_chapter_for_batch(
     skill_key: Optional[str] = None,
     batch_id: Optional[str] = None,
     enable_mcp: bool = True,
-    temp_narrative_perspective: Optional[str] = None
+    temp_narrative_perspective: Optional[str] = None,
+    auto_polish: bool = False,
 ) -> Optional[str]:
     """
     为批量生成执行单个章节的生成（非流式）
@@ -4549,49 +4632,14 @@ async def generate_single_chapter_for_batch(
                 relevant_memories=chapter_context.relevant_memories or '暂无相关记忆'
             )
     
-    # 应用写作风格
-    if style_content:
-        prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
-    else:
-        prompt = base_prompt
-    
-    # 🎨 将 Skill / 写作风格注入到系统提示词（批量生成）
-    system_prompt_with_style = None
+    # 应用写作风格（风格内容本身只走 system prompt，这里只补输出格式）
+    prompt = WritingStyleManager.apply_style_to_prompt(base_prompt, style_content)
 
-    # ⚡ Skill 支持
-    if skill_key:
-        try:
-            from app.services.skill_loader import get_all_skills_cached
-            skills = get_all_skills_cached()
-            skill = next((s for s in skills if s["template_key"] == skill_key), None)
-            if skill:
-                skill_content = skill["content"]
-                skill_name = skill["template_name"]
-                system_prompt_with_style = f"""【⚡ Skill 工作流：{skill_name}】
-
-{skill_content}
-
-⚠️ 请严格遵循上述 Skill 工作流指令进行创作！"""
-                if style_content:
-                    system_prompt_with_style += f"""
-
-【🎨 写作风格要求 - 补充】
-
-{style_content}"""
-                logger.info(f"⚡ 批量生成 - 已将 Skill '{skill_name}' 注入系统提示词（{len(skill_content)}字符）")
-            else:
-                logger.warning(f"⚠️ 批量生成 - 未找到 Skill: {skill_key}")
-        except Exception as skill_err:
-            logger.warning(f"⚠️ 批量生成 - 加载 Skill 失败: {skill_err}")
-
-    if not system_prompt_with_style and style_content:
-        system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
-
-{style_content}
-
-⚠️ 请严格遵循上述写作风格要求进行创作，这是最重要的指令！
-确保在整个章节创作过程中始终保持风格的一致性。"""
-        logger.info(f"✅ 批量生成 - 已将写作风格注入系统提示词（{len(style_content)}字符）")
+    # ⚡ Skill + 🎨 写作风格 + 表达防线统一组装（批量生成）
+    system_prompt_with_style, skill_injected = build_creation_system_prompt(
+        skill_key, style_content
+    )
+    prompt += guard_for_generation(skill_injected)
     
     # 🔢 计算 max_tokens 限制（批量生成）
     # 中文字符约 1.5-2 个 token，使用 2.5 倍系数确保有足够空间完成段落
@@ -4636,6 +4684,21 @@ async def generate_single_chapter_for_batch(
         logger.info(f"🛑 批量生成保存前被取消: batch={batch_id}, chapter={chapter.id}")
         raise Exception("批量生成任务已取消")
     
+    # === 生成后自动去味（可选）===
+    if auto_polish:
+        full_content, polish_result = await polish_chapter_after_generation(
+            db=db_session,
+            chapter=chapter,
+            project=project,
+            generated_content=full_content,
+            ai_service=ai_service,
+            model=custom_model,
+            user_id=user_id,
+            label="批量生成后自动去味",
+        )
+        if 'skipped' in polish_result:
+            logger.warning(f"⚠️ 批量生成自动去味已跳过: {polish_result['skipped']}")
+
     # 更新章节内容到数据库（使用锁保护）
     async with write_lock:
         old_word_count = chapter.word_count or 0

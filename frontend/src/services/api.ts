@@ -36,8 +36,12 @@ import type {
   GenerateCharacterRequest,
   PolishTextRequest,
   PolishCheckResult,
+  PolishAnalyzeRequest,
+  PolishAnalyzeResult,
   PolishResult,
   PolishNormalizeResult,
+  PolishSnapshot,
+  PolishSnapshotRestoreResult,
   GenerateCharactersResponse,
   GenerateOutlineResponse,
   Settings,
@@ -419,7 +423,11 @@ export const projectApi = {
       provider?: string;
       model?: string;
       message: string;
-    }>(`/projects/${id}/cover/generate`, { overwrite }),
+    }>(
+      `/projects/${id}/cover/generate`,
+      { overwrite },
+      { timeout: 200000, skipErrorToast: true },
+    ),
 
   downloadCover: async (id: string, filename?: string) => {
     const response = await axios.get(`/api/projects/${id}/cover/download`, {
@@ -835,6 +843,12 @@ export const chapterApi = {
 
   deleteChapter: (id: string) => api.delete(`/chapters/${id}`),
 
+  getPolishSnapshot: (id: string) =>
+    api.get<unknown, PolishSnapshot>(`/chapters/${id}/polish-snapshot`),
+
+  restorePolishSnapshot: (id: string) =>
+    api.post<unknown, PolishSnapshotRestoreResult>(`/chapters/${id}/polish-snapshot/restore`),
+
   checkCanGenerate: (chapterId: string) =>
     api.get<unknown, import('../types').ChapterCanGenerateResponse>(`/chapters/${chapterId}/can-generate`),
 
@@ -1093,6 +1107,10 @@ export const polishApi = {
   // 只跑确定性检测不改写，供「先看看有多少 AI 味」使用
   polishCheck: (text: string) =>
     api.post<unknown, PolishCheckResult>('/polish/check', { text }),
+
+  // 只让模型做三层诊断，不改写正文
+  polishAnalyze: (data: PolishAnalyzeRequest) =>
+    api.post<unknown, PolishAnalyzeResult>('/polish/analyze', data),
 
   // 确定性标点整理（省略号/破折号/分隔线），不调模型、不花 token
   polishNormalizePunctuation: (text: string) =>

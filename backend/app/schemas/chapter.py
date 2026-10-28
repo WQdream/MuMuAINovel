@@ -122,6 +122,10 @@ class ChapterGenerateRequest(BaseModel):
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
     narrative_perspective: Optional[str] = Field(None, description="临时人称视角：first_person/third_person/omniscient，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    auto_polish: bool = Field(
+        False,
+        description="生成完成后是否自动跑一次「AI 去味」（story-deslop 一轮改写 + 标点整理），原文另存快照可回滚",
+    )
 
 
 class BatchGenerateRequest(BaseModel):
@@ -141,6 +145,10 @@ class BatchGenerateRequest(BaseModel):
     model: Optional[str] = Field(None, description="指定使用的AI模型，不提供则使用用户默认模型")
     narrative_perspective: Optional[str] = Field(None, description="临时指定叙事人称，不提供则使用项目默认")
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
+    auto_polish: bool = Field(
+        False,
+        description="每章生成完成后是否自动去味（一轮改写 + 标点整理，不复改）",
+    )
 
 
 class BatchGenerateResponse(BaseModel):

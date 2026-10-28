@@ -655,6 +655,11 @@ export interface ChapterUpdate {
 export interface ChapterGenerateRequest {
   style_id?: number;
   target_word_count?: number;
+  model?: string;
+  narrative_perspective?: string;
+  skill_key?: string;
+  /** 生成完成后自动跑一轮去味改写，原文快照可回滚 */
+  auto_polish?: boolean;
 }
 
 // 章节生成检查响应
@@ -824,6 +829,26 @@ export interface PolishCheckResult {
   error?: string | null;
 }
 
+/** /api/polish/analyze 只分析不改写请求 */
+export interface PolishAnalyzeRequest {
+  text: string;
+  project_id?: string;
+  provider?: string;
+  model?: string;
+  temperature?: number;
+}
+
+/** /api/polish/analyze 只分析不改写返回 */
+export interface PolishAnalyzeResult {
+  analysis: string;
+  score: number;
+  blocking: number;
+  advisory: number;
+  findings: PolishFinding[];
+  checker_available: boolean;
+  check_error?: string | null;
+}
+
 /** /api/polish 改写返回 */
 export interface PolishResult {
   original_text: string;
@@ -839,6 +864,26 @@ export interface PolishResult {
   checker_available: boolean;
   check_error?: string | null;
   punctuation_fixed?: number;
+  /** 输出整理的说明（例如已剥离模型附带的扫描报告） */
+  output_notes?: string[];
+  /** 模型实际给出的三层扫描/改稿报告，仅用于“分析”标签 */
+  analysis?: string;
+}
+
+/** 自动去味原文快照 */
+export interface PolishSnapshot {
+  available: boolean;
+  note?: string;
+  word_count?: number;
+  created_at?: string;
+}
+
+/** 恢复自动去味前原文的返回 */
+export interface PolishSnapshotRestoreResult {
+  success: boolean;
+  content: string;
+  word_count: number;
+  message: string;
 }
 
 /** /api/polish/normalize-punctuation 仅整理标点的返回 */

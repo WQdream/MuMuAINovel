@@ -280,6 +280,8 @@ export async function generateChapterBackground(
     model?: string | null;
     narrative_perspective?: string | null;
     enable_mcp?: boolean;
+    skill_key?: string;
+    auto_polish?: boolean;
   },
   onProgress: TaskProgressCallback,
   onComplete: TaskCompleteCallback,

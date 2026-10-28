@@ -7,23 +7,25 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
+import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import {
   Alert, Button, Checkbox, Empty, Input, Modal, Progress, Segmented,
   Select, Space, Spin, Switch, Tag, Tooltip, theme,
 } from 'antd';
 import {
-  AimOutlined, CheckCircleOutlined, CloseCircleOutlined, DiffOutlined,
-  ExclamationCircleOutlined, FieldTimeOutlined, ReloadOutlined,
+  AimOutlined, BarChartOutlined, CheckCircleOutlined, CloseCircleOutlined, DiffOutlined,
+  ExclamationCircleOutlined, FieldTimeOutlined, FileSearchOutlined, ReloadOutlined,
   SaveOutlined, ScanOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { chapterApi, polishApi } from '../services/api';
 import type { Chapter, PolishFinding, PolishResult } from '../types';
 import { useThemeMode } from '../theme/useThemeMode';
+import MarkdownRenderer from '../components/MarkdownRenderer';
 import './Polish.css';
 
 const { TextArea } = Input;
 
-type ViewMode = 'split' | 'result' | 'original';
+type ViewMode = 'split' | 'result' | 'original' | 'analysis';
 type Tone = 'clean' | 'rough' | 'heavy' | 'untested';
 
 const SEVERITY_META: Record<string, { label: string; color: string }> = {
@@ -70,6 +72,8 @@ export default function Polish() {
   const [result, setResult] = useState<PolishResult | null>(null);
   const [checking, setChecking] = useState(false);
   const [polishing, setPolishing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisOnly, setAnalysisOnly] = useState(false);
   const [refine, setRefine] = useState(true);
   const [view, setView] = useState<ViewMode>('split');
   const [error, setError] = useState<string | null>(null);
@@ -92,12 +96,78 @@ export default function Polish() {
     if (!chapter) return;
     setSource(chapter.content || '');
     setResult(null);
+    setView('split');
     setError(null);
+    setAnalysisOnly(false);
   }, [chapters]);
 
   const findings = useMemo<PolishFinding[]>(() => result?.findings ?? [], [result]);
   const blocking = findings.filter(item => item.severity === 'blocking');
   const advisory = findings.filter(item => item.severity !== 'blocking');
+  const diffStyles = useMemo(() => ({
+    variables: {
+      light: {
+        diffViewerBackground: token.colorBgContainer,
+        diffViewerColor: token.colorText,
+        addedBackground: token.colorSuccessBg,
+        addedColor: token.colorText,
+        removedBackground: token.colorErrorBg,
+        removedColor: token.colorText,
+        wordAddedBackground: token.colorSuccessBorder,
+        wordRemovedBackground: token.colorErrorBorder,
+        addedGutterBackground: token.colorSuccessBg,
+        removedGutterBackground: token.colorErrorBg,
+        gutterBackground: token.colorFillQuaternary,
+        gutterBackgroundDark: token.colorFillTertiary,
+      },
+      dark: {
+        diffViewerBackground: token.colorBgContainer,
+        diffViewerColor: token.colorText,
+        addedBackground: 'rgba(82, 196, 26, 0.16)',
+        addedColor: token.colorText,
+        removedBackground: 'rgba(255, 77, 79, 0.16)',
+        removedColor: token.colorText,
+        wordAddedBackground: 'rgba(82, 196, 26, 0.34)',
+        wordRemovedBackground: 'rgba(255, 77, 79, 0.34)',
+        addedGutterBackground: 'rgba(82, 196, 26, 0.12)',
+        removedGutterBackground: 'rgba(255, 77, 79, 0.12)',
+        gutterBackground: token.colorFillQuaternary,
+        gutterBackgroundDark: token.colorFillSecondary,
+      },
+    },
+    line: {
+      padding: '7px 1px',
+      fontSize: '13px',
+      lineHeight: '1.95',
+      whiteSpace: 'pre-wrap' as const,
+      wordBreak: 'break-word' as const,
+    },
+    wordAdded: {
+      padding: '0 1px',
+      borderRadius: '2px',
+      background: resolvedMode === 'dark'
+        ? 'rgba(82, 196, 26, 0.45)'
+        : token.colorSuccessBg,
+      textDecoration: 'underline 1px',
+      textUnderlineOffset: '2px',
+    },
+    wordRemoved: {
+      padding: '0 1px',
+      borderRadius: '2px',
+      background: resolvedMode === 'dark'
+        ? 'rgba(255, 77, 79, 0.45)'
+        : token.colorErrorBg,
+      textDecoration: 'line-through',
+      textDecorationThickness: '1px',
+    },
+    contentText: {
+      fontFamily: 'inherit',
+    },
+    lineNumber: {
+      fontFamily: 'inherit',
+      fontSize: '11px',
+    },
+  }), [resolvedMode, token]);
 
   const runCheck = async () => {
     if (!source.trim()) {
@@ -128,6 +198,7 @@ export default function Polish() {
             rounds: 0,
             checker_available: true,
             check_error: null,
+            analysis: prev?.analysis,
           }));
     } catch (e) {
       setError(e instanceof Error ? e.message : '检测失败');
@@ -142,6 +213,7 @@ export default function Polish() {
       return;
     }
     setPolishing(true);
+    setAnalysisOnly(false);
     setError(null);
     try {
       const res = await polishApi.polishText({
@@ -150,12 +222,51 @@ export default function Polish() {
         refine_until_clean: refine,
       });
       setResult(res);
+      setAnalysisOnly(false);
       setView('split');
       if (!res.checker_available) setError(res.check_error ?? '运行环境未执行机器检测');
     } catch (e) {
       setError(e instanceof Error ? e.message : '去味失败');
     } finally {
       setPolishing(false);
+    }
+  };
+
+  const runAnalyze = async () => {
+    if (!source.trim()) {
+      setError('先粘贴或选择要分析的正文');
+      return;
+    }
+    setAnalyzing(true);
+    setAnalysisOnly(false);
+    setError(null);
+    try {
+      const res = await polishApi.polishAnalyze({
+        text: source,
+        project_id: projectId,
+      });
+      setResult({
+        original_text: source,
+        polished_text: '',
+        word_count_before: source.length,
+        word_count_after: 0,
+        score_before: res.score,
+        score_after: res.score,
+        blocking_before: res.blocking,
+        blocking_after: res.blocking,
+        findings: res.findings,
+        rounds: 0,
+        checker_available: res.checker_available,
+        check_error: res.check_error,
+        analysis: res.analysis,
+      });
+      setAnalysisOnly(true);
+      setView('analysis');
+      if (!res.checker_available) setError(res.check_error ?? '运行环境未执行机器检测');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '分析失败');
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -211,6 +322,7 @@ export default function Polish() {
       if (res.changed) {
         setSource(res.normalized);
         setResult(null);
+        setAnalysisOnly(false);
         Modal.success({ title: `已整理 ${res.count} 处标点`, content: '省略号、破折号与分隔线已按上游规则替换，未改动文字。' });
       } else {
         Modal.info({ title: '无需整理', content: '标点层没有命中，或已被前一次整理处理干净。' });
@@ -222,7 +334,7 @@ export default function Polish() {
     }
   };
 
-  const busy = checking || polishing;
+  const busy = checking || polishing || analyzing;
   const hasResult = Boolean(result?.polished_text);
   const afterScore = hasResult ? (result?.score_after ?? -1) : -1;
 
@@ -240,10 +352,15 @@ export default function Polish() {
           <Tooltip title="改后仍有「必须改」项时自动复改，最多两轮">
             <span className="polish-switch">自动复改 <Switch checked={refine} onChange={setRefine} disabled={busy} /></span>
           </Tooltip>
-          <Button icon={<AimOutlined />} onClick={runCheck} loading={checking} disabled={polishing}>仅检测</Button>
+          <Button icon={<AimOutlined />} onClick={runCheck} loading={checking} disabled={polishing || analyzing || normalizing}>仅检测</Button>
           <Tooltip title="只按上游规则替换省略号、破折号与分隔线，不调用模型">
             <Button icon={<DiffOutlined />} onClick={runNormalize} loading={normalizing} disabled={busy}>
               仅洗标点
+            </Button>
+          </Tooltip>
+          <Tooltip title="按 story-deslop 做表达、用笔、故事三层诊断，只给分析，不改写正文">
+            <Button icon={<FileSearchOutlined />} onClick={runAnalyze} loading={analyzing} disabled={checking || polishing || normalizing}>
+              只分析
             </Button>
           </Tooltip>
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={runPolish} loading={polishing} disabled={busy}>
@@ -279,7 +396,14 @@ export default function Polish() {
           <TextArea
             className="polish-textarea"
             value={source}
-            onChange={e => setSource(e.target.value)}
+            onChange={e => {
+              setSource(e.target.value);
+              if (result) {
+                setResult(null);
+                setView('split');
+                setAnalysisOnly(false);
+              }
+            }}
             placeholder="粘贴待处理正文，或用上方「从章节载入」"
           />
           <div className="polish-col-foot">
@@ -309,6 +433,7 @@ export default function Polish() {
                 { label: '对照', value: 'split', icon: <DiffOutlined /> },
                 { label: '改后', value: 'result' },
                 { label: '原文', value: 'original' },
+                { label: '分析', value: 'analysis', icon: <BarChartOutlined /> },
               ]}
             />
             <Button size="small" type="text" icon={<SaveOutlined />} disabled={!chapterId || !hasResult} onClick={saveToChapter}>
@@ -326,23 +451,82 @@ export default function Polish() {
             />
             {result && result.rounds > 1 && <Tag color="processing">复改 {result.rounds - 1} 轮</Tag>}
             {!!result?.punctuation_fixed && <Tag color="success">整理标点 {result.punctuation_fixed}</Tag>}
+            {!!result?.output_notes?.length && <Tag color="blue">正文与分析已分离</Tag>}
+            {!!result?.analysis && <Tag color="cyan">分析可查看</Tag>}
+            {analysisOnly && <Tag color="geekblue">仅分析</Tag>}
             {result && !result.checker_available && <Tag>未机器检测</Tag>}
           </div>
 
-          <Spin spinning={polishing} tip="改写中，可能包含多轮复改…">
+          <Spin spinning={polishing || analyzing} tip={analyzing ? '正在做三层诊断…' : '改写中，可能包含多轮复改…'}>
             {view === 'split' ? (
-              <div className="polish-diff">
-                <div className="polish-diff-half">
-                  <span className="polish-diff-label">原文</span>
-                  <div className="polish-pane">
-                    {source || <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有正文" />}
+              hasResult ? (
+                <div className="polish-diff-viewer">
+                  <div className="polish-diff-key">
+                    <span className="polish-diff-key__removed">删除</span>
+                    <span className="polish-diff-key__added">新增</span>
+                    <span>逐字对照，正文按原稿顺序展示</span>
+                  </div>
+                  <ReactDiffViewer
+                    oldValue={source}
+                    newValue={result?.polished_text || ''}
+                    splitView
+                    compareMethod={DiffMethod.CHARS}
+                    leftTitle="原文"
+                    rightTitle="改后"
+                    showDiffOnly={false}
+                    hideLineNumbers={false}
+                    useDarkTheme={resolvedMode === 'dark'}
+                    styles={diffStyles}
+                    renderContent={value => <>{value}</>}
+                  />
+                </div>
+              ) : (
+                <div className="polish-diff">
+                  <div className="polish-diff-half">
+                    <span className="polish-diff-label">原文</span>
+                    <div className="polish-pane">
+                      {source || <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有正文" />}
+                    </div>
+                  </div>
+                  <div className="polish-diff-half">
+                    <span className="polish-diff-label">改后</span>
+                    <div className="polish-pane polish-pane--result">
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点「去味改写」看结果" />
+                    </div>
                   </div>
                 </div>
-                <div className="polish-diff-half">
-                  <span className="polish-diff-label">改后</span>
-                  <div className="polish-pane polish-pane--result">
-                    {result?.polished_text || <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点「去味改写」看结果" />}
-                  </div>
+              )
+            ) : view === 'analysis' ? (
+              <div className="polish-analysis">
+                <div className="polish-analysis-head">
+                  <span className="polish-analysis-kicker">{analysisOnly ? '诊断报告' : '改稿依据'}</span>
+                  <span className="polish-analysis-desc">
+                    {analysisOnly
+                      ? '本次只分析、不改写；报告不会写回正文'
+                      : '模型实际返回的扫描与判断，仅用于查看，不会写回正文'}
+                  </span>
+                </div>
+                {result?.analysis ? (
+                  <MarkdownRenderer content={result.analysis} compact />
+                ) : (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={hasResult
+                      ? '本次模型直接交付了正文，没有附带扫描报告'
+                      : analysisOnly
+                        ? '点「只分析」后，这里会显示三层诊断报告'
+                        : '完成去味改写后，这里会显示模型的扫描分析'}
+                  />
+                )}
+                <div className="polish-analysis-findings">
+                  <span style={{ color: token.colorTextSecondary }}>
+                    {analysisOnly ? '脚本检测' : '脚本复扫'}：{blocking.length} 必须改 / {advisory.length} 建议改
+                  </span>
+                  {!!advisory.length && (
+                    <span className="polish-analysis-desc">
+                      {analysisOnly ? '原文仍有建议项，可在下方命中明细逐条核对。' : '改后仍有建议项，可在下方命中明细逐条核对。'}
+                    </span>
+                  )}
                 </div>
               </div>
             ) : (
