@@ -1,48 +1,49 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Button,
   Card,
-  Col,
-  Divider,
   Form,
   Input,
-  Layout,
-  Row,
   Space,
   Spin,
   Tabs,
-  Tag,
   Typography,
   message,
   theme,
 } from 'antd';
 import {
-  BookOutlined,
+  KeyOutlined,
   LockOutlined,
   MailOutlined,
-  RobotOutlined,
   SafetyCertificateOutlined,
-  TeamOutlined,
-  ThunderboltOutlined,
   UserOutlined,
 } from '@ant-design/icons';
 import { authApi } from '../services/api';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ThemeSwitch from '../components/ThemeSwitch';
+import BrandMark from '../components/BrandMark';
+import { BRAND_COPYRIGHT } from '../config/brand';
 
-const { Title, Paragraph, Text } = Typography;
+const { Title, Text } = Typography;
 
 interface AuthConfig {
   local_auth_enabled: boolean;
-  linuxdo_enabled: boolean;
   email_auth_enabled: boolean;
+  email_login_enabled: boolean;
   email_register_enabled: boolean;
 }
 
 interface LocalLoginValues {
   username: string;
   password: string;
+}
+
+interface LocalRegisterValues {
+  username: string;
+  password: string;
+  confirmPassword: string;
+  invite_code: string;
 }
 
 interface EmailLoginValues {
@@ -72,17 +73,16 @@ export default function Login() {
   const [checking, setChecking] = useState(true);
   const [authConfig, setAuthConfig] = useState<AuthConfig>({
     local_auth_enabled: false,
-    linuxdo_enabled: false,
     email_auth_enabled: false,
+    email_login_enabled: false,
     email_register_enabled: false,
   });
   const [localForm] = Form.useForm<LocalLoginValues>();
+  const [localRegisterForm] = Form.useForm<LocalRegisterValues>();
   const [emailLoginForm] = Form.useForm<EmailLoginValues>();
   const [emailRegisterForm] = Form.useForm<EmailRegisterValues>();
   const [resetPasswordForm] = Form.useForm<ResetPasswordValues>();
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
-  const primaryButtonShadow = `0 8px 20px ${alphaColor(token.colorPrimary, 0.28)}`;
   const [loginCodeSending, setLoginCodeSending] = useState(false);
   const [registerCodeSending, setRegisterCodeSending] = useState(false);
   const [resetCodeSending, setResetCodeSending] = useState(false);
@@ -93,7 +93,8 @@ export default function Login() {
 
   const localAuthEnabled = authConfig.local_auth_enabled;
   const emailAuthEnabled = authConfig.email_auth_enabled;
-  const emailRegisterEnabled = authConfig.email_register_enabled;
+  const emailLoginEnabled = emailAuthEnabled && authConfig.email_login_enabled;
+  const emailRegisterEnabled = emailAuthEnabled && authConfig.email_register_enabled;
 
   useEffect(() => {
     const timers = [
@@ -138,8 +139,8 @@ export default function Login() {
           console.error('获取认证配置失败:', error);
           setAuthConfig({
             local_auth_enabled: false,
-            linuxdo_enabled: false,
             email_auth_enabled: false,
+            email_login_enabled: false,
             email_register_enabled: false,
           });
         }
@@ -163,6 +164,26 @@ export default function Login() {
       }
     } catch (error) {
       console.error('本地登录失败:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLocalRegister = async (values: LocalRegisterValues) => {
+    try {
+      setLoading(true);
+      const response = await authApi.registerLocal({
+        username: values.username.trim(),
+        password: values.password,
+        invite_code: values.invite_code.trim(),
+      });
+      if (response.success) {
+        message.success('注册成功，已自动登录');
+        localRegisterForm.resetFields();
+        handleLoginSuccess();
+      }
+    } catch (error) {
+      console.error('邀请码注册失败:', error);
     } finally {
       setLoading(false);
     }
@@ -268,42 +289,11 @@ export default function Login() {
     }
   };
 
-  const loginTips = useMemo(() => {
-    const tips: string[] = [];
-
-    if (localAuthEnabled) {
-      tips.push('本地登录默认账号：admin / admin123');
-    }
-
-    if (emailAuthEnabled) {
-      tips.push('邮箱注册用户支持通过邮箱验证码重置密码。');
-    }
-
-    return tips;
-  }, [emailAuthEnabled, localAuthEnabled]);
-
-  const featureItems = [
-    {
-      icon: <RobotOutlined />,
-      title: '多 AI 模型协同',
-      description: '支持 OpenAI、Gemini、Claude 等主流模型，按场景灵活切换。',
-    },
-    {
-      icon: <ThunderboltOutlined />,
-      title: '智能向导驱动',
-      description: '自动生成大纲、角色与世界观，快速搭建完整故事骨架。',
-    },
-    {
-      icon: <TeamOutlined />,
-      title: '角色组织管理',
-      description: '人物关系、组织架构可视化管理，复杂设定也能清晰掌控。',
-    },
-    {
-      icon: <BookOutlined />,
-      title: '章节创作闭环',
-      description: '支持章节生成、编辑、重写与润色，持续提升内容质量。',
-    },
-  ];
+  const loginTip = localAuthEnabled
+    ? '账号可通过管理员发放的邀请码注册；请勿在公共设备保存密码。'
+    : emailLoginEnabled
+      ? '忘记密码可使用邮箱验证码重置。'
+      : '';
 
   const renderLocalLogin = () => (
     <>
@@ -316,26 +306,26 @@ export default function Login() {
       >
         <Form.Item
           name="username"
-          label="管理账号"
-          rules={[{ required: true, message: '请输入管理账号/邮箱' }]}
+          label="账号"
+          rules={[{ required: true, message: '请输入账号' }]}
         >
           <Input
             prefix={<UserOutlined style={{ color: token.colorTextTertiary }} />}
-            placeholder="请输入管理账号/邮箱"
+            placeholder="请输入账号"
             autoComplete="username"
-            style={{ height: 46, borderRadius: 12 }}
+            style={{ height: 46, borderRadius: 4 }}
           />
         </Form.Item>
         <Form.Item
           name="password"
-          label="访问密钥"
-          rules={[{ required: true, message: '请输入访问密钥' }]}
+          label="登录密码"
+          rules={[{ required: true, message: '请输入登录密码' }]}
         >
           <Input.Password
             prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
-            placeholder="请输入访问密钥"
+            placeholder="请输入登录密码"
             autoComplete="current-password"
-            style={{ height: 46, borderRadius: 12 }}
+            style={{ height: 46, borderRadius: 4 }}
           />
         </Form.Item>
         <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
@@ -348,17 +338,120 @@ export default function Login() {
               height: 46,
               fontSize: 16,
               fontWeight: 600,
-              background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.86)} 100%)`,
+              background: token.colorPrimary,
               border: 'none',
-              borderRadius: '12px',
-              boxShadow: primaryButtonShadow,
+              borderRadius: 4,
             }}
           >
-            登录系统
+            进入创作台
           </Button>
         </Form.Item>
       </Form>
     </>
+  );
+
+  const renderLocalRegister = () => (
+    <Form
+      form={localRegisterForm}
+      layout="vertical"
+      onFinish={handleLocalRegister}
+      size="large"
+      style={{ marginTop: 16 }}
+    >
+      <Form.Item
+        name="username"
+        label="账号"
+        rules={[
+          { required: true, message: '请输入账号' },
+          { min: 3, max: 32, message: '账号长度应为 3 到 32 个字符' },
+          { pattern: /^[A-Za-z0-9_]+$/, message: '账号只能包含字母、数字和下划线' },
+        ]}
+      >
+        <Input
+          prefix={<UserOutlined style={{ color: token.colorTextTertiary }} />}
+          placeholder="设置登录账号"
+          autoComplete="username"
+          style={{ height: 46, borderRadius: 4 }}
+        />
+      </Form.Item>
+
+      <Form.Item
+        name="password"
+        label="密码"
+        rules={[
+          { required: true, message: '请输入密码' },
+          { min: 6, message: '密码长度至少为 6 个字符' },
+          { max: 128, message: '密码长度不能超过 128 个字符' },
+        ]}
+      >
+        <Input.Password
+          prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
+          placeholder="设置登录密码"
+          autoComplete="new-password"
+          style={{ height: 46, borderRadius: 4 }}
+        />
+      </Form.Item>
+
+      <Form.Item
+        name="confirmPassword"
+        label="确认密码"
+        dependencies={['password']}
+        rules={[
+          { required: true, message: '请再次输入密码' },
+          ({ getFieldValue }) => ({
+            validator(_, value) {
+              if (!value || getFieldValue('password') === value) {
+                return Promise.resolve();
+              }
+              return Promise.reject(new Error('两次输入的密码不一致'));
+            },
+          }),
+        ]}
+      >
+        <Input.Password
+          prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
+          placeholder="请再次输入密码"
+          autoComplete="new-password"
+          style={{ height: 46, borderRadius: 4 }}
+        />
+      </Form.Item>
+
+      <Form.Item
+        name="invite_code"
+        label="邀请码"
+        rules={[{ required: true, message: '请输入邀请码' }]}
+      >
+        <Input
+          prefix={<KeyOutlined style={{ color: token.colorTextTertiary }} />}
+          placeholder="请输入管理员发放的邀请码"
+          autoComplete="off"
+          style={{ height: 46, borderRadius: 4, textTransform: 'uppercase' }}
+        />
+      </Form.Item>
+
+      <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+        <Button
+          type="primary"
+          htmlType="submit"
+          loading={loading}
+          block
+          style={{
+            height: 46,
+            fontSize: 16,
+            fontWeight: 600,
+            background: token.colorPrimary,
+            border: 'none',
+            borderRadius: 4,
+          }}
+        >
+          注册并登录
+        </Button>
+      </Form.Item>
+
+      <Text type="secondary" style={{ marginTop: 12, display: 'block' }}>
+        每个邀请码仅可使用一次。注册成功后将创建平台用户账号，并自动进入创作台。
+      </Text>
+    </Form>
   );
 
   const renderEmailLogin = () => {
@@ -373,7 +466,7 @@ export default function Login() {
               </Button>
             </Space>
 
-            <Card size="small" bordered={false} style={{ borderRadius: 12, background: token.colorFillAlter }}>
+            <Card size="small" bordered={false} style={{ borderRadius: 4, background: token.colorFillAlter }}>
               <Form
                 form={resetPasswordForm}
                 layout="vertical"
@@ -469,7 +562,7 @@ export default function Login() {
             prefix={<MailOutlined style={{ color: token.colorTextTertiary }} />}
             placeholder="请输入已注册邮箱"
             autoComplete="email"
-            style={{ height: 46, borderRadius: 12 }}
+            style={{ height: 46, borderRadius: 4 }}
           />
         </Form.Item>
 
@@ -487,7 +580,7 @@ export default function Login() {
                 prefix={<SafetyCertificateOutlined style={{ color: token.colorTextTertiary }} />}
                 placeholder="请输入 6 位登录验证码"
                 maxLength={6}
-                style={{ height: 46, borderRadius: '12px 0 0 12px' }}
+                style={{ height: 46, borderRadius: '4px 0 0 4px' }}
               />
             </Form.Item>
             <Button
@@ -511,10 +604,9 @@ export default function Login() {
               height: 46,
               fontSize: 16,
               fontWeight: 600,
-              background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.86)} 100%)`,
+              background: token.colorPrimary,
               border: 'none',
-              borderRadius: '12px',
-              boxShadow: primaryButtonShadow,
+              borderRadius: 4,
             }}
           >
             验证码登录
@@ -550,7 +642,7 @@ export default function Login() {
           prefix={<MailOutlined style={{ color: token.colorTextTertiary }} />}
           placeholder="请输入注册邮箱"
           autoComplete="email"
-          style={{ height: 46, borderRadius: 12 }}
+          style={{ height: 46, borderRadius: 4 }}
         />
       </Form.Item>
 
@@ -568,7 +660,7 @@ export default function Login() {
               prefix={<SafetyCertificateOutlined style={{ color: token.colorTextTertiary }} />}
               placeholder="请输入 6 位验证码"
               maxLength={6}
-              style={{ height: 46, borderRadius: '12px 0 0 12px' }}
+              style={{ height: 46, borderRadius: '4px 0 0 4px' }}
             />
           </Form.Item>
           <Button
@@ -591,7 +683,7 @@ export default function Login() {
           prefix={<UserOutlined style={{ color: token.colorTextTertiary }} />}
           placeholder="选填，默认使用邮箱前缀"
           autoComplete="nickname"
-          style={{ height: 46, borderRadius: 12 }}
+          style={{ height: 46, borderRadius: 4 }}
         />
       </Form.Item>
 
@@ -607,7 +699,7 @@ export default function Login() {
           prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
           placeholder="请输入登录密码"
           autoComplete="new-password"
-          style={{ height: 46, borderRadius: 12 }}
+          style={{ height: 46, borderRadius: 4 }}
         />
       </Form.Item>
 
@@ -631,7 +723,7 @@ export default function Login() {
           prefix={<LockOutlined style={{ color: token.colorTextTertiary }} />}
           placeholder="请再次输入登录密码"
           autoComplete="new-password"
-          style={{ height: 46, borderRadius: 12 }}
+          style={{ height: 46, borderRadius: 4 }}
         />
       </Form.Item>
 
@@ -645,10 +737,9 @@ export default function Login() {
             height: 46,
             fontSize: 16,
             fontWeight: 600,
-            background: `linear-gradient(90deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.86)} 100%)`,
+            background: token.colorPrimary,
             border: 'none',
-            borderRadius: '12px',
-            boxShadow: primaryButtonShadow,
+            borderRadius: 4,
           }}
         >
           注册并登录
@@ -656,7 +747,9 @@ export default function Login() {
       </Form.Item>
 
       <Text type="secondary" style={{ marginTop: 12, display: 'block' }}>
-        验证码将发送到你填写的邮箱，若未收到请检查垃圾箱或稍后重试。注册后可通过邮箱验证码登录，也支持邮箱重置密码。
+        {emailLoginEnabled
+          ? '验证码将发送到你填写的邮箱，若未收到请检查垃圾箱或稍后重试。注册后可通过邮箱验证码登录，也支持邮箱重置密码。'
+          : '验证码将发送到你填写的邮箱，注册成功后会自动进入创作台。当前邮箱登录入口暂未开放。'}
       </Text>
     </Form>
   );
@@ -666,12 +759,17 @@ export default function Login() {
       ? [
           {
             key: 'local-login',
-            label: '本地登录',
+            label: '登录',
             children: renderLocalLogin(),
+          },
+          {
+            key: 'local-register',
+            label: '注册',
+            children: renderLocalRegister(),
           },
         ]
       : []),
-    ...(emailAuthEnabled
+    ...(emailLoginEnabled
       ? [
           {
             key: 'email-login',
@@ -680,7 +778,7 @@ export default function Login() {
           },
         ]
       : []),
-    ...(emailAuthEnabled && emailRegisterEnabled
+    ...(emailRegisterEnabled
       ? [
           {
             key: 'email-register',
@@ -708,247 +806,96 @@ export default function Login() {
   }
 
   return (
-    <>
-      <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
-        <div
-          style={{
-            position: 'fixed',
-            top: 20,
-            right: 20,
-            zIndex: 10,
-            padding: '8px 10px',
-            borderRadius: 12,
-            background: alphaColor(token.colorBgContainer, 0.9),
-            border: `1px solid ${token.colorBorderSecondary}`,
-            backdropFilter: 'blur(6px)',
-          }}
-        >
+    <div className="lux-login">
+      <section className="lux-login-stage" aria-hidden="false">
+        <div className="lux-login-mark-row">
+          <BrandMark size={32} textSize={16} color="var(--editorial-ink)" />
+        </div>
+
+        <div className="lux-login-stage-content">
+          <div className="lux-login-hero">
+            <h1 className="lux-login-title">
+              把灵感
+              <br />
+              <em>写成故事</em>
+            </h1>
+            <div className="lux-login-rule" />
+            <p className="lux-login-lead">
+              人物、章节与伏笔，都在同一张书桌上。
+            </p>
+          </div>
+
+          <div className="lux-login-desk">
+            <article className="lux-login-manuscript" aria-label="创作稿纸示意">
+              <div className="lux-login-manuscript-head">
+                <span>CHAPTER 03</span>
+                <span>草稿</span>
+              </div>
+              <h2>雨落在旧站台</h2>
+              <p>
+                林晚把那张蓝色车票压进书页，决定再等最后一班车。
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <div className="lux-login-copyright">{BRAND_COPYRIGHT}</div>
+      </section>
+
+      <section className="lux-login-panel">
+        <div className="lux-login-theme">
           <ThemeSwitch size="small" />
         </div>
-        <Row style={{ minHeight: '100vh' }}>
-          <Col xs={0} lg={11}>
-            <section
-              style={{
-                height: '100%',
-                padding: '44px 64px 88px',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                position: 'relative',
-                overflow: 'hidden',
-                backgroundColor: alphaColor(token.colorBgContainer, 0.78),
-                backgroundImage: `linear-gradient(${alphaColor(token.colorTextSecondary, 0.06)} 1px, transparent 1px), linear-gradient(90deg, ${alphaColor(token.colorTextSecondary, 0.06)} 1px, transparent 1px)`,
-                backgroundSize: '68px 68px',
-              }}
-            >
-              <div
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: `radial-gradient(circle at 25% 20%, ${alphaColor(token.colorPrimary, 0.12)} 0%, transparent 50%)`,
-                  pointerEvents: 'none',
-                }}
+
+        <div className="lux-login-form">
+          <div className="lux-login-mobile-brand">
+            <BrandMark size={31} textSize={16} />
+            <span>小说创作工作台</span>
+          </div>
+          <h2 className="lux-login-form-title">欢迎回来</h2>
+
+          <div style={{ marginTop: 28 }}>
+            {authTabs.length > 0 ? (
+              <Tabs defaultActiveKey={authTabs[0].key} items={authTabs} />
+            ) : null}
+
+            {authTabs.length === 0 ? (
+              <Alert
+                type="warning"
+                showIcon
+                message="当前未启用可用登录方式"
+                description="请联系管理员在系统配置中启用本地登录或邮箱认证。"
               />
+            ) : null}
 
-              <div
-                style={{
-                  position: 'relative',
-                  zIndex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  gap: 34,
-                  width: '100%',
-                }}
-              >
-                <Space align="center" size={14}>
-                  <div
-                    style={{
-                      width: 46,
-                      height: 46,
-                      borderRadius: 14,
-                      background: `linear-gradient(135deg, ${token.colorPrimary} 0%, ${alphaColor(token.colorPrimary, 0.7)} 100%)`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: primaryButtonShadow,
-                    }}
-                  >
-                    <img
-                      src="/logo.svg"
-                      alt="小新工坊"
-                      style={{ width: 26, height: 26, filter: 'brightness(0) invert(1)' }}
-                    />
-                  </div>
-                  <Title level={3} style={{ margin: 0, color: token.colorText }}>
-                    小新工坊
-                  </Title>
-                </Space>
+            {emailAuthEnabled && !emailLoginEnabled && emailRegisterEnabled ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 12 }}
+                message="邮箱登录暂未开放"
+                description="当前仅开放邮箱注册，注册成功后可先进入创作台。"
+              />
+            ) : null}
 
-                <Space direction="vertical" size={32} style={{ width: '100%' }}>
-                  <div style={{ maxWidth: 'min(860px, 100%)' }}>
-                    <Title
-                      level={1}
-                      style={{
-                        marginBottom: 22,
-                        color: token.colorText,
-                        lineHeight: 1.12,
-                        fontWeight: 800,
-                        fontSize: 'clamp(52px, 3vw, 78px)',
-                      }}
-                    >
-                      基于 AI 的
-                      <br />
-                      <span
-                        style={{
-                          backgroundImage: `linear-gradient(90deg, ${token.colorPrimary} 0%, #4A4A42 100%)`,
-                          WebkitBackgroundClip: 'text',
-                          backgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent',
-                          color: token.colorPrimary,
-                        }}
-                      >
-                        智能小说创作助手
-                      </span>
-                    </Title>
-                    <Paragraph
-                      style={{
-                        fontSize: 'clamp(18px, 1vw, 22px)',
-                        lineHeight: 1.85,
-                        color: token.colorTextSecondary,
-                        marginBottom: 0,
-                        maxWidth: 800,
-                      }}
-                    >
-                      从灵感到成稿，围绕「多模型协同、创作流程自动化、角色关系管理、章节精修」构建一体化创作工作台。
-                    </Paragraph>
-                  </div>
+            {emailLoginEnabled && !emailRegisterEnabled ? (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginTop: 12 }}
+                message="邮箱注册暂未开放"
+                description="当前仅开放邮箱验证码登录与找回密码，如需注册请联系管理员。"
+              />
+            ) : null}
 
-                  <Row gutter={[20, 20]} style={{ width: '100%', maxWidth: 'min(920px, 100%)' }}>
-                    {featureItems.map((item) => (
-                      <Col span={12} key={item.title}>
-                        <Card
-                          size="small"
-                          bordered={false}
-                          style={{
-                            height: '100%',
-                            minHeight: 120,
-                            borderRadius: 16,
-                            background: alphaColor(token.colorBgContainer, 0.9),
-                          }}
-                          bodyStyle={{ padding: 16 }}
-                        >
-                          <Space direction="vertical" size={8}>
-                            <Space size={10} style={{ color: token.colorPrimary, fontWeight: 700, fontSize: 15 }}>
-                              {item.icon}
-                              <span>{item.title}</span>
-                            </Space>
-                            <Paragraph style={{ marginBottom: 0, color: token.colorTextSecondary, fontSize: 14, lineHeight: 1.65 }}>
-                              {item.description}
-                            </Paragraph>
-                          </Space>
-                        </Card>
-                      </Col>
-                    ))}
-                  </Row>
-                </Space>
-
-                <Space size={[10, 14]} wrap style={{ maxWidth: 'min(860px, 100%)' }}>
-                  <Tag color="blue">OpenAI</Tag>
-                  <Tag color="geekblue">Gemini</Tag>
-                  <Tag color="purple">Claude</Tag>
-                  <Tag color="green">Docker Compose</Tag>
-                  <Tag color="gold">PostgreSQL</Tag>
-                </Space>
+            {loginTip && (
+              <div className="lux-login-note">
+                <p>{loginTip}</p>
               </div>
-
-              <Paragraph
-                style={{
-                  marginBottom: 0,
-                  fontSize: 12,
-                  color: token.colorTextTertiary,
-                  position: 'relative',
-                  zIndex: 1,
-                  letterSpacing: 0.4,
-                }}
-              >
-                © {new Date().getFullYear()} 小新工坊
-              </Paragraph>
-            </section>
-          </Col>
-
-          <Col xs={24} lg={13}>
-            <section
-              style={{
-                minHeight: '100vh',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '48px min(7vw, 72px)',
-                background: token.colorBgLayout,
-              }}
-            >
-              <div style={{ width: '100%', maxWidth: 520 }}>
-                <Space direction="vertical" size={4}>
-                  <Title level={2} style={{ marginBottom: 0, fontWeight: 700, color: token.colorText }}>
-                    欢迎回来
-                  </Title>
-                  <Paragraph style={{ marginBottom: 0, color: token.colorTextSecondary }}>
-                    登录小新工坊，继续你的小说创作项目。
-                  </Paragraph>
-                </Space>
-
-                <div style={{ marginTop: 22 }}>
-                  {authTabs.length > 0 ? (
-                    <Tabs defaultActiveKey={authTabs[0].key} items={authTabs} />
-                  ) : null}
-
-                  {!localAuthEnabled && !emailAuthEnabled ? (
-                    <Alert
-                      type="warning"
-                      showIcon
-                      message="当前未启用可用登录方式"
-                      description="请联系管理员在系统配置中启用本地登录或邮箱认证。"
-                    />
-                  ) : null}
-
-                  {emailAuthEnabled && !emailRegisterEnabled ? (
-                    <Alert
-                      type="info"
-                      showIcon
-                      style={{ marginTop: 12, borderRadius: 12 }}
-                      message="邮箱注册暂未开放"
-                      description="当前仅开放邮箱验证码登录与找回密码，如需注册请联系管理员。"
-                    />
-                  ) : null}
-
-                  <Divider style={{ margin: '20px 0 14px' }} />
-                  <Alert
-                    type="info"
-                    showIcon
-                    icon={<SafetyCertificateOutlined style={{ color: token.colorTextSecondary }} />}
-                    style={{
-                      background: token.colorBgContainer,
-                      border: `1px solid ${token.colorBorderSecondary}`,
-                      borderRadius: 12,
-                    }}
-                    message="登录说明"
-                    description={(
-                      <ul style={{ margin: 0, paddingLeft: 18 }}>
-                        {loginTips.map((tip) => (
-                          <li key={tip} style={{ marginBottom: 4 }}>
-                            {tip}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  />
-                </div>
-              </div>
-            </section>
-          </Col>
-        </Row>
-      </Layout>
-    </>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

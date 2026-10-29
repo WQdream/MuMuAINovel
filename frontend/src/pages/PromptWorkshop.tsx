@@ -170,7 +170,7 @@ export default function PromptWorkshop() {
       setTotal(response.data?.total || 0);
     } catch (error) {
       console.error('Failed to load workshop items:', error);
-      message.error('加载提示词工坊失败');
+      message.error('加载灵感模板失败');
     } finally {
       setLoading(false);
     }
@@ -391,7 +391,7 @@ export default function PromptWorkshop() {
         <Alert
           type="warning"
           message="云端服务未连接"
-          description="无法访问提示词工坊，请检查网络连接或稍后重试"
+          description="无法访问灵感模板库，请检查网络连接或稍后重试"
           icon={<DisconnectOutlined />}
           showIcon
           style={{ marginBottom: 12 }}
@@ -982,7 +982,7 @@ export default function PromptWorkshop() {
           <div className="pw-header-main">
             <CloudOutlined style={{ fontSize: 20, color: token.colorTextSecondary, marginTop: 2 }} />
             <div style={{ minWidth: 0 }}>
-              <h2 className="pw-title">提示词工坊</h2>
+              <h2 className="pw-title">灵感模板</h2>
               <p className="pw-subtitle">
                 浏览社区分享的提示词，一键导入为你的写作风格。
               </p>

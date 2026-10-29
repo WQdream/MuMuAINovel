@@ -1,0 +1,114 @@
+.invite-page-head {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+}
+
+.invite-compact-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  color: var(--adm-tertiary);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.invite-stat {
+  padding: 0 10px;
+  border-right: 1px solid var(--adm-border);
+}
+
+.invite-stat:first-child {
+  padding-left: 0;
+}
+
+.invite-stat strong {
+  margin-right: 3px;
+  color: var(--adm-text);
+  font-family: var(--font-editorial);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.invite-filter-count {
+  margin-left: 10px;
+  color: var(--adm-secondary);
+}
+
+.invite-code {
+  color: var(--adm-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.075em;
+  white-space: nowrap;
+}
+
+.invite-code-cell {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.invite-code--disabled {
+  color: var(--adm-tertiary);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.invite-user-id {
+  display: block;
+  max-width: 145px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invite-code-copy.ant-btn {
+  padding-inline: 5px;
+  color: var(--adm-tertiary);
+}
+
+.invite-code-copy.ant-btn:hover {
+  color: var(--adm-text) !important;
+}
+
+.invite-generated-list {
+  display: grid;
+  gap: 8px;
+  max-height: 330px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.invite-generated-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--adm-border);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--adm-accent) 3%, var(--adm-panel));
+}
+
+.invite-generated-copy.ant-btn {
+  flex: none;
+  color: var(--adm-secondary);
+}
+
+@media (max-width: 760px) {
+  .invite-compact-stats {
+    width: 100%;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .invite-stat {
+    padding: 0 8px;
+  }
+
+  .invite-filter-count {
+    margin-left: 0;
+    padding-left: 8px;
+  }
+}

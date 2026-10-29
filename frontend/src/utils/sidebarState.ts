@@ -1,5 +1,8 @@
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'mumu_sidebar_collapsed';
 
+export const SIDEBAR_WIDTH = 208;
+export const SIDEBAR_COLLAPSED_WIDTH = 64;
+
 export const getStoredSidebarCollapsed = (): boolean => {
   if (typeof window === 'undefined') {
     return false;

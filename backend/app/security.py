@@ -19,12 +19,11 @@ def _session_secret() -> bytes:
     secret = (
         getattr(settings, "SESSION_SECRET_KEY", None)
         or getattr(settings, "session_secret_key", None)
-        or settings.LINUXDO_CLIENT_SECRET
         or settings.LOCAL_AUTH_PASSWORD
         or settings.openai_api_key
     )
     if not secret:
-        secret = "mumuainovel-development-session-secret"
+        secret = "xiaoxin-workshop-development-session-secret"
     return str(secret).encode("utf-8")
 
 

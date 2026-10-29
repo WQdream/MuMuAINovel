@@ -946,8 +946,8 @@ export default function Chapters() {
   const handleRestorePolishSnapshot = () => {
     if (!editingId || !polishSnapshot?.available) return;
     modal.confirm({
-      title: '恢复自动去味前的原文？',
-      content: '当前章节正文会被替换为最近一次自动去味前的完整原文。去味分析记录会保留。',
+      title: '恢复自动精修前的原文？',
+      content: '当前章节正文会被替换为最近一次自动精修前的完整原文。精修分析记录会保留。',
       okText: '恢复原文',
       cancelText: '取消',
       centered: true,
@@ -962,7 +962,7 @@ export default function Chapters() {
             const updatedProject = await projectApi.getProject(currentProject.id);
             setCurrentProject(updatedProject);
           }
-          message.success(restored.message || '已恢复自动去味前的原文');
+          message.success(restored.message || '已恢复自动精修前的原文');
         } catch (error) {
           message.error(error instanceof Error ? error.message : '恢复原文失败');
         } finally {
@@ -1067,8 +1067,8 @@ export default function Chapters() {
         ? `前 ${previousChapters.length} 章正文与剧情摘要`
         : '本章开篇，无前置章节',
       selectedStyle ? `写作风格：${selectedStyle.name}` : '写作风格：未选择',
-      selectedSkill ? `应用 Skill：${selectedSkill.template_name}` : '应用 Skill：标准创作流程',
-      autoPolish ? '生成后自动去味：开（原文快照可回滚）' : '生成后自动去味：关',
+      selectedSkill ? `应用技能：${selectedSkill.template_name}` : '应用技能：标准创作流程',
+      autoPolish ? '生成后自动精修：开（原文快照可回滚）' : '生成后自动精修：关',
       `目标字数：${targetWordCount.toLocaleString('zh-CN')} 字`,
     ];
 
@@ -2780,12 +2780,12 @@ export default function Chapters() {
             marginBottom: isMobile ? 16 : 12
           }}>
             <Form.Item
-              label="应用 Skill"
-              tooltip="选择一个 Skill 工作流指导 AI 创作，不选则使用标准创作流程"
+              label="应用技能"
+              tooltip="选择一个技能工作流指导 AI 创作，不选则使用标准创作流程"
               style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
             >
               <Select
-                placeholder="不使用 Skill（标准创作）"
+                placeholder="不使用技能（标准创作）"
                 value={selectedSkillKey}
                 onChange={setSelectedSkillKey}
                 allowClear
@@ -2803,7 +2803,7 @@ export default function Chapters() {
                     <div
                       title={skill.creation_capable
                         ? skill.description
-                        : '去味请去「AI 去味」页；拆文、扫榜请用分析页'}
+                        : '精修请去「精修台」；拆文、扫榜请用分析页'}
                       style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
                       <span>{skill.template_name}</span>
@@ -2881,8 +2881,8 @@ export default function Chapters() {
             </Form.Item>
 
             <Form.Item
-              label="生成后自动去味"
-              tooltip="额外调用 1 次模型：一轮去味改写 + 标点整理，不复改。原文会存快照，可在章节内容上方一键恢复。"
+              label="生成后自动精修"
+              tooltip="额外调用 1 次模型：一轮去 AI 腔改写 + 标点整理，不复改。原文会存快照，可在章节内容上方一键恢复。"
               style={{ flex: 1, marginBottom: isMobile ? 16 : 0 }}
             >
               <div style={{
@@ -2900,7 +2900,7 @@ export default function Chapters() {
                   checkedChildren="开"
                   unCheckedChildren="关"
                 />
-                <span>{autoPolish ? '生成后跑一轮去味，可回滚' : '默认关闭，不额外消耗 token'}</span>
+                <span>{autoPolish ? '生成后跑一轮精修，可回滚' : '默认关闭，不额外消耗 token'}</span>
               </div>
             </Form.Item>
           </div>
@@ -2910,7 +2910,7 @@ export default function Chapters() {
               <Space size={8}>
                 <span>章节内容</span>
                 {polishSnapshot?.available && (
-                  <Tooltip title={polishSnapshot.note || '恢复最近一次自动去味前的完整原文'}>
+                  <Tooltip title={polishSnapshot.note || '恢复最近一次自动精修前的完整原文'}>
                     <Button
                       type="link"
                       size="small"
@@ -2919,7 +2919,7 @@ export default function Chapters() {
                       onClick={handleRestorePolishSnapshot}
                       style={{ paddingInline: 0, height: 'auto', fontSize: 12 }}
                     >
-                      恢复去味前原文
+                      恢复精修前原文
                     </Button>
                   </Tooltip>
                 )}
@@ -3185,12 +3185,12 @@ export default function Chapters() {
               </Form.Item>
 
               <Form.Item
-                label="应用 Skill"
-                tooltip="选择一个 Skill 工作流指导批量创作，不选则使用标准创作流程"
+                label="应用技能"
+                tooltip="选择一个技能工作流指导批量创作，不选则使用标准创作流程"
                 style={{ flex: 1, marginBottom: 12 }}
               >
                 <Select
-                  placeholder="不使用 Skill（标准创作）"
+                  placeholder="不使用技能（标准创作）"
                   value={batchSelectedSkillKey}
                   onChange={setBatchSelectedSkillKey}
                   allowClear
@@ -3207,7 +3207,7 @@ export default function Chapters() {
                       <div
                         title={skill.creation_capable
                           ? skill.description
-                          : '去味请去「AI 去味」页；拆文、扫榜请用分析页'}
+                          : '精修请去「精修台」；拆文、扫榜请用分析页'}
                         style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                       >
                         <span>{skill.template_name}</span>
@@ -3233,8 +3233,8 @@ export default function Chapters() {
               </Form.Item>
 
               <Form.Item
-                label="生成后自动去味"
-                tooltip="每章生成后额外调用 1 次模型做一轮去味改写 + 标点整理；原文快照可回滚。"
+                label="生成后自动精修"
+                tooltip="每章生成后额外调用 1 次模型做一轮去 AI 腔改写 + 标点整理；原文快照可回滚。"
                 style={{ flex: 1, marginBottom: 12 }}
               >
                 <div style={{
@@ -3251,7 +3251,7 @@ export default function Chapters() {
                     checkedChildren="开"
                     unCheckedChildren="关"
                   />
-                  <span>{batchAutoPolish ? '每章生成后自动去味' : '默认关闭'}</span>
+                  <span>{batchAutoPolish ? '每章生成后自动精修' : '默认关闭'}</span>
                 </div>
               </Form.Item>
             </div>

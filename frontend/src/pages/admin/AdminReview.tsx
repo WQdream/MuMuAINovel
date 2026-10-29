@@ -291,11 +291,11 @@ export default function AdminReview() {
     <div className="adm-page">
       <header className="adm-page-head">
         <div className="adm-page-head-main">
-          <div className="adm-crumb">
-            <button type="button" className="adm-crumb-link" onClick={backToUsers}>
-              用户
-            </button>
-            {activeUser && (
+          {activeUser && (
+            <div className="adm-crumb">
+              <button type="button" className="adm-crumb-link" onClick={backToUsers}>
+                用户
+              </button>
               <>
                 <span className="adm-crumb-sep">/</span>
                 <button
@@ -306,14 +306,14 @@ export default function AdminReview() {
                   {activeUser.display_name || activeUser.username}
                 </button>
               </>
-            )}
-            {activeProject && (
-              <>
-                <span className="adm-crumb-sep">/</span>
-                <span className="adm-crumb-current">{activeProject.title}</span>
-              </>
-            )}
-          </div>
+              {activeProject && (
+                <>
+                  <span className="adm-crumb-sep">/</span>
+                  <span className="adm-crumb-current">{activeProject.title}</span>
+                </>
+              )}
+            </div>
+          )}
           <h2 className="adm-page-title">
             {activeProject
               ? activeProject.title

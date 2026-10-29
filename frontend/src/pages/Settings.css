@@ -442,6 +442,7 @@
   background: var(--st-tertiary);
 }
 
+.st-provider-dot--openai,
 .st-provider-dot--mumu {
   background: #7a8f6f;
 }

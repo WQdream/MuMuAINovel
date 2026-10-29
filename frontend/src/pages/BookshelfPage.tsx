@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import './BookshelfPage.css';
-import { Button, Dropdown, Spin, theme, Tooltip } from 'antd';
+import { Button, Dropdown, Popover, Spin, theme } from 'antd';
 import {
   BulbOutlined,
   ClockCircleOutlined,
@@ -13,17 +13,10 @@ import {
   PictureOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SettingOutlined,
   UploadOutlined,
-  WarningFilled,
 } from '@ant-design/icons';
 import type { Project } from '../types';
-import {
-  dismissCoverFailure,
-  formatCoverError,
-  getCoverFailureDismissKey,
-  isCoverFailureDismissed as isCoverFailureDismissedInStorage,
-  restoreCoverFailure,
-} from '../utils/coverError';
 
 interface BookshelfPageProps {
   isMobile: boolean;
@@ -40,6 +33,7 @@ interface BookshelfPageProps {
   onEnterProject: (project: Project) => void;
   onDeleteProject: (projectId: string) => void;
   onGenerateCover: (project: Project, overwrite?: boolean) => void | Promise<void>;
+  onDismissCoverError: (project: Project) => void | Promise<void>;
   onRefreshProjects?: () => void | Promise<unknown>;
   onDownloadCover: (project: Project) => void;
   formatDate: (dateString: string) => string;
@@ -60,63 +54,48 @@ export default function BookshelfPage({
   onEnterProject,
   onDeleteProject,
   onGenerateCover,
+  onDismissCoverError,
   onRefreshProjects,
   onDownloadCover,
   formatDate,
 }: BookshelfPageProps) {
   const { token } = theme.useToken();
   const [coverBusyIds, setCoverBusyIds] = useState<Record<string, boolean>>({});
-  const [dismissedCoverFailureKeys, setDismissedCoverFailureKeys] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [dismissedCoverFailureIds, setDismissedCoverFailureIds] = useState<Set<string>>(() => new Set());
+  const [coverFailurePopoverId, setCoverFailurePopoverId] = useState<string | null>(null);
 
   const hasGeneratingCover = projects.some((project) => project.cover_status === 'generating');
 
-  const getFailureKey = (project: Project) =>
-    getCoverFailureDismissKey(project.id, project.cover_error);
+  const isFailureDismissed = (project: Project) =>
+    Boolean(project.cover_error_dismissed_at) || dismissedCoverFailureIds.has(project.id);
 
-  const isFailureDismissed = (project: Project) => {
-    const key = getFailureKey(project);
-    return dismissedCoverFailureKeys.has(key) || isCoverFailureDismissedInStorage(key);
-  };
-
-  const dismissFailure = (project: Project) => {
-    const key = getFailureKey(project);
-    dismissCoverFailure(key);
-    setDismissedCoverFailureKeys((prev) => {
+  const dismissFailure = async (project: Project) => {
+    setDismissedCoverFailureIds((prev) => {
       const next = new Set(prev);
-      next.add(key);
+      next.add(project.id);
       return next;
     });
+    setCoverFailurePopoverId(null);
+    try {
+      await onDismissCoverError(project);
+    } catch {
+      setDismissedCoverFailureIds((prev) => {
+        if (!prev.has(project.id)) return prev;
+        const next = new Set(prev);
+        next.delete(project.id);
+        return next;
+      });
+    }
   };
 
   const restoreFailure = (project: Project) => {
-    const key = getFailureKey(project);
-    restoreCoverFailure(key);
-    setDismissedCoverFailureKeys((prev) => {
-      if (!prev.has(key)) return prev;
+    setDismissedCoverFailureIds((prev) => {
+      if (!prev.has(project.id)) return prev;
       const next = new Set(prev);
-      next.delete(key);
+      next.delete(project.id);
       return next;
     });
   };
-
-  const visibleCoverFailures = projects.filter(
-    (project) =>
-      project.cover_status === 'failed'
-      && !coverBusyIds[project.id]
-      && !isFailureDismissed(project),
-  );
-
-  const dismissVisibleCoverFailures = () => {
-    visibleCoverFailures.forEach(dismissFailure);
-  };
-
-  const coverNoticeButtonStyle = {
-    height: 26,
-    padding: '0 6px',
-    fontSize: 12,
-  } as const;
 
   // 生成任务在服务端执行，轮询以便刷新页面后仍能自动拿到生成完成的封面
   useEffect(() => {
@@ -149,26 +128,26 @@ export default function BookshelfPage({
   ];
 
   const coverPalettes = [
-    { bg: '#26333F', deep: '#152029', fg: '#F1E9DB', accent: '#C9AA78' },
-    { bg: '#5B392F', deep: '#35201B', fg: '#F7EDDF', accent: '#D8B98C' },
-    { bg: '#344433', deep: '#1D291C', fg: '#F0EBDD', accent: '#C5B782' },
-    { bg: '#3B3E45', deep: '#23252B', fg: '#F1EFE9', accent: '#C2B296' },
-    { bg: '#D8CEBC', deep: '#C3B59F', fg: '#302A23', accent: '#8B6A45' },
+    { bg: '#1F2A33', deep: '#121A20', fg: '#EFE6D4', accent: '#C9A96E' },
+    { bg: '#3E2724', deep: '#241615', fg: '#F2E7D6', accent: '#CDAA74' },
+    { bg: '#26302A', deep: '#151C17', fg: '#ECE6D6', accent: '#BFA572' },
+    { bg: '#2A2826', deep: '#171615', fg: '#EFE9DD', accent: '#C9A96E' },
+    { bg: '#E6DFD2', deep: '#D3C9B7', fg: '#2A251E', accent: '#8F6E42' },
   ];
 
   const getCoverTitleStyle = (title: string) => {
     const length = Array.from(title || '').length;
     const fontSize = length <= 6
-      ? 26
+      ? 20
       : length <= 12
-        ? 22
+        ? 17
         : length <= 20
-          ? 19
+          ? 14
           : length <= 32
-            ? 17
+            ? 13
             : length <= 48
-              ? 15
-              : 13;
+              ? 11
+              : 10;
     return { fontSize, lineClamp: 6 };
   };
 
@@ -223,59 +202,26 @@ export default function BookshelfPage({
   const renderNewCard = () => (
     <button
       type="button"
+      className="book-card book-card--new"
       onClick={onStartWizard}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        minWidth: 0,
-        padding: 0,
-        border: 0,
-        background: 'transparent',
-        textAlign: 'left',
-        cursor: 'pointer',
-        font: 'inherit',
-      }}
     >
-      <div
-        style={{
-          position: 'relative',
-          aspectRatio: '2 / 3',
-          borderRadius: 8,
-          border: `1.5px dashed ${token.colorBorder}`,
-          background: alphaColor(token.colorPrimary, 0.025),
-          display: 'grid',
-          placeItems: 'center',
-          transition: 'border-color 0.2s ease, background 0.2s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = token.colorPrimary;
-          e.currentTarget.style.background = alphaColor(token.colorPrimary, 0.05);
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = token.colorBorder;
-          e.currentTarget.style.background = alphaColor(token.colorPrimary, 0.025);
-        }}
-      >
-        <div
-          style={{
-            width: 46,
-            height: 46,
-            borderRadius: '50%',
-            border: `1px solid ${token.colorBorderSecondary}`,
-            background: token.colorBgContainer,
-            color: token.colorTextSecondary,
-            display: 'grid',
-            placeItems: 'center',
-            fontSize: 17,
-          }}
-        >
-          <PlusOutlined />
+      <div className="book-object book-object--new">
+        <span className="book-backboard book-backboard--new" aria-hidden="true" />
+        <span className="book-pages book-pages--right" aria-hidden="true" />
+        <span className="book-pages book-pages--bottom" aria-hidden="true" />
+        <div className="book-board book-board--new">
+          <div className="book-spine book-spine--new" aria-hidden="true" />
+          <div className="book-cover book-cover--new">
+            <div className="book-emboss" aria-hidden="true">
+              <PlusOutlined />
+            </div>
+          </div>
         </div>
       </div>
 
-      <div style={{ padding: isMobile ? '8px 2px 0' : '10px 2px 0' }}>
-        <div style={{ fontSize: isMobile ? 13 : 14, fontWeight: 600, color: token.colorText }}>新建作品</div>
-        <div style={{ marginTop: 2, fontSize: 11, color: token.colorTextTertiary }}>从零开始一段新故事</div>
+      <div className="book-meta">
+        <div style={{ fontSize: isMobile ? 12 : 13, fontWeight: 500, fontFamily: 'var(--font-editorial)', letterSpacing: '0.04em', color: token.colorText }}>新建作品</div>
+        <div style={{ marginTop: 2, fontSize: 10, color: token.colorTextTertiary }}>从零开始一段新故事</div>
       </div>
     </button>
   );
@@ -311,6 +257,11 @@ export default function BookshelfPage({
         label: '下载封面',
         disabled: !coverReady || coverBusy,
       },
+      ...(coverFailed ? [{
+        key: 'check-config',
+        icon: <SettingOutlined />,
+        label: '检查配置',
+      }] : []),
       { type: 'divider' as const },
       {
         key: 'delete',
@@ -323,6 +274,7 @@ export default function BookshelfPage({
     return (
       <article
         key={project.id}
+        className="book-card"
         role="button"
         tabIndex={0}
         onClick={() => onEnterProject(project)}
@@ -332,70 +284,61 @@ export default function BookshelfPage({
             onEnterProject(project);
           }
         }}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-          cursor: 'pointer',
-          transition: 'transform 0.2s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.transform = 'translateY(-3px)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-        }}
       >
-        <div
-          style={{
-            position: 'relative',
-            aspectRatio: '2 / 3',
-            borderRadius: 8,
-            overflow: 'hidden',
-            background: palette.bg,
-            boxShadow: '0 14px 30px rgba(28, 24, 18, 0.16), 0 3px 8px rgba(28, 24, 18, 0.09)',
-          }}
-        >
+        <div className="book-object">
+          <span className="book-backboard" aria-hidden="true" />
+          <span className="book-pages book-pages--right" aria-hidden="true" />
+          <span className="book-pages book-pages--bottom" aria-hidden="true" />
+          <div
+            className={`book-board ${hasCoverImage ? 'book-board--image' : 'book-board--placeholder'}`}
+            style={{ background: palette.bg }}
+          >
+            <div
+              className={`book-spine ${hasCoverImage ? 'book-spine--image' : 'book-spine--placeholder'}`}
+              style={hasCoverImage ? undefined : {
+                background: `linear-gradient(90deg, ${palette.deep} 0%, ${palette.bg} 58%, ${alphaColor(palette.accent, 0.34)} 76%, ${palette.deep} 100%)`,
+              }}
+              aria-hidden="true"
+            >
+              {hasCoverImage && (
+                <img
+                  className="book-spine__image"
+                  src={project.cover_image_url || ''}
+                  alt=""
+                />
+              )}
+            </div>
+            <div className="book-cover">
           {hasCoverImage ? (
-            <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+            <div className="book-cover__art">
               {/* 模糊同图铺底，保证封面完整显示且不出现空白边 */}
               <img
                 src={project.cover_image_url || ''}
                 alt=""
                 aria-hidden="true"
+                className="book-cover__backdrop"
                 style={{
-                  position: 'absolute',
                   inset: -18,
                   width: 'calc(100% + 36px)',
                   height: 'calc(100% + 36px)',
-                  objectFit: 'cover',
                   filter: 'blur(18px) saturate(1.1)',
                   transform: 'scale(1.04)',
                 }}
               />
               <div
                 aria-hidden="true"
-                style={{ position: 'absolute', inset: 0, background: 'rgba(20, 16, 12, 0.18)' }}
+                className="book-cover__veil"
               />
               <img
                 src={project.cover_image_url || ''}
                 alt={project.title}
-                style={{
-                  position: 'relative',
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  display: 'block',
-                }}
+                className="book-cover__image"
               />
             </div>
           ) : (
             <div
+              className="book-placeholder"
               style={{
-                position: 'relative',
-                width: '100%',
-                height: '100%',
-                overflow: 'hidden',
                 background: `linear-gradient(145deg, ${palette.bg} 0%, ${palette.deep} 100%)`,
                 color: palette.fg,
               }}
@@ -424,19 +367,6 @@ export default function BookshelfPage({
                     }}
                   />
                   <div
-                    aria-hidden="true"
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: 9,
-                      background:
-                        'linear-gradient(90deg, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.12) 55%, rgba(255,255,255,0.14) 100%)',
-                      boxShadow: 'inset -1px 0 0 rgba(0,0,0,0.16)',
-                    }}
-                  />
-                  <div
                     style={{
                       position: 'relative',
                       zIndex: 1,
@@ -444,26 +374,26 @@ export default function BookshelfPage({
                       flexDirection: 'column',
                       height: '100%',
                       padding: isMobile
-                        ? '17px 14px 14px 22px'
-                        : '19px 16px 15px 24px',
+                        ? '12px 10px 10px 11px'
+                        : '13px 11px 11px 12px',
                     }}
                   >
                     <div
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 7,
+                        gap: 5,
                         color: alphaColor(palette.fg, 0.66),
-                        fontSize: 8.5,
-                        fontWeight: 600,
-                        letterSpacing: '0.16em',
+                        fontSize: 7,
+                        fontWeight: 500,
+                        letterSpacing: '0.32em',
                         lineHeight: 1.4,
                       }}
                     >
                       <span
                         style={{
                           display: 'inline-block',
-                          width: 13,
+                          width: 10,
                           height: 1,
                           background: palette.accent,
                           opacity: 0.8,
@@ -478,7 +408,7 @@ export default function BookshelfPage({
                         flex: 1,
                         alignItems: 'center',
                         minHeight: 0,
-                        padding: '10px 0 12px',
+                        padding: '7px 0 8px',
                       }}
                     >
                       <span
@@ -487,10 +417,11 @@ export default function BookshelfPage({
                           WebkitBoxOrient: 'vertical',
                           WebkitLineClamp: coverTitleStyle.lineClamp,
                           overflow: 'hidden',
-                          fontFamily: '"Songti SC", "Noto Serif SC", Georgia, "Times New Roman", serif',
+                          fontFamily: 'var(--font-editorial)',
                           fontSize: coverTitleStyle.fontSize,
-                          fontWeight: 600,
-                          letterSpacing: '0.025em',
+                          fontWeight: 500,
+                          letterSpacing: '0.06em',
+                          color: alphaColor(palette.accent, 0.95),
                           lineHeight: 1.32,
                           overflowWrap: 'anywhere',
                           wordBreak: 'break-word',
@@ -508,10 +439,10 @@ export default function BookshelfPage({
                         alignItems: 'flex-end',
                         justifyContent: 'space-between',
                         gap: 8,
-                        paddingTop: 9,
+                        paddingTop: 6,
                         borderTop: `1px solid ${alphaColor(palette.accent, 0.34)}`,
                         color: alphaColor(palette.fg, 0.72),
-                        fontSize: 9,
+                        fontSize: 7,
                         lineHeight: 1.45,
                       }}
                     >
@@ -535,34 +466,12 @@ export default function BookshelfPage({
             </div>
           )}
 
-          {hasCoverImage && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                pointerEvents: 'none',
-                background:
-                  'linear-gradient(90deg, rgba(0,0,0,0.28) 0%, rgba(0,0,0,0.08) 5%, rgba(255,255,255,0.06) 8%, rgba(255,255,255,0) 16%)',
-                boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.08)',
-              }}
-            />
-          )}
-
           {coverBusy && (
             <div
+              className="book-loading-overlay"
               role="status"
               aria-live="polite"
               aria-label={`正在为《${coverTitle}》生成封面`}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                // 占位封面内部有 z-index 层级，这里必须抬到最上层才能盖住文字
-                zIndex: 3,
-                background:
-                  'linear-gradient(180deg, rgba(12, 12, 14, 0.58) 0%, rgba(12, 12, 14, 0.74) 55%, rgba(12, 12, 14, 0.86) 100%)',
-                backdropFilter: 'blur(6px) saturate(0.9)',
-                WebkitBackdropFilter: 'blur(6px) saturate(0.9)',
-              }}
             >
               <div className="cover-glitch-loader">
                 <div className="glitch" data-glitch="封面生成中...">
@@ -574,18 +483,10 @@ export default function BookshelfPage({
 
           {!coverBusy && wizardIncomplete && (
             <div
+              className="book-wizard-badge"
               style={{
-                position: 'absolute',
-                bottom: 8,
-                right: 8,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                fontSize: 10,
                 color: token.colorTextSecondary,
                 background: alphaColor(token.colorBgContainer, 0.92),
-                borderRadius: 999,
-                padding: '1px 7px',
               }}
             >
               <ClockCircleOutlined style={{ fontSize: 9 }} />
@@ -593,37 +494,93 @@ export default function BookshelfPage({
             </div>
           )}
 
-          {!coverBusy && coverFailed && (
-            <Tooltip title={formatCoverError(project.cover_error)}>
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: 8,
-                  left: 8,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  fontSize: 10,
-                  color: token.colorError,
-                  background: alphaColor(token.colorBgContainer, 0.92),
-                  borderRadius: 999,
-                  padding: '1px 7px',
-                  cursor: 'help',
+          {!coverBusy && coverFailed && !isFailureDismissed(project) && (
+            <div
+              className="book-failure-anchor"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <Popover
+                trigger="click"
+                placement="top"
+                arrow={false}
+                rootClassName="book-failure-popover"
+                open={coverFailurePopoverId === project.id}
+                onOpenChange={(open) => {
+                  setCoverFailurePopoverId(open ? project.id : null);
                 }}
+                content={(
+                  <div
+                    className="book-failure-popover__content"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      className="book-failure-popover__action"
+                      icon={<ReloadOutlined />}
+                      onClick={() => {
+                        setCoverFailurePopoverId(null);
+                        void handleGenerateCover(project, true);
+                      }}
+                    >
+                      重新生成
+                    </Button>
+                    <Button
+                      type="text"
+                      size="small"
+                      className="book-failure-popover__action"
+                      icon={<SettingOutlined />}
+                      onClick={() => {
+                        setCoverFailurePopoverId(null);
+                        onGoSettings();
+                      }}
+                    >
+                      检查配置
+                    </Button>
+                    <Button
+                      type="text"
+                      size="small"
+                      className="book-failure-popover__action"
+                      icon={<CloseOutlined />}
+                      onClick={() => void dismissFailure(project)}
+                    >
+                      不再提示
+                    </Button>
+                  </div>
+                )}
               >
-                封面生成失败
-              </div>
-            </Tooltip>
+                <button
+                  type="button"
+                  className="book-failure-seal"
+                  aria-label={`《${coverTitle}》封面生成失败，打开处理选项`}
+                  aria-expanded={coverFailurePopoverId === project.id}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="book-failure-seal__mark"
+                  >
+                    !
+                  </span>
+                  封面生成失败
+                </button>
+              </Popover>
+            </div>
           )}
+            </div>
+          </div>
         </div>
 
-        <div style={{ padding: isMobile ? '8px 2px 0' : '10px 2px 0', minWidth: 0 }}>
+        <div className="book-meta">
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
             <span
               style={{
                 flex: 1,
                 minWidth: 0,
-                fontSize: isMobile ? 13 : 14,
-                fontWeight: 600,
+                fontSize: isMobile ? 12 : 13,
+                fontWeight: 500,
+                fontFamily: 'var(--font-editorial)',
+                letterSpacing: '0.04em',
                 color: token.colorText,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
@@ -642,6 +599,7 @@ export default function BookshelfPage({
                     domEvent.stopPropagation();
                     if (key === 'cover') void handleGenerateCover(project, true);
                     if (key === 'download') onDownloadCover(project);
+                    if (key === 'check-config') onGoSettings();
                     if (key === 'delete') onDeleteProject(project.id);
                   },
                 }}
@@ -665,8 +623,9 @@ export default function BookshelfPage({
 
           <div
             style={{
-              marginTop: 2,
-              fontSize: 11,
+              marginTop: 3,
+              fontSize: 10,
+              letterSpacing: '0.04em',
               color: coverBusy ? token.colorPrimary : token.colorTextTertiary,
               display: 'flex',
               alignItems: 'center',
@@ -692,192 +651,11 @@ export default function BookshelfPage({
 
   const isEmpty = projects.length === 0;
   const gridColumns = isMobile
-    ? `repeat(auto-fill, minmax(0, ${isEmpty ? 148 : 134}px))`
-    : `repeat(auto-fill, ${isEmpty ? 164 : 152}px)`;
+    ? 'repeat(auto-fill, 110px)'
+    : 'repeat(auto-fill, 128px)';
 
   return (
     <div>
-      {visibleCoverFailures.length > 0 && (
-        <div
-          role="alert"
-          style={{
-            marginBottom: isMobile ? 12 : 14,
-            border: `1px solid ${alphaColor(token.colorError, 0.16)}`,
-            borderRadius: 10,
-            overflow: 'hidden',
-            background: `linear-gradient(90deg, ${alphaColor(token.colorError, 0.06)} 0%, ${alphaColor(token.colorBgContainer, 0.94)} 58%)`,
-            boxShadow: `inset 3px 0 0 ${token.colorError}, 0 1px 2px rgba(0, 0, 0, 0.025)`,
-          }}
-        >
-          {visibleCoverFailures.length > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                flexWrap: 'wrap',
-                minHeight: 38,
-                padding: '5px 8px 5px 12px',
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: '50%',
-                  display: 'grid',
-                  placeItems: 'center',
-                  flexShrink: 0,
-                  color: token.colorError,
-                  background: alphaColor(token.colorError, 0.11),
-                  fontSize: 11,
-                }}
-              >
-                <WarningFilled />
-              </span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>
-                {visibleCoverFailures.length} 个封面生成失败
-              </span>
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 12,
-                  color: token.colorTextTertiary,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                可在下方逐个重试，或先检查图片配置。
-              </span>
-              <Button
-                size="small"
-                type="text"
-                onClick={onGoSettings}
-                style={coverNoticeButtonStyle}
-              >
-                检查图片配置
-              </Button>
-              <Tooltip title="关闭全部失败提示">
-                <Button
-                  size="small"
-                  type="text"
-                  aria-label="关闭全部封面失败提示"
-                  icon={<CloseOutlined />}
-                  onClick={dismissVisibleCoverFailures}
-                  style={{ ...coverNoticeButtonStyle, width: 26, minWidth: 26, padding: 0 }}
-                />
-              </Tooltip>
-            </div>
-          )}
-
-          {visibleCoverFailures.map((project, index) => (
-            <div
-              key={project.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                flexWrap: 'wrap',
-                minHeight: 40,
-                padding: '5px 8px 5px 12px',
-                borderTop: visibleCoverFailures.length > 1 || index > 0
-                  ? `1px solid ${alphaColor(token.colorError, 0.1)}`
-                  : undefined,
-              }}
-            >
-              {visibleCoverFailures.length === 1 && (
-                <span
-                  aria-hidden="true"
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: '50%',
-                    display: 'grid',
-                    placeItems: 'center',
-                    flexShrink: 0,
-                    color: token.colorError,
-                    background: alphaColor(token.colorError, 0.11),
-                    fontSize: 11,
-                  }}
-                >
-                  <WarningFilled />
-                </span>
-              )}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'baseline',
-                  gap: 6,
-                  flex: '1 1 220px',
-                  minWidth: 0,
-                  fontSize: 12,
-                }}
-              >
-                <span style={{ flexShrink: 0, fontWeight: 600, color: token.colorText }}>
-                  {visibleCoverFailures.length === 1 ? '封面生成失败' : `《${project.title}》`}
-                </span>
-                <span
-                  title={formatCoverError(project.cover_error)}
-                  style={{
-                    minWidth: 0,
-                    color: token.colorTextSecondary,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {visibleCoverFailures.length === 1
-                    ? `《${project.title}》 · ${formatCoverError(project.cover_error)}`
-                    : formatCoverError(project.cover_error)}
-                </span>
-              </div>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 2,
-                  flexShrink: 0,
-                  marginLeft: 'auto',
-                }}
-              >
-                <Button
-                  size="small"
-                  type="text"
-                  icon={<ReloadOutlined />}
-                  onClick={() => void handleGenerateCover(project, true)}
-                  style={coverNoticeButtonStyle}
-                >
-                  重新生成
-                </Button>
-                {visibleCoverFailures.length === 1 && (
-                  <Button
-                    size="small"
-                    type="text"
-                    onClick={onGoSettings}
-                    style={coverNoticeButtonStyle}
-                  >
-                    检查配置
-                  </Button>
-                )}
-                <Tooltip title="关闭此提示">
-                  <Button
-                    size="small"
-                    type="text"
-                    aria-label={`关闭《${project.title}》的封面失败提示`}
-                    icon={<CloseOutlined />}
-                    onClick={() => dismissFailure(project)}
-                    style={{ ...coverNoticeButtonStyle, width: 26, minWidth: 26, padding: 0 }}
-                  />
-                </Tooltip>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div
         style={{
           display: 'flex',
@@ -892,8 +670,8 @@ export default function BookshelfPage({
         <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 14 : 22, flexWrap: 'wrap' }}>
           {projects.length > 0 && stats.map((item) => (
             <div key={item.label} style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 12, color: token.colorTextTertiary }}>{item.label}</span>
-              <span style={{ fontSize: isMobile ? 16 : 18, fontWeight: 600, color: token.colorText }}>
+              <span style={{ fontSize: 11, letterSpacing: '0.16em', color: token.colorTextTertiary }}>{item.label}</span>
+              <span style={{ fontSize: isMobile ? 18 : 22, fontWeight: 400, fontFamily: 'var(--font-display)', color: token.colorText }}>
                 {item.value}
               </span>
             </div>
@@ -941,10 +719,11 @@ export default function BookshelfPage({
 
       <Spin spinning={loading}>
         <div
+          className="editorial-project-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: gridColumns,
-            gap: isMobile ? 12 : 18,
+            gap: isMobile ? 15 : 24,
             justifyContent: 'start',
             paddingBottom: 24,
           }}

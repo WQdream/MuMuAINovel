@@ -17,7 +17,7 @@ if [ -z "$APP_NAME" ]; then
     if [ -f "/app/.env.example" ]; then
         APP_NAME=$(grep "^APP_NAME=" /app/.env.example | cut -d '=' -f2)
     fi
-    APP_NAME="${APP_NAME:-MuMuAINovel}"
+    APP_NAME="${APP_NAME:-小新工坊}"
 fi
 
 BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S')

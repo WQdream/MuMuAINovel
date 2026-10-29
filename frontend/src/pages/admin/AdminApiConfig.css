@@ -1,7 +1,7 @@
 /* 管理后台 · API 配置：卡片/抽屉复用 Settings.css 的 .st-* 组件，这里只补容器差异 */
 
 .apc-page {
-  max-width: 1180px;
+  max-width: 1560px;
 }
 
 .apc-panel {
@@ -11,16 +11,21 @@
 .apc-tabs {
   overflow: hidden;
   border: 1px solid var(--adm-border);
-  border-radius: 12px;
+  border-radius: 2px;
   background: var(--adm-panel);
 }
 
 .apc-tabs > .ant-tabs-nav {
-  padding: 0 18px;
+  padding: 0 22px;
+  background: color-mix(in srgb, var(--adm-text) 1.2%, var(--adm-panel));
 }
 
 .apc-tabs .ant-tabs-content-holder {
   min-width: 0;
+}
+
+.apc-tabs .ant-tabs-tab {
+  padding: 16px 0 14px;
 }
 
 .apc-tabs .apc-panel {
@@ -35,7 +40,7 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-  padding: 13px 16px;
+  padding: 15px 20px;
   border-bottom: 1px solid var(--adm-border);
 }
 
@@ -64,7 +69,8 @@
 
 /* 卡片区：与用户端同一套栅格节奏，仅收一点内边距贴合面板 */
 .apc-cards {
-  padding: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 20px;
 }
 
 .apc-empty {
@@ -76,12 +82,13 @@
 .apc-card {
   position: relative;
   overflow: visible;
+  border-radius: 2px;
 }
 
 .apc-card:hover {
   border-color: color-mix(in srgb, var(--st-accent) 26%, var(--st-border));
-  box-shadow: 0 12px 26px color-mix(in srgb, var(--st-text) 9%, transparent);
-  transform: translateY(-3px);
+  box-shadow: none;
+  transform: none;
 }
 
 /* 停用态：整卡降饱和，但不隐藏，便于管理员对照 */
@@ -110,6 +117,15 @@
 .apc-badge--off {
   background: var(--st-fill);
   color: var(--st-tertiary);
+}
+
+.adm-page .st-model-card-badge,
+.adm-page .st-models-count {
+  border-radius: 2px;
+}
+
+.adm-page .st-model-card-actions .ant-btn {
+  border-radius: 2px;
 }
 
 .apc-quota {
@@ -145,5 +161,11 @@
 
   .apc-empty {
     margin: 12px;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1080px) {
+  .apc-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

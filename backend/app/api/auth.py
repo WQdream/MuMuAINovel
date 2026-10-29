@@ -1,26 +1,24 @@
-"""
-认证 API - LinuxDO OAuth2 登录 + 本地账户登录 + 邮箱验证码注册/登录
-"""
+"""认证 API - 本地账户登录 + 邮箱验证码注册/登录。"""
 from fastapi import APIRouter, HTTPException, Response, Request
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import Optional
 import hashlib
 import secrets
 import re
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.services.oauth_service import LinuxDOOAuthService
 from app.user_manager import user_manager, User as UserDTO
 from app.user_password import password_manager
 from app.logger import get_logger
 from app.config import settings
 from app.database import get_engine
-from app.models.user import User as UserModel
+from app.models.invite_code import InviteCode
+from app.models.user import User as UserModel, UserPassword as UserPasswordModel
 from app.models.settings import Settings as SettingsModel
 from app.services.email_service import email_service
+from app.services.invite_code_service import normalize_invite_code
 from app.security import create_session_token
 
 # 中国时区 UTC+8
@@ -36,12 +34,6 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
-# OAuth2 服务实例
-oauth_service = LinuxDOOAuthService()
-
-# State 临时存储（生产环境应使用 Redis）
-_state_storage = {}
-
 # 邮箱验证码临时存储（生产环境应使用 Redis）
 _email_verification_storage = {}
 MAX_VERIFICATION_ATTEMPTS = 5
@@ -49,15 +41,17 @@ MAX_VERIFICATION_ATTEMPTS = 5
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
-class AuthUrlResponse(BaseModel):
-    auth_url: str
-    state: str
-
-
 class LocalLoginRequest(BaseModel):
     """本地登录请求"""
     username: str
     password: str
+
+
+class LocalRegisterRequest(BaseModel):
+    """邀请码注册请求"""
+    username: str
+    password: str
+    invite_code: str
 
 
 class EmailLoginRequest(BaseModel):
@@ -128,6 +122,7 @@ async def _get_auth_runtime_settings() -> dict:
     """获取认证相关运行时配置，优先读取管理员系统设置，其次回退到 .env"""
     runtime = {
         "email_auth_enabled": settings.EMAIL_AUTH_ENABLED,
+        "email_login_enabled": settings.EMAIL_LOGIN_ENABLED,
         "email_register_enabled": settings.EMAIL_REGISTER_ENABLED,
         "verification_code_ttl_minutes": settings.EMAIL_VERIFICATION_CODE_TTL_MINUTES,
         "verification_resend_interval_seconds": settings.EMAIL_VERIFICATION_RESEND_INTERVAL_SECONDS,
@@ -154,6 +149,7 @@ async def _get_auth_runtime_settings() -> dict:
         if admin_settings:
             runtime.update({
                 "email_auth_enabled": admin_settings.email_auth_enabled,
+                "email_login_enabled": admin_settings.email_login_enabled,
                 "email_register_enabled": admin_settings.email_register_enabled,
                 "verification_code_ttl_minutes": admin_settings.verification_code_ttl_minutes,
                 "verification_resend_interval_seconds": admin_settings.verification_resend_interval_seconds,
@@ -243,6 +239,22 @@ def _validate_email(email: str) -> str:
 def _validate_password(password: str):
     if len(password) < 6:
         raise HTTPException(status_code=400, detail="密码长度至少为6个字符")
+    if len(password) > 128:
+        raise HTTPException(status_code=400, detail="密码长度不能超过128个字符")
+
+
+def _validate_registration_username(username: str) -> str:
+    normalized_username = username.strip()
+    if not 3 <= len(normalized_username) <= 32:
+        raise HTTPException(status_code=400, detail="账号长度应为3到32个字符")
+    if not re.fullmatch(r"[A-Za-z0-9_]+", normalized_username):
+        raise HTTPException(status_code=400, detail="账号只能包含字母、数字和下划线")
+    if (
+        settings.LOCAL_AUTH_USERNAME
+        and normalized_username.casefold() == settings.LOCAL_AUTH_USERNAME.casefold()
+    ):
+        raise HTTPException(status_code=409, detail="账号已存在")
+    return normalized_username
 
 
 def _is_session_cookie_secure() -> bool:
@@ -338,8 +350,8 @@ async def get_auth_config():
     runtime = await _get_auth_runtime_settings()
     return {
         "local_auth_enabled": settings.LOCAL_AUTH_ENABLED,
-        "linuxdo_enabled": bool(settings.LINUXDO_CLIENT_ID and settings.LINUXDO_CLIENT_SECRET),
         "email_auth_enabled": runtime["email_auth_enabled"],
+        "email_login_enabled": runtime["email_login_enabled"],
         "email_register_enabled": runtime["email_register_enabled"],
     }
 
@@ -386,8 +398,8 @@ async def local_login(request: LocalLoginRequest, response: Response):
             if request.username != settings.LOCAL_AUTH_USERNAME or request.password != settings.LOCAL_AUTH_PASSWORD:
                 raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-            user = await user_manager.create_or_update_from_linuxdo(
-                linuxdo_id=user_id,
+            user = await user_manager.create_or_update_user(
+                subject_id=user_id,
                 username=request.username,
                 display_name=settings.LOCAL_AUTH_DISPLAY_NAME,
                 avatar_url=None,
@@ -412,6 +424,94 @@ async def local_login(request: LocalLoginRequest, response: Response):
     )
 
 
+@router.post("/local/register", response_model=LocalLoginResponse)
+async def local_register(request: LocalRegisterRequest, response: Response):
+    """使用一次性邀请码注册平台账号并自动登录。"""
+    if not settings.LOCAL_AUTH_ENABLED:
+        raise HTTPException(status_code=403, detail="账号注册未启用")
+
+    username = _validate_registration_username(request.username)
+    _validate_password(request.password)
+    invite_code = normalize_invite_code(request.invite_code)
+    if not invite_code:
+        raise HTTPException(status_code=400, detail="请输入邀请码")
+
+    user_id = f"platform_{hashlib.md5(username.casefold().encode()).hexdigest()[:16]}"
+    now = datetime.now()
+
+    async with await _get_global_session() as session:
+        async with session.begin():
+            invite_result = await session.execute(
+                select(InviteCode)
+                .where(InviteCode.code == invite_code)
+                .with_for_update()
+            )
+            invite = invite_result.scalar_one_or_none()
+            if not invite:
+                raise HTTPException(status_code=400, detail="邀请码不存在")
+            if invite.disabled_at is not None:
+                raise HTTPException(status_code=400, detail="邀请码已被禁用")
+            if invite.used_at is not None:
+                raise HTTPException(status_code=400, detail="邀请码已被使用")
+
+            username_key = username.casefold()
+            username_result = await session.execute(
+                select(UserModel.user_id)
+                .where(func.lower(UserModel.username) == username_key)
+                .limit(1)
+            )
+            password_username_result = await session.execute(
+                select(UserPasswordModel.user_id)
+                .where(func.lower(UserPasswordModel.username) == username_key)
+                .limit(1)
+            )
+            if (
+                username_result.scalar_one_or_none()
+                or password_username_result.scalar_one_or_none()
+            ):
+                raise HTTPException(status_code=409, detail="账号已存在")
+
+            user = UserModel(
+                user_id=user_id,
+                username=username,
+                display_name=username,
+                avatar_url=None,
+                trust_level=0,
+                is_admin=False,
+                linuxdo_id=user_id,
+                created_at=now,
+                last_login=now,
+            )
+            session.add(user)
+            session.add(UserPasswordModel(
+                user_id=user_id,
+                username=username,
+                password_hash=password_manager.hash_password(request.password),
+                has_custom_password=True,
+                created_at=now,
+                updated_at=now,
+            ))
+
+            invite.used_at = now
+            invite.used_by_user_id = user_id
+            invite.used_by_username = username
+
+        await session.refresh(user)
+        registered_user = UserDTO(**user.to_dict())
+
+    _set_login_cookies(response, user_id)
+    logger.info(
+        f"✅ [邀请码注册] 用户 {user_id} ({username}) 注册并登录成功，"
+        f"邀请码 {invite_code[:4]}****"
+    )
+
+    return LocalLoginResponse(
+        success=True,
+        message="注册成功",
+        user=registered_user.dict(),
+    )
+
+
 @router.post("/email/send-code")
 async def send_email_verification_code(request: EmailSendCodeRequest):
     """发送邮箱验证码（注册 / 登录 / 重置密码）"""
@@ -428,6 +528,8 @@ async def send_email_verification_code(request: EmailSendCodeRequest):
             raise HTTPException(status_code=403, detail="邮箱注册未启用")
         if existing_user:
             raise HTTPException(status_code=400, detail="该邮箱已注册")
+    elif scene == "login" and not runtime["email_login_enabled"]:
+        raise HTTPException(status_code=403, detail="邮箱登录未启用")
     else:
         if not existing_user:
             raise HTTPException(status_code=404, detail="该邮箱尚未注册")
@@ -538,6 +640,8 @@ async def email_login(request: EmailLoginRequest, response: Response):
     runtime = await _get_auth_runtime_settings()
     if not runtime["email_auth_enabled"]:
         raise HTTPException(status_code=403, detail="邮箱认证未启用")
+    if not runtime["email_login_enabled"]:
+        raise HTTPException(status_code=403, detail="邮箱登录未启用")
 
     email = _validate_email(request.email)
     code = request.code.strip()
@@ -624,111 +728,6 @@ async def email_reset_password(request: EmailResetPasswordRequest):
         "success": True,
         "message": "密码重置成功，请使用新验证码重新登录",
     }
-
-
-@router.get("/linuxdo/url", response_model=AuthUrlResponse)
-async def get_linuxdo_auth_url():
-    """获取 LinuxDO 授权 URL"""
-    state = oauth_service.generate_state()
-    auth_url = oauth_service.get_authorization_url(state)
-
-    _state_storage[state] = True
-
-    return AuthUrlResponse(auth_url=auth_url, state=state)
-
-
-async def _handle_callback(
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
-    response: Response = None
-):
-    """
-    LinuxDO OAuth2 回调处理
-
-    成功后重定向到前端首页，并设置 user_id Cookie
-    """
-    if error:
-        raise HTTPException(status_code=400, detail=f"授权失败: {error}")
-
-    if not code or not state:
-        raise HTTPException(status_code=400, detail="缺少 code 或 state 参数")
-
-    if state not in _state_storage:
-        raise HTTPException(status_code=400, detail="无效的 state 参数")
-
-    del _state_storage[state]
-
-    token_data = await oauth_service.get_access_token(code)
-    if not token_data or "access_token" not in token_data:
-        raise HTTPException(status_code=400, detail="获取访问令牌失败")
-
-    access_token = token_data["access_token"]
-
-    user_info = await oauth_service.get_user_info(access_token)
-    if not user_info:
-        raise HTTPException(status_code=400, detail="获取用户信息失败")
-
-    linuxdo_id = str(user_info.get("id"))
-    username = user_info.get("username", "")
-    display_name = user_info.get("name", username)
-    avatar_url = user_info.get("avatar_url")
-    trust_level = user_info.get("trust_level", 0)
-
-    user = await user_manager.create_or_update_from_linuxdo(
-        linuxdo_id=linuxdo_id,
-        username=username,
-        display_name=display_name,
-        avatar_url=avatar_url,
-        trust_level=trust_level
-    )
-
-    is_first_login = not await password_manager.has_password(user.user_id)
-    if is_first_login:
-        logger.info(f"用户 {user.user_id} ({username}) 首次登录，需要初始化密码")
-
-    frontend_url = settings.FRONTEND_URL.rstrip('/')
-    redirect_url = f"{frontend_url}/auth/callback"
-    logger.info(f"OAuth回调成功，重定向到前端: {redirect_url}")
-    redirect_response = RedirectResponse(url=redirect_url)
-
-    _set_login_cookies(redirect_response, user.user_id)
-    logger.info(f"✅ [OAuth登录] 用户 {user.user_id} 登录成功，会话有效期 {settings.SESSION_EXPIRE_MINUTES} 分钟")
-
-    if is_first_login:
-        redirect_response.set_cookie(
-            key="first_login",
-            value="true",
-            max_age=300,
-            httponly=False,
-            samesite="lax",
-            secure=_is_session_cookie_secure(),
-        )
-        logger.info(f"✅ [OAuth登录] 用户 {user.user_id} 首次登录，已设置 first_login 标记")
-
-    return redirect_response
-
-
-@router.get("/linuxdo/callback")
-async def linuxdo_callback(
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
-    response: Response = None
-):
-    """LinuxDO OAuth2 回调处理（标准路径）"""
-    return await _handle_callback(code, state, error, response)
-
-
-@router.get("/callback")
-async def callback_alias(
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
-    response: Response = None
-):
-    """LinuxDO OAuth2 回调处理（兼容路径）"""
-    return await _handle_callback(code, state, error, response)
 
 
 @router.post("/refresh")
@@ -865,7 +864,7 @@ async def initialize_user_password(request: Request, password_req: SetPasswordRe
 
 @router.post("/bind/login", response_model=LocalLoginResponse)
 async def bind_account_login(request: LocalLoginRequest, response: Response):
-    """使用绑定的账号密码登录（LinuxDO授权后绑定的账号）"""
+    """使用绑定的本地账号密码登录。"""
     all_users = await user_manager.get_all_users()
     target_user = None
 

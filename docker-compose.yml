@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:18-alpine
-    container_name: mumuainovel-postgres
+    container_name: xiaoxin-workshop-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-mumuai_novel}
       POSTGRES_USER: ${POSTGRES_USER:-mumuai}
@@ -49,12 +49,12 @@ services:
       - -c
       - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-4GB}
 
-  mumuainovel:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
-    image: mumujie/mumuainovel:latest
-    container_name: mumuainovel
+    image: xiaoxin-workshop:latest
+    container_name: xiaoxin-workshop
     depends_on:
       postgres:
         condition: service_healthy
@@ -69,7 +69,7 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       
       # 应用配置
-      - APP_NAME=${APP_NAME:-MuMuAINovel}
+      - APP_NAME=${APP_NAME:-小新工坊}
       - APP_VERSION=${APP_VERSION:-1.5.7}
       - APP_HOST=${APP_HOST:-0.0.0.0}
       - APP_PORT=8000
@@ -109,13 +109,6 @@ services:
       - DEFAULT_MAX_TOKENS=${DEFAULT_MAX_TOKENS:-32000}
       - ALLOW_PRIVATE_AI_ENDPOINTS=${ALLOW_PRIVATE_AI_ENDPOINTS:-false}
       - ALLOWED_AI_HOSTS=${ALLOWED_AI_HOSTS:-}
-      
-      # LinuxDO OAuth 配置
-      - LINUXDO_CLIENT_ID=${LINUXDO_CLIENT_ID:-11111}
-      - LINUXDO_CLIENT_SECRET=${LINUXDO_CLIENT_SECRET:-11111}
-      - LINUXDO_REDIRECT_URI=${LINUXDO_REDIRECT_URI:-http://localhost:8000/api/auth/linuxdo/callback}
-      - LINUXDO_PROXY_URL=${LINUXDO_PROXY_URL:-}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8000}
       
       # 本地账户登录配置
       - LOCAL_AUTH_ENABLED=${LOCAL_AUTH_ENABLED:-true}

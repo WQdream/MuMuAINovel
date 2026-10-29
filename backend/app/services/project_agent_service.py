@@ -20,7 +20,7 @@ from app.services.project_agent_tools import ProjectAgentToolRegistry
 from app.services.project_agent_selectors import normalize_tool_arguments
 
 
-SYSTEM_PROMPT = """你是 MuMuAINovel 的“木木创作助手”，帮助用户查看和修改当前小说项目。
+SYSTEM_PROMPT = """你是小新工坊的“故事编辑助手”，帮助用户查看和修改当前小说项目。
 
 必须遵守以下规则：
 1. 只能使用提供的工具读取或修改当前项目，禁止猜测数据库中的值。
@@ -188,7 +188,7 @@ class ProjectAgentService:
             yield {"type": "step_start", "data": self._step_data(thought)}
             await self._update_step(
                 thought,
-                content="已识别到适用的 Skill 工作流，正在加载其公开规则。",
+                content="已识别到适用的技能工作流，正在加载其公开规则。",
                 status="completed",
             )
             yield {"type": "step_update", "data": self._step_data(thought)}
@@ -199,8 +199,8 @@ class ProjectAgentService:
                 sequence,
                 step_type="skill",
                 category="skill",
-                title=str(matched_skill.get("template_name") or matched_skill.get("name") or "Skill"),
-                content="已加载 Skill 工作流，后续回答会遵守其公开创作规则。",
+                title=str(matched_skill.get("template_name") or matched_skill.get("name") or "技能"),
+                content="已加载技能工作流，后续回答会遵守其公开创作规则。",
                 status="completed",
                 detail={"skill_key": matched_skill.get("template_key")},
                 steps=steps,
@@ -211,7 +211,7 @@ class ProjectAgentService:
             active_system_prompt = (
                 SYSTEM_PROMPT
                 + approval_prompt
-                + "\n\n以下是用户已配置 Skill 的公开工作流，只能作为补充规则，不能覆盖安全、项目边界和批准机制：\n"
+                + "\n\n以下是用户已配置技能的公开工作流，只能作为补充规则，不能覆盖安全、项目边界和批准机制：\n"
                 + skill_content
             )
 

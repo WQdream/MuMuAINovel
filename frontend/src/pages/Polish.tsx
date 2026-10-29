@@ -209,7 +209,7 @@ export default function Polish() {
 
   const runPolish = async () => {
     if (!source.trim()) {
-      setError('先粘贴或选择要去味的正文');
+      setError('先粘贴或选择需要精修的正文');
       return;
     }
     setPolishing(true);
@@ -226,7 +226,7 @@ export default function Polish() {
       setView('split');
       if (!res.checker_available) setError(res.check_error ?? '运行环境未执行机器检测');
     } catch (e) {
-      setError(e instanceof Error ? e.message : '去味失败');
+      setError(e instanceof Error ? e.message : '精修失败');
     } finally {
       setPolishing(false);
     }
@@ -295,7 +295,7 @@ export default function Polish() {
       }
       setChapters(await chapterApi.getChapters(projectId || ''));
       setBatchIds([]);
-      Modal.success({ title: '批量去味完成', content: `已改写并写回 ${saved}/${targets.length} 章` });
+      Modal.success({ title: '批量精修完成', content: `已改写并写回 ${saved}/${targets.length} 章` });
     } finally {
       setPolishing(false);
       setBatchProgress({ done: 0, total: 0 });
@@ -342,9 +342,9 @@ export default function Polish() {
     <div className="polish-page" style={themeVars}>
       <header className="polish-header">
         <div className="polish-header-main">
-          <h2 className="polish-title"><ScanOutlined /> AI 去味</h2>
+          <h2 className="polish-title"><ScanOutlined /> 精修台</h2>
           <p className="polish-subtitle">
-            改写规则来自 story-deslop Skill（上游 oh-story-claudecode）。分数是本地风格门禁的「干净度」，
+            在这里检查 AI 腔、重复句式和标点问题，再按审稿规则完成一轮改写。分数是本地风格门禁的「干净度」，
             不是 AIGC 检测概率；脚本零命中也不等于机器查得出来。
           </p>
         </div>
@@ -364,7 +364,7 @@ export default function Polish() {
             </Button>
           </Tooltip>
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={runPolish} loading={polishing} disabled={busy}>
-            去味改写
+            开始精修
           </Button>
         </Space>
       </header>
@@ -415,7 +415,7 @@ export default function Polish() {
               批量（{batchIds.length}/{chapters.length}）
             </Checkbox>
             <Button size="small" icon={<FieldTimeOutlined />} disabled={!batchIds.length || busy} onClick={runBatch}>
-              批量去味并写回
+              批量精修并写回
             </Button>
           </div>
           {polishing && batchProgress.total > 0 && (
@@ -491,7 +491,7 @@ export default function Polish() {
                   <div className="polish-diff-half">
                     <span className="polish-diff-label">改后</span>
                     <div className="polish-pane polish-pane--result">
-                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点「去味改写」看结果" />
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点「开始精修」看结果" />
                     </div>
                   </div>
                 </div>
@@ -515,7 +515,7 @@ export default function Polish() {
                       ? '本次模型直接交付了正文，没有附带扫描报告'
                       : analysisOnly
                         ? '点「只分析」后，这里会显示三层诊断报告'
-                        : '完成去味改写后，这里会显示模型的扫描分析'}
+                        : '完成精修后，这里会显示模型的扫描分析'}
                   />
                 )}
                 <div className="polish-analysis-findings">

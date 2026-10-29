@@ -502,7 +502,7 @@ export default function ProjectAgentPanel({
     analysis: '思考摘要',
     project: '项目工具',
     mcp: 'MCP',
-    skill: 'Skill',
+    skill: '技能',
   }[category] || '工具');
 
   const renderChangePreview = (toolCall?: AgentToolCall) => {

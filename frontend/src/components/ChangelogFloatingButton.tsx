@@ -16,7 +16,7 @@ export default function ChangelogFloatingButton() {
         type="text"
         icon={<FileTextOutlined />}
         onClick={() => setShowChangelog(true)}
-        title="更新日志"
+        title="版本记录"
         style={{
           color: token.colorTextSecondary,
           width: 36,

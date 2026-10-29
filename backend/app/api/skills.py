@@ -124,7 +124,7 @@ async def skill_chat(
 
     if not skill:
         async def error_gen():
-            yield await SSEResponse.send_error(f"未找到 Skill: {request.skill_key}")
+            yield await SSEResponse.send_error(f"未找到技能: {request.skill_key}")
         return create_sse_response(error_gen())
 
     # 获取系统提示词（Skill 内容）
@@ -188,7 +188,7 @@ async def get_skill_detail_api(skill_key: str, user: User = Depends(require_logi
     detail = get_skill_detail(skill_key)
     if not detail:
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"未找到 Skill: {skill_key}")
+        raise HTTPException(status_code=404, detail=f"未找到技能: {skill_key}")
     
     return {
         "template_key": detail["template_key"],
@@ -255,7 +255,7 @@ async def delete_skill(skill_key: str, user: User = Depends(require_login)):
     """删除 Skill"""
     try:
         delete_skill_files(skill_key)
-        return {"success": True, "message": f"已删除 Skill: {skill_key}"}
+        return {"success": True, "message": f"已删除技能: {skill_key}"}
     except ValueError as e:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail=str(e))

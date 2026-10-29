@@ -18,7 +18,8 @@ from app.models.settings import Settings
 from app.services.cover_generation_service import cover_generation_service
 from app.schemas.settings import (
     SettingsCreate, SettingsUpdate, SettingsResponse,
-    SystemSMTPSettingsResponse, SystemSMTPSettingsUpdate, SMTPTestRequest,
+    SystemSMTPSettingsResponse, SystemSMTPSettingsUpdate,
+    SystemAuthPolicyUpdate, SystemAuthPolicyResponse, SMTPTestRequest,
     TextModelConfig, TextModelConfigCreateRequest, TextModelConfigUpdateRequest,
     TextModelConfigListResponse, ChapterAnalysisTextModelSelectionRequest,
     SharedApiConfigSummary, SharedApiConfigImportRequest,
@@ -519,6 +520,7 @@ async def get_or_create_admin_settings(db: AsyncSession, user: User) -> Settings
             smtp_from_email=app_settings.SMTP_FROM_EMAIL,
             smtp_from_name=app_settings.SMTP_FROM_NAME,
             email_auth_enabled=app_settings.EMAIL_AUTH_ENABLED,
+            email_login_enabled=app_settings.EMAIL_LOGIN_ENABLED,
             email_register_enabled=app_settings.EMAIL_REGISTER_ENABLED,
             verification_code_ttl_minutes=app_settings.EMAIL_VERIFICATION_CODE_TTL_MINUTES,
             verification_resend_interval_seconds=app_settings.EMAIL_VERIFICATION_RESEND_INTERVAL_SECONDS,
@@ -1038,6 +1040,32 @@ async def get_system_smtp_settings(
     """获取系统 SMTP 设置（仅管理员）"""
     settings = await get_or_create_admin_settings(db, user)
     return settings
+
+
+@router.put("/system/auth-policy", response_model=SystemAuthPolicyResponse)
+async def update_system_auth_policy(
+    data: SystemAuthPolicyUpdate,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """立即更新邮箱认证策略，不触发 SMTP 表单校验。"""
+    settings = await get_or_create_admin_settings(db, user)
+    update_data = data.model_dump(exclude_unset=True, exclude_none=True)
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="请至少提供一个需要更新的认证策略")
+
+    for key, value in update_data.items():
+        setattr(settings, key, value)
+
+    await db.commit()
+    await db.refresh(settings)
+    logger.info(f"管理员 {user.user_id} 即时更新邮箱认证策略: {update_data}")
+    return SystemAuthPolicyResponse(
+        email_auth_enabled=settings.email_auth_enabled,
+        email_login_enabled=settings.email_login_enabled,
+        email_register_enabled=settings.email_register_enabled,
+    )
 
 
 @router.put("/system/smtp", response_model=SystemSMTPSettingsResponse)

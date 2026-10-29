@@ -3,8 +3,8 @@
 /* 阅读区 */
 .adm-review-reader {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 288px minmax(0, 1fr);
+  gap: 16px;
   min-height: 560px;
 }
 
@@ -12,7 +12,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--adm-border);
-  border-radius: 12px;
+  border-radius: 2px;
   background: var(--adm-panel);
   overflow: hidden;
   max-height: 74vh;
@@ -22,7 +22,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 11px 13px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--adm-border);
   color: var(--adm-text);
   font-size: 12.5px;
@@ -34,7 +34,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 6px;
+  padding: 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -45,7 +45,7 @@
 
 .adm-review-chapter-list::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: 2px;
   background-clip: padding-box;
   background-color: color-mix(in srgb, var(--adm-text) 14%, transparent);
 }
@@ -59,13 +59,14 @@
 }
 
 .adm-review-chapter-item {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
   width: 100%;
-  padding: 7px 9px;
+  padding: 10px 11px;
   border: none;
-  border-radius: 8px;
+  border-radius: 2px;
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -77,7 +78,17 @@
 }
 
 .adm-review-chapter-item.is-active {
-  background: color-mix(in srgb, var(--adm-text) 7%, transparent);
+  background: color-mix(in srgb, var(--adm-accent) 7%, transparent);
+}
+
+.adm-review-chapter-item.is-active::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 2px;
+  background: var(--adm-accent);
 }
 
 .adm-review-chapter-no {
@@ -116,7 +127,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--adm-border);
-  border-radius: 12px;
+  border-radius: 2px;
   background: var(--adm-panel);
   overflow: hidden;
   max-height: 74vh;
@@ -134,7 +145,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 16px 22px 13px;
+  padding: 20px 24px 16px;
   border-bottom: 1px solid var(--adm-border);
 }
 
@@ -169,7 +180,7 @@
 
 .adm-review-text {
   flex: 1;
-  padding: 22px 26px 40px;
+  padding: 26px 30px 44px;
   color: var(--adm-text);
   font-size: 14px;
   line-height: 2;
@@ -184,7 +195,7 @@
 
 .adm-review-text::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: 2px;
   background-clip: padding-box;
   background-color: color-mix(in srgb, var(--adm-text) 14%, transparent);
 }

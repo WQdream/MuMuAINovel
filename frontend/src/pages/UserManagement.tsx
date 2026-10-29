@@ -339,22 +339,22 @@ export default function UserManagement({ embedded = false }: UserManagementProps
   const renderRole = (isAdmin: boolean) =>
     embedded ? (
       <span className={`adm-tag${isAdmin ? ' adm-tag--warn' : ''}`}>
-        {isAdmin ? '管理员' : '普通用户'}
+        {isAdmin ? '管理员' : '平台用户'}
       </span>
     ) : (
       <Tag color={isAdmin ? 'gold' : 'blue'}>
-        {isAdmin ? '👑 管理员' : '普通用户'}
+        {isAdmin ? '👑 管理员' : '平台用户'}
       </Tag>
     );
 
   const renderTrustLevel = (level: number) =>
     embedded ? (
       <span className={`adm-tag${level >= 5 ? ' adm-tag--ok' : ''}${level === -1 ? ' adm-tag--danger' : ''}`}>
-        {level === -1 ? '已禁用' : `Level ${level}`}
+        {level === -1 ? '已禁用' : `${level} 级`}
       </span>
     ) : (
       <Tag color={level === -1 ? 'default' : level >= 5 ? 'green' : 'blue'}>
-        {level === -1 ? '已禁用' : `Level ${level}`}
+        {level === -1 ? '已禁用' : `${level} 级`}
       </Tag>
     );
 
@@ -367,7 +367,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       title: '用户名',
       dataIndex: 'username',
       key: 'username',
-      width: embedded ? 180 : 150,
+      width: embedded ? 145 : 150,
       sorter: true,
       sortOrder: sortField === 'username' ? sortOrder : null,
       render: renderUser,
@@ -376,7 +376,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       title: '显示名称',
       dataIndex: 'display_name',
       key: 'display_name',
-      width: 150,
+      width: embedded ? 120 : 150,
       sorter: true,
       sortOrder: sortField === 'display_name' ? sortOrder : null,
       render: renderDisplayName,
@@ -385,7 +385,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       title: '状态',
       dataIndex: 'is_active',
       key: 'is_active',
-      width: 100,
+      width: embedded ? 85 : 100,
       sorter: true,
       sortOrder: sortField === 'is_active' ? sortOrder : null,
       render: renderStatus,
@@ -394,7 +394,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       title: '角色',
       dataIndex: 'is_admin',
       key: 'is_admin',
-      width: 100,
+      width: embedded ? 90 : 100,
       sorter: true,
       sortOrder: sortField === 'is_admin' ? sortOrder : null,
       render: renderRole,
@@ -403,7 +403,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       title: '信任等级',
       dataIndex: 'trust_level',
       key: 'trust_level',
-      width: 100,
+      width: embedded ? 90 : 100,
       sorter: true,
       sortOrder: sortField === 'trust_level' ? sortOrder : null,
       render: renderTrustLevel,
@@ -412,7 +412,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      width: embedded ? 150 : 180,
+      width: embedded ? 155 : 180,
       sorter: true,
       sortOrder: sortField === 'created_at' ? sortOrder : null,
       render: (date: string) =>
@@ -428,7 +428,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       title: '最后登录',
       dataIndex: 'last_login',
       key: 'last_login',
-      width: embedded ? 150 : 180,
+      width: embedded ? 155 : 180,
       sorter: true,
       sortOrder: sortField === 'last_login' ? sortOrder : null,
       render: (date: string) =>
@@ -443,7 +443,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
     {
       title: '操作',
       key: 'action',
-      width: isMobile ? 80 : 300,
+      width: isMobile ? 80 : embedded ? 318 : 300,
       fixed: 'right' as const,
       render: (_: unknown, record: UserWithStatus) => {
         const isActive = record.is_active !== false;
@@ -615,7 +615,6 @@ export default function UserManagement({ embedded = false }: UserManagementProps
       <div className="adm-page-actions">
         <Button
           type="primary"
-          size="small"
           icon={<PlusOutlined />}
           onClick={() => setModalVisible(true)}
         >
@@ -627,9 +626,10 @@ export default function UserManagement({ embedded = false }: UserManagementProps
 
   return (
     <div
+      className={embedded ? 'adm-page' : undefined}
       style={
         embedded
-          ? { width: '100%', maxWidth: 1180, margin: '0 auto', padding: '22px 24px 56px' }
+          ? undefined
           : {
               height: '100vh',
               background: `linear-gradient(180deg, ${token.colorBgLayout} 0%, ${alphaColor(token.colorPrimary, 0.08)} 100%)`,
@@ -741,9 +741,9 @@ export default function UserManagement({ embedded = false }: UserManagementProps
             ...(embedded
               ? {
                   border: `1px solid ${token.colorBorderSecondary}`,
-                  borderRadius: 12,
+                  borderRadius: 2,
                   background: token.colorBgContainer,
-                  boxShadow: `0 1px 2px ${alphaColor(token.colorText, 0.03)}`,
+                  boxShadow: 'none',
                 }
               : {
                   border: `1px solid ${alphaColor(token.colorWhite, 0.45)}`,
@@ -762,7 +762,7 @@ export default function UserManagement({ embedded = false }: UserManagementProps
               justifyContent: 'space-between',
               gap: 12,
               flexWrap: 'wrap',
-              padding: embedded ? '12px 14px' : '16px 24px 12px',
+              padding: embedded ? '15px 20px' : '16px 24px 12px',
               borderBottom: `1px solid ${embedded ? token.colorBorderSecondary : alphaColor(token.colorText, 0.06)}`,
             }}
           >
@@ -776,8 +776,8 @@ export default function UserManagement({ embedded = false }: UserManagementProps
               }}
               allowClear
               style={{
-                borderRadius: 8,
-                width: embedded ? 280 : undefined,
+                borderRadius: 2,
+                width: embedded ? 340 : undefined,
                 maxWidth: '100%',
               }}
             />
@@ -808,8 +808,8 @@ export default function UserManagement({ embedded = false }: UserManagementProps
               className={embedded ? 'adm-table' : undefined}
               size={embedded ? 'middle' : 'large'}
               scroll={{
-                // 嵌入时不再限定 x，让列宽自适应容器，避免操作列被裁切
-                x: embedded ? undefined : 1400,
+                // 嵌入时保持最小可读宽度；宽屏会铺满容器，窄屏只在表格内横向滚动
+                x: embedded ? 1158 : 1400,
                 // 嵌入管理后台时多出 58px 顶栏 + 页头 + 工具条
                 y: embedded ? undefined : 'calc(100vh - 410px)',
               }}
@@ -832,8 +832,8 @@ export default function UserManagement({ embedded = false }: UserManagementProps
           {/* 固定分页控件 */}
           <div
             style={{
-              padding: embedded ? '8px 6px' : '16px 24px 24px 24px',
-              borderTop: embedded ? 'none' : `1px solid ${alphaColor(token.colorText, 0.06)}`,
+              padding: embedded ? '12px 20px' : '16px 24px 24px 24px',
+              borderTop: `1px solid ${token.colorBorderSecondary}`,
               background: 'transparent',
               display: 'flex',
               justifyContent: embedded ? 'flex-end' : 'center',
@@ -843,7 +843,6 @@ export default function UserManagement({ embedded = false }: UserManagementProps
               current={currentPage}
               pageSize={pageSize}
               total={filteredUsers.length}
-              size={embedded ? 'small' : undefined}
               showSizeChanger
               showTotal={embedded ? undefined : (total) => `共 ${total} 个用户${searchText ? ' (已过滤)' : ''}`}
               pageSizeOptions={[20, 50, 100]}

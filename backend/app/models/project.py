@@ -38,6 +38,8 @@ class Project(Base):
     cover_prompt = Column(Text, comment="最近一次生成封面使用的提示词")
     cover_status = Column(String(20), default="none", nullable=False, comment="封面状态: none/generating/ready/failed")
     cover_error = Column(Text, comment="最近一次封面生成失败原因")
+    cover_error_category = Column(String(20), comment="封面失败类型: auth/timeout/other")
+    cover_error_dismissed_at = Column(DateTime, comment="封面失败提示被用户隐藏的时间")
     cover_updated_at = Column(DateTime, comment="最近一次封面生成成功时间")
     
     created_at = Column(DateTime, server_default=func.now(), comment="创建时间")

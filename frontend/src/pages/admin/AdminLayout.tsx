@@ -1,18 +1,22 @@
 import { useEffect, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Alert, Avatar, Button, Grid, Layout, Menu, Spin, theme } from 'antd';
+import { Alert, Button, Grid, Layout, Menu, Spin, theme } from 'antd';
 import {
   ApiOutlined,
-  ControlOutlined,
   FileSearchOutlined,
   HistoryOutlined,
+  KeyOutlined,
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
 import { authApi } from '../../services/api';
 import type { User } from '../../types';
 import UserMenu from '../../components/UserMenu';
+import BrandMark from '../../components/BrandMark';
+import ThemeSwitch from '../../components/ThemeSwitch';
+import { useThemeMode } from '../../theme/useThemeMode';
+import { SIDEBAR_WIDTH } from '../../utils/sidebarState';
 import './AdminLayout.css';
 
 const { Header, Sider, Content } = Layout;
@@ -20,6 +24,7 @@ const { useBreakpoint } = Grid;
 
 const navItems = [
   { key: '/admin/users', icon: <TeamOutlined />, label: '用户管理' },
+  { key: '/admin/invites', icon: <KeyOutlined />, label: '邀请码管理' },
   { key: '/admin/api-config', icon: <ApiOutlined />, label: 'API 配置' },
   { key: '/admin/review', icon: <FileSearchOutlined />, label: '内容审阅' },
   { key: '/admin/audit', icon: <HistoryOutlined />, label: '访问审计' },
@@ -39,6 +44,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
   const location = useLocation();
   const screens = useBreakpoint();
   const { token } = theme.useToken();
+  const { resolvedMode } = useThemeMode();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   // useBreakpoint 首帧返回空对象，用窗口宽度兜底避免布局闪一下
@@ -64,7 +70,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
     '--adm-ok': `color-mix(in srgb, ${token.colorSuccess} 62%, ${token.colorText})`,
     '--adm-warn': `color-mix(in srgb, ${token.colorWarning} 58%, ${token.colorText})`,
     '--adm-danger': `color-mix(in srgb, ${token.colorError} 62%, ${token.colorText})`,
-    '--adm-accent': token.colorPrimary,
+    '--adm-accent': 'var(--editorial-accent)',
   } as CSSProperties;
 
   // 子路由可能带尾部斜杠或额外片段，按前缀归一化到导航项
@@ -110,49 +116,47 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
 
   return (
     <Layout className="adm-layout" style={themeVars}>
-      <Header className="adm-header">
+      <Header className="adm-header editorial-topbar">
         <div className="adm-brand">
-          <span className="adm-brand-mark">
-            <ControlOutlined />
-          </span>
+          <BrandMark size={30} textSize={15} showText={!isMobile} />
+          <span className="adm-brand-divider" aria-hidden="true" />
           <div className="adm-brand-copy">
             <span className="adm-brand-title">管理后台</span>
-            <span className="adm-brand-sub">仅管理员可见</span>
+            <span className="adm-brand-sub">ADMINISTRATION</span>
           </div>
         </div>
         <div className="adm-header-right">
           <Button type="text" size="small" onClick={() => navigate('/')}>
             返回书架
           </Button>
-          <UserMenu compact />
+          {isMobile && <UserMenu compact />}
         </div>
       </Header>
 
       <Layout className="adm-body" hasSider={!isMobile}>
         {!isMobile && (
-          <Sider width={200} theme="light" className="adm-sider">
+          <Sider
+            width={SIDEBAR_WIDTH}
+            theme="light"
+            className="adm-sider editorial-sider editorial-navigation"
+          >
             <div className="adm-sider-inner">
               {menu}
               <div className="adm-sider-foot">
-                {currentUser && (
-                  <div className="adm-account">
-                    <Avatar size={26} src={currentUser.avatar_url}>
-                      {(currentUser.display_name || currentUser.username).slice(0, 1)}
-                    </Avatar>
-                    <div className="adm-account-copy">
-                      <span className="adm-account-name">
-                        {currentUser.display_name || currentUser.username}
-                      </span>
-                      <span className="adm-account-role">管理员</span>
-                    </div>
+                <div className="adm-sider-controls">
+                  <div className="editorial-sider-label">
+                    <span>外观</span>
+                    <span>{resolvedMode === 'dark' ? '夜' : '昼'}</span>
                   </div>
-                )}
+                  <ThemeSwitch block />
+                  <UserMenu tone="nav" />
+                </div>
               </div>
             </div>
           </Sider>
         )}
 
-        <Content className="adm-content">
+        <Content className="adm-content editorial-canvas">
           {isMobile && <div className="adm-mobile-nav">{menu}</div>}
           {children ?? <Outlet />}
         </Content>

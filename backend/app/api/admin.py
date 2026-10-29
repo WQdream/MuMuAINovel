@@ -59,7 +59,6 @@ class UserResponse(BaseModel):
     trust_level: int
     is_admin: bool
     is_active: bool
-    linuxdo_id: str
     created_at: str
     last_login: Optional[str]
 
@@ -133,8 +132,8 @@ async def create_user(
         user_id = f"admin_created_{hashlib.md5(data.username.encode()).hexdigest()[:16]}"
         
         # 创建用户
-        new_user = await user_manager.create_or_update_from_linuxdo(
-            linuxdo_id=user_id,
+        new_user = await user_manager.create_or_update_user(
+            subject_id=user_id,
             username=data.username,
             display_name=data.display_name,
             avatar_url=data.avatar_url,

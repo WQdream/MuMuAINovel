@@ -391,6 +391,13 @@
   flex-shrink: 0;
 }
 
+.sys-switch-footnote {
+  margin: -4px 0 16px;
+  color: var(--sys-tertiary);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
 /* 数值字段并排 */
 .sys-field-pair {
   display: grid;

@@ -5,7 +5,7 @@ import { Alert, Button, Card, Col, DatePicker, Empty, Form, Input, InputNumber, 
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
 import { BellOutlined, DeleteOutlined, EditOutlined, EyeInvisibleOutlined, InfoCircleOutlined, InboxOutlined, MailOutlined, PlusOutlined, ReloadOutlined, SaveOutlined, SendOutlined, SettingOutlined, WarningOutlined } from '@ant-design/icons';
 import { announcementApi, authApi, settingsApi } from '../services/api';
-import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementStatusResponse, AnnouncementUpdate, SystemSMTPSettings, SystemSMTPSettingsUpdate, User } from '../types';
+import type { Announcement, AnnouncementCreate, AnnouncementLevel, AnnouncementStatus, AnnouncementStatusResponse, AnnouncementUpdate, SystemAuthPolicy, SystemSMTPSettings, SystemSMTPSettingsUpdate, User } from '../types';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import { useThemeMode } from '../theme/useThemeMode';
 import './SystemSettings.css';
@@ -13,6 +13,26 @@ import './SystemSettings.css';
 const { Text } = Typography;
 const { Option } = Select;
 const { TextArea, Search } = Input;
+
+type AuthPolicyKey = keyof SystemAuthPolicy;
+
+const defaultAuthPolicy: SystemAuthPolicy = {
+  email_auth_enabled: true,
+  email_login_enabled: true,
+  email_register_enabled: true,
+};
+
+const authPolicyLabels: Record<AuthPolicyKey, string> = {
+  email_auth_enabled: '邮箱认证',
+  email_login_enabled: '邮箱登录',
+  email_register_enabled: '邮箱注册',
+};
+
+const pickAuthPolicy = (settings: SystemAuthPolicy): SystemAuthPolicy => ({
+  email_auth_enabled: settings.email_auth_enabled,
+  email_login_enabled: settings.email_login_enabled,
+  email_register_enabled: settings.email_register_enabled,
+});
 
 const qqDefaults: Pick<SystemSMTPSettings, 'smtp_provider' | 'smtp_host' | 'smtp_port' | 'smtp_use_ssl' | 'smtp_use_tls'> = {
   smtp_provider: 'qq',
@@ -83,6 +103,8 @@ export default function SystemSettingsPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [authPolicy, setAuthPolicy] = useState<SystemAuthPolicy>(defaultAuthPolicy);
+  const [authPolicySaving, setAuthPolicySaving] = useState<Partial<Record<AuthPolicyKey, boolean>>>({});
   const [testing, setTesting] = useState(false);
   const [testTargetEmail, setTestTargetEmail] = useState('');
   const [announcementStatus, setAnnouncementStatus] = useState<AnnouncementStatusResponse | null>(null);
@@ -169,6 +191,7 @@ export default function SystemSettingsPage() {
       ]);
       setCurrentUser(user);
       setAnnouncementStatus(status);
+      setAuthPolicy(pickAuthPolicy(smtpSettings));
       form.setFieldsValue(smtpSettings);
     } catch (error) {
       console.error('加载系统设置失败:', error);
@@ -202,21 +225,25 @@ export default function SystemSettingsPage() {
   const handleSave = async (values: SystemSMTPSettingsUpdate) => {
     setSaving(true);
     try {
-      const payload = values.smtp_provider === 'qq'
+      const payload: SystemSMTPSettingsUpdate = { ...values };
+      delete payload.email_auth_enabled;
+      delete payload.email_login_enabled;
+      delete payload.email_register_enabled;
+
+      const normalizedPayload = payload.smtp_provider === 'qq'
         ? {
-            ...values,
+            ...payload,
             ...qqDefaults,
-            smtp_username: values.smtp_username,
-            smtp_password: values.smtp_password,
-            smtp_from_email: values.smtp_from_email,
-            smtp_from_name: values.smtp_from_name,
-            email_auth_enabled: values.email_auth_enabled,
-            email_register_enabled: values.email_register_enabled,
-            verification_code_ttl_minutes: values.verification_code_ttl_minutes,
-            verification_resend_interval_seconds: values.verification_resend_interval_seconds,
+            smtp_username: payload.smtp_username,
+            smtp_password: payload.smtp_password,
+            smtp_from_email: payload.smtp_from_email,
+            smtp_from_name: payload.smtp_from_name,
+            verification_code_ttl_minutes: payload.verification_code_ttl_minutes,
+            verification_resend_interval_seconds: payload.verification_resend_interval_seconds,
           }
-        : values;
-      const result = await settingsApi.updateSystemSMTPSettings(payload);
+        : payload;
+      const result = await settingsApi.updateSystemSMTPSettings(normalizedPayload);
+      setAuthPolicy(pickAuthPolicy(result));
       form.setFieldsValue(result);
       message.success('系统 SMTP 设置已保存');
     } catch (error) {
@@ -224,6 +251,23 @@ export default function SystemSettingsPage() {
       message.error('保存系统设置失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAuthPolicyToggle = async (key: AuthPolicyKey, checked: boolean) => {
+    setAuthPolicy(prev => ({ ...prev, [key]: checked }));
+    setAuthPolicySaving(prev => ({ ...prev, [key]: true }));
+
+    try {
+      const result = await settingsApi.updateSystemAuthPolicy({ [key]: checked });
+      setAuthPolicy(prev => ({ ...prev, [key]: result[key] }));
+      message.success(`${authPolicyLabels[key]}已${checked ? '启用' : '关闭'}，立即生效`);
+    } catch (error) {
+      console.error('保存邮箱认证策略失败:', error);
+      setAuthPolicy(prev => ({ ...prev, [key]: !checked }));
+      message.error(`${authPolicyLabels[key]}更新失败，请重试`);
+    } finally {
+      setAuthPolicySaving(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -660,8 +704,8 @@ export default function SystemSettingsPage() {
                         className="sys-card"
                         title={(
                           <div className="sys-card-heading">
-                            <span className="sys-card-title">注册与验证码</span>
-                            <span className="sys-card-sub">邮箱认证策略</span>
+                            <span className="sys-card-title">登录与注册</span>
+                            <span className="sys-card-sub">点击开关立即生效</span>
                           </div>
                         )}
                       >
@@ -669,22 +713,45 @@ export default function SystemSettingsPage() {
                           <div className="sys-switch-item">
                             <div className="sys-switch-copy">
                               <span className="sys-switch-title">启用邮箱认证</span>
-                              <span className="sys-switch-desc">注册与找回密码需要邮箱验证码</span>
+                              <span className="sys-switch-desc">邮箱登录、注册与找回密码的总开关</span>
                             </div>
-                            <Form.Item name="email_auth_enabled" valuePropName="checked" noStyle>
-                              <Switch />
-                            </Form.Item>
+                            <Switch
+                              aria-label="启用邮箱认证"
+                              checked={authPolicy.email_auth_enabled}
+                              loading={Boolean(authPolicySaving.email_auth_enabled)}
+                              onChange={(checked) => void handleAuthPolicyToggle('email_auth_enabled', checked)}
+                            />
+                          </div>
+                          <div className="sys-switch-item">
+                            <div className="sys-switch-copy">
+                              <span className="sys-switch-title">启用邮箱登录</span>
+                              <span className="sys-switch-desc">在登录页显示邮箱验证码登录入口</span>
+                            </div>
+                            <Switch
+                              aria-label="启用邮箱登录"
+                              checked={authPolicy.email_login_enabled}
+                              disabled={!authPolicy.email_auth_enabled}
+                              loading={Boolean(authPolicySaving.email_login_enabled)}
+                              onChange={(checked) => void handleAuthPolicyToggle('email_login_enabled', checked)}
+                            />
                           </div>
                           <div className="sys-switch-item">
                             <div className="sys-switch-copy">
                               <span className="sys-switch-title">启用邮箱注册</span>
-                              <span className="sys-switch-desc">允许新用户自助注册账号</span>
+                              <span className="sys-switch-desc">在登录页显示邮箱注册入口</span>
                             </div>
-                            <Form.Item name="email_register_enabled" valuePropName="checked" noStyle>
-                              <Switch />
-                            </Form.Item>
+                            <Switch
+                              aria-label="启用邮箱注册"
+                              checked={authPolicy.email_register_enabled}
+                              disabled={!authPolicy.email_auth_enabled}
+                              loading={Boolean(authPolicySaving.email_register_enabled)}
+                              onChange={(checked) => void handleAuthPolicyToggle('email_register_enabled', checked)}
+                            />
                           </div>
                         </div>
+                        <p className="sys-switch-footnote">
+                          开关修改后会立即保存，无需填写 SMTP 参数。SMTP 未配置完整时，策略仍可保存，但验证码暂时无法发送。
+                        </p>
 
                         <div className="sys-field-pair">
                           <Form.Item name="verification_code_ttl_minutes" label="验证码有效期" rules={[{ required: true, message: '请输入验证码有效期' }]}>
@@ -837,7 +904,7 @@ export default function SystemSettingsPage() {
                       showTotal: (total) => `共 ${total} 条公告`,
                     }}
                     onChange={handleAnnouncementTableChange}
-                    scroll={{ x: 1200 }}
+                    scroll={{ x: 1100 }}
                   />
                 </div>
               </div>

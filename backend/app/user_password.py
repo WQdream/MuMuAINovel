@@ -41,6 +41,10 @@ class UserPasswordManager:
         digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), iterations).hex()
         return f"pbkdf2_sha256${iterations}${salt}${digest}"
 
+    def hash_password(self, password: str) -> str:
+        """为需要与用户记录同事务写入的调用方提供公开哈希入口。"""
+        return self._hash_password(password)
+
     def _verify_hash(self, password: str, stored_hash: str) -> bool:
         if stored_hash.startswith("pbkdf2_sha256$"):
             try:

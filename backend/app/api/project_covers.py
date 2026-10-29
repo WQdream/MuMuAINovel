@@ -26,6 +26,11 @@ class CoverGenerateResponse(BaseModel):
     message: str
 
 
+class CoverErrorDismissResponse(BaseModel):
+    project_id: str
+    dismissed_at: str
+
+
 @router.post("/{project_id}/cover/generate", response_model=CoverGenerateResponse, summary="生成项目封面")
 async def generate_project_cover(
     project_id: str,
@@ -44,6 +49,31 @@ async def generate_project_cover(
         overwrite=payload.overwrite,
     )
     return CoverGenerateResponse(**result)
+
+
+@router.post(
+    "/{project_id}/cover/dismiss-error",
+    response_model=CoverErrorDismissResponse,
+    summary="隐藏项目封面失败提示",
+)
+async def dismiss_project_cover_error(
+    project_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="未登录")
+
+    project = await cover_generation_service.dismiss_cover_error(
+        db=db,
+        user_id=user_id,
+        project_id=project_id,
+    )
+    return CoverErrorDismissResponse(
+        project_id=project.id,
+        dismissed_at=project.cover_error_dismissed_at.isoformat(),
+    )
 
 
 @router.get("/{project_id}/cover/download", summary="下载项目封面")

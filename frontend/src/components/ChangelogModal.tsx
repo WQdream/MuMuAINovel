@@ -9,7 +9,7 @@ import {
   ExperimentOutlined,
   ToolOutlined,
   QuestionCircleOutlined,
-  GithubOutlined,
+  HistoryOutlined,
   ReloadOutlined,
   ClockCircleOutlined,
   SyncOutlined,
@@ -128,8 +128,8 @@ export default function ChangelogModal({ visible, onClose }: ChangelogModalProps
     <Modal
       title={
         <Space>
-          <GithubOutlined />
-          <span>更新日志</span>
+          <HistoryOutlined />
+          <span>版本记录</span>
           <Button
             type="text"
             size="small"
@@ -243,14 +243,16 @@ export default function ChangelogModal({ visible, onClose }: ChangelogModalProps
                             <span style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>
                               {entry.author.username || entry.author.name}
                             </span>
-                            <a
-                              href={entry.commitUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ fontSize: '12px' }}
-                            >
-                              查看提交
-                            </a>
+                            {entry.commitUrl && (
+                              <a
+                                href={entry.commitUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: '12px' }}
+                              >
+                                查看详情
+                              </a>
+                            )}
                           </Space>
                         </div>
                       </Timeline.Item>

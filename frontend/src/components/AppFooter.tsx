@@ -1,4 +1,5 @@
 import { Grid, theme, Typography } from 'antd';
+import { BRAND_COPYRIGHT } from '../config/brand';
 
 const { Text } = Typography;
 const { useBreakpoint } = Grid;
@@ -27,25 +28,24 @@ export default function AppFooter({ sidebarWidth = 0 }: AppFooterProps) {
         bottom: 0,
         left: leftOffset,
         right: 0,
-        backdropFilter: 'blur(20px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-        borderTop: `1px solid ${token.colorBorder}`,
-        padding: isMobile ? '6px 12px' : '8px 16px',
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        borderTop: `1px solid ${token.colorBorderSecondary}`,
+        padding: isMobile ? '6px 12px' : '7px 16px',
         zIndex: 100,
-        boxShadow: `0 -2px 16px ${alphaColor(token.colorText, 0.08)}`,
-        backgroundColor: alphaColor(token.colorBgContainer, 0.82),
+        backgroundColor: alphaColor(token.colorBgLayout, 0.72),
         transition: 'left 0.3s ease',
         textAlign: 'center',
       }}
     >
       <Text
         style={{
-          fontSize: 12,
+          fontSize: 10,
           color: token.colorTextTertiary,
-          letterSpacing: 0.4,
+          letterSpacing: '0.2em',
         }}
       >
-        © {new Date().getFullYear()} 小新工坊
+        {BRAND_COPYRIGHT}
       </Text>
     </div>
   );

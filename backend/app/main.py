@@ -211,7 +211,7 @@ from app.api import (
     changelog, careers, foreshadows, prompt_workshop, book_import,
     project_covers, project_agent, tasks, skills, announcements, knowledge,
     admin_review, admin_api_config, admin_image_api_config,
-    polish,
+    polish, invite_codes,
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -221,6 +221,7 @@ app.include_router(admin.router, prefix="/api")
 app.include_router(admin_review.router, prefix="/api")
 app.include_router(admin_api_config.router, prefix="/api")
 app.include_router(admin_image_api_config.router, prefix="/api")
+app.include_router(invite_codes.router, prefix="/api")
 
 app.include_router(projects.router, prefix="/api")
 app.include_router(project_covers.router, prefix="/api")

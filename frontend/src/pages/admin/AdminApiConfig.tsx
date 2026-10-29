@@ -53,10 +53,10 @@ const { useBreakpoint } = Grid;
 
 const imageApiProviders = [
   {
-    value: 'mumu',
-    label: '通用 OpenAI',
-    defaultUrl: 'https://zhongzhuan.mumuverse.space/v1beta',
-    defaultModel: 'gemini-3.1-flash-image-preview',
+    value: 'openai',
+    label: 'OpenAI 兼容',
+    defaultUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-image-1',
   },
   {
     value: 'gemini',
@@ -148,7 +148,7 @@ export default function AdminApiConfig() {
     '--st-border': token.colorBorderSecondary,
     '--st-fill': token.colorFillQuaternary,
     '--st-card-bg': token.colorBgContainer,
-    '--st-accent': token.colorPrimary,
+    '--st-accent': 'var(--editorial-accent)',
   } as CSSProperties;
 
   const loadConfigs = useCallback(async () => {
@@ -511,7 +511,7 @@ export default function AdminApiConfig() {
     const payload = {
       name: String(values.name ?? '').trim(),
       note: values.note ? String(values.note) : undefined,
-      api_provider: String(values.api_provider ?? 'mumu'),
+      api_provider: String(values.api_provider ?? 'openai'),
       api_key: String(values.api_key ?? ''),
       api_base_url: values.api_base_url ? String(values.api_base_url) : undefined,
       image_model: String(values.image_model ?? '').trim(),
@@ -1525,8 +1525,8 @@ export default function AdminApiConfig() {
                 <Input
                   className="st-input-mono"
                   placeholder={
-                    selectedImageProvider === 'mumu'
-                      ? 'gemini-3.1-flash-image-preview'
+                    selectedImageProvider === 'openai'
+                      ? 'gpt-image-1'
                       : selectedImageProvider === 'grok'
                         ? 'grok-2-image'
                         : 'gemini-2.0-flash-exp-image-generation'
@@ -1576,9 +1576,7 @@ export default function AdminApiConfig() {
                   placeholder={
                     editingImage
                       ? '留空则不修改已保存的密钥'
-                      : selectedImageProvider === 'mumu'
-                        ? '请输入 MuMuのAPI Key'
-                        : '输入图片 API Key'
+                      : '输入图片 API Key'
                   }
                   autoComplete="new-password"
                 />
@@ -1601,8 +1599,8 @@ export default function AdminApiConfig() {
                   className="st-input-mono"
                   allowClear
                   placeholder={
-                    selectedImageProvider === 'mumu'
-                      ? 'https://zhongzhuan.mumuverse.space/v1beta'
+                    selectedImageProvider === 'openai'
+                      ? 'https://api.openai.com/v1'
                       : selectedImageProvider === 'grok'
                         ? 'https://api.x.ai/v1'
                         : 'https://generativelanguage.googleapis.com/v1beta'

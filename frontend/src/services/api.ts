@@ -9,7 +9,6 @@ declare module 'axios' {
 }
 import type {
   User,
-  AuthUrlResponse,
   Project,
   ProjectCreate,
   ProjectUpdate,
@@ -91,6 +90,10 @@ import type {
   AgentToolCall,
   AgentToolDecision,
   AgentExecutionStep,
+  InviteCodeCreateRequest,
+  InviteCodeItem,
+  InviteCodeListResponse,
+  LocalRegisterPayload,
 } from '../types';
 
 interface MCPPluginSimpleCreate {
@@ -195,13 +198,16 @@ api.interceptors.response.use(
 export const authApi = {
   getAuthConfig: () => api.get<unknown, {
     local_auth_enabled: boolean;
-    linuxdo_enabled: boolean;
     email_auth_enabled: boolean;
+    email_login_enabled: boolean;
     email_register_enabled: boolean;
   }>('/auth/config'),
 
   localLogin: (username: string, password: string) =>
     api.post<unknown, { success: boolean; message: string; user: User }>('/auth/local/login', { username, password }),
+
+  registerLocal: (payload: LocalRegisterPayload) =>
+    api.post<unknown, { success: boolean; message: string; user: User }>('/auth/local/register', payload),
 
   bindAccountLogin: (username: string, password: string) =>
     api.post<unknown, { success: boolean; message: string; user: User }>('/auth/bind/login', { username, password }),
@@ -217,8 +223,6 @@ export const authApi = {
 
   resetEmailPassword: (payload: import('../types').EmailResetPasswordPayload) =>
     api.post<unknown, { success: boolean; message: string }>('/auth/email/reset-password', payload),
-
-  getLinuxDOAuthUrl: () => api.get<unknown, AuthUrlResponse>('/auth/linuxdo/url'),
 
   getCurrentUser: () => api.get<unknown, User>('/auth/user'),
 
@@ -398,6 +402,9 @@ export const settingsApi = {
   updateSystemSMTPSettings: (data: import('../types').SystemSMTPSettingsUpdate) =>
     api.put<unknown, import('../types').SystemSMTPSettings>('/settings/system/smtp', data),
 
+  updateSystemAuthPolicy: (data: import('../types').SystemAuthPolicyUpdate) =>
+    api.put<unknown, import('../types').SystemAuthPolicy>('/settings/system/auth-policy', data),
+
   testSystemSMTPSettings: (data: { to_email: string }) =>
     api.post<unknown, { success: boolean; message: string }>('/settings/system/smtp/test', data),
 };
@@ -427,6 +434,13 @@ export const projectApi = {
       `/projects/${id}/cover/generate`,
       { overwrite },
       { timeout: 200000, skipErrorToast: true },
+    ),
+
+  dismissCoverError: (id: string) =>
+    api.post<unknown, { project_id: string; dismissed_at: string }>(
+      `/projects/${id}/cover/dismiss-error`,
+      undefined,
+      { skipErrorToast: true },
     ),
 
   downloadCover: async (id: string, filename?: string) => {
@@ -1387,6 +1401,30 @@ export const adminApi = {
       success: boolean;
       message: string;
     }>(`/admin/users/${userId}`),
+};
+
+export const adminInviteApi = {
+  list: (params?: {
+    status?: 'all' | 'unused' | 'used' | 'disabled';
+    q?: string;
+    page?: number;
+    limit?: number;
+  }) =>
+    api.get<unknown, InviteCodeListResponse>('/admin/invites', { params }),
+
+  create: (data: InviteCodeCreateRequest) =>
+    api.post<unknown, InviteCodeItem[]>('/admin/invites', data),
+
+  toggleStatus: (inviteId: string, isDisabled: boolean) =>
+    api.post<unknown, InviteCodeItem>(
+      `/admin/invites/${inviteId}/toggle-status`,
+      { is_disabled: isDisabled },
+    ),
+
+  remove: (inviteId: string) =>
+    api.delete<unknown, { success: boolean; message: string }>(
+      `/admin/invites/${inviteId}`,
+    ),
 };
 
 // 管理员作品审阅 API（只读）

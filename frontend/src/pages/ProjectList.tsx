@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Card, Button, Modal, message, notification, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme, Badge } from 'antd';
+import { Card, Button, Modal, message, Spin, Space, Tag, Typography, Upload, Checkbox, Tooltip, Drawer, Menu, theme, Badge } from 'antd';
 import { BookOutlined, SettingOutlined, UploadOutlined, ApiOutlined, FileSearchOutlined, MenuUnfoldOutlined, MenuFoldOutlined, BulbOutlined, MoonOutlined, DesktopOutlined, ControlOutlined, BellOutlined } from '@ant-design/icons';
 import { authApi, projectApi, settingsApi } from '../services/api';
 import { useStore } from '../store';
@@ -17,8 +17,14 @@ import MCPPluginsPage from './MCPPlugins';
 import PromptTemplates from './PromptTemplates';
 import BookImport from './BookImport';
 import BookshelfPage from './BookshelfPage';
-import { getStoredSidebarCollapsed, setStoredSidebarCollapsed } from '../utils/sidebarState';
-import { extractCoverError, isCoverRequestTimeout } from '../utils/coverError';
+import BrandMark from '../components/BrandMark';
+import {
+  getStoredSidebarCollapsed,
+  setStoredSidebarCollapsed,
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_WIDTH,
+} from '../utils/sidebarState';
+import { getCoverFailureCopy } from '../utils/coverError';
 import AnnouncementTimelineModal from '../components/AnnouncementTimelineModal';
 import { useAnnouncements } from '../hooks/useAnnouncements';
 
@@ -220,31 +226,25 @@ export default function ProjectList() {
       await refreshProjects();
     } catch (error) {
       console.error('生成封面失败:', error);
-      const detail = extractCoverError(error);
-      const timedOut = isCoverRequestTimeout(error);
-
-      notification[timedOut ? 'warning' : 'error']({
+      message.error({
+        content: `《${project.title}》 · ${getCoverFailureCopy(error)}`,
         key: `cover-failed-${project.id}`,
-        message: timedOut
-          ? `《${project.title}》封面生成请求超时`
-          : `《${project.title}》封面生成失败`,
-        description: (
-          <div>
-            <div style={{ lineHeight: 1.65 }}>{detail}</div>
-            <div style={{ marginTop: 8, color: token.colorTextSecondary, lineHeight: 1.55 }}>
-              {timedOut
-                ? '图片服务可能仍在后台处理。页面会自动刷新；如果长时间没有结果，请检查图片配置。'
-                : '失败原因会保留在书架顶部，方便你稍后回来处理。'}
-            </div>
-          </div>
-        ),
-        duration: 0,
-        closable: true,
-        placement: 'topRight',
+        duration: 3,
       });
 
       // 失败时也必须刷新，否则本地仍会保留 generating 状态，卡片会一直显示生成中。
       await refreshProjects();
+    }
+  };
+
+  const handleDismissCoverError = async (project: Project) => {
+    try {
+      await projectApi.dismissCoverError(project.id);
+      await refreshProjects();
+    } catch (error) {
+      console.error('隐藏封面失败提示失败:', error);
+      message.error('暂时无法隐藏提示，请稍后重试');
+      throw error;
     }
   };
 
@@ -449,21 +449,32 @@ export default function ProjectList() {
 
   const isMobile = window.innerWidth <= 768;
   const headerHeight = isMobile ? 56 : 70;
-  const expandedSiderWidth = 220;
-  const collapsedSiderWidth = 60;
+  const expandedSiderWidth = SIDEBAR_WIDTH;
+  const collapsedSiderWidth = SIDEBAR_COLLAPSED_WIDTH;
   const desktopSiderWidth = collapsed ? collapsedSiderWidth : expandedSiderWidth;
 
   const currentViewTitle = activeView === 'projects'
-    ? '我的书架'
+    ? '作品库'
     : activeView === 'prompts'
       ? '提示词模板'
       : activeView === 'book-import'
-        ? '拆书导入'
+        ? '拆书工作台'
         : activeView === 'mcp'
-          ? 'MCP 插件'
+          ? 'MCP 工具箱'
           : activeView === 'system-settings'
             ? '系统设置'
-            : 'API 设置';
+            : '模型与接口';
+  const currentViewIndex = activeView === 'projects'
+    ? '01'
+    : activeView === 'book-import'
+      ? '02'
+      : activeView === 'prompts'
+        ? '03'
+        : activeView === 'mcp'
+          ? '04'
+          : activeView === 'settings'
+            ? '05'
+            : '06';
 
   const isAdmin = !!currentUser?.is_admin;
 
@@ -471,26 +482,26 @@ export default function ProjectList() {
     {
       key: 'projects',
       icon: <BookOutlined />,
-      label: '我的书架',
+      label: '作品库',
     },
     {
       type: 'group' as const,
-      label: '创作工具',
+      label: '创作辅助',
       children: [
         {
           key: 'book-import',
           icon: <UploadOutlined />,
-          label: '拆书导入',
+          label: '拆书工作台',
         },
         {
           key: 'mcp',
           icon: <ApiOutlined />,
-          label: 'MCP 插件',
+          label: 'MCP 工具箱',
         },
         {
           key: 'prompts',
           icon: <FileSearchOutlined />,
-          label: '提示词管理',
+          label: '提示词模板',
         },
       ],
     },
@@ -501,7 +512,7 @@ export default function ProjectList() {
         {
           key: 'settings',
           icon: <SettingOutlined />,
-          label: 'API 设置',
+          label: '模型与接口',
         },
         ...(isAdmin ? [{
           key: 'admin-console',
@@ -516,27 +527,27 @@ export default function ProjectList() {
     {
       key: 'projects',
       icon: <BookOutlined />,
-      label: '我的书架',
+      label: '作品库',
     },
     {
       key: 'book-import',
       icon: <UploadOutlined />,
-      label: '拆书导入',
+      label: '拆书工作台',
     },
     {
       key: 'mcp',
       icon: <ApiOutlined />,
-      label: 'MCP 插件',
+      label: 'MCP 工具箱',
     },
     {
       key: 'prompts',
       icon: <FileSearchOutlined />,
-      label: '提示词管理',
+      label: '提示词模板',
     },
     {
       key: 'settings',
       icon: <SettingOutlined />,
-      label: 'API 设置',
+      label: '模型与接口',
     },
     ...(isAdmin ? [{
       key: 'admin-console',
@@ -557,10 +568,9 @@ export default function ProjectList() {
 
       {!isMobile && (
         <div
+          className="editorial-sider editorial-navigation"
           style={{
           width: desktopSiderWidth,
-          background: token.colorBgContainer,
-          borderRight: `1px solid ${token.colorBorderSecondary}`,
           display: 'flex',
           flexDirection: 'column',
           position: 'fixed',
@@ -570,17 +580,12 @@ export default function ProjectList() {
           height: '100vh',
           overflow: 'hidden',
           transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-          boxShadow: `4px 0 16px ${alphaColor(token.colorText, 0.06)}`,
           zIndex: 1000
         }}>
-          <div style={{
-            height: 70,
+          <div className="editorial-sider__brand" style={{
             display: 'flex',
             alignItems: 'center',
-            padding: collapsed ? 0 : '0 12px',
-            background: token.colorBgContainer,
-            borderBottom: `1px solid ${token.colorBorderSecondary}`,
-            flexShrink: 0,
+            padding: collapsed ? 0 : '0 16px',
             justifyContent: collapsed ? 'center' : 'space-between',
             gap: 8
           }}>
@@ -590,7 +595,7 @@ export default function ProjectList() {
                 icon={<MenuUnfoldOutlined />}
                 onClick={() => setCollapsed(false)}
                 style={{
-                  color: token.colorTextSecondary,
+                  color: 'var(--editorial-nav-muted)',
                   width: '100%',
                   height: '100%',
                   padding: 0,
@@ -602,37 +607,13 @@ export default function ProjectList() {
               />
             ) : (
               <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, overflow: 'hidden' }}>
-                  <div style={{
-                    width: 30,
-                    height: 30,
-                    background: alphaColor(token.colorPrimary, 0.08),
-                    borderRadius: 8,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: token.colorPrimary,
-                    fontSize: 16,
-                  }}>
-                    <BookOutlined />
-                  </div>
-                  <span style={{
-                    color: token.colorText,
-                    fontWeight: 600,
-                    fontSize: 15,
-                    fontFamily: token.fontFamily,
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
-                  }}>
-                    小新工坊
-                  </span>                </div>
+                <BrandMark size={32} textSize={16} color="var(--editorial-nav-text)" />
                 <Button
                   type="text"
                   icon={<MenuFoldOutlined />}
                   onClick={() => setCollapsed(true)}
                   style={{
-                    color: token.colorTextSecondary,
+                  color: 'var(--editorial-nav-muted)',
                     width: 32,
                     height: 32,
                     padding: 0,
@@ -643,7 +624,7 @@ export default function ProjectList() {
             )}
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+          <div className="editorial-sider__menu" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
             <Menu
               mode="inline"
               inlineCollapsed={collapsed}
@@ -656,11 +637,10 @@ export default function ProjectList() {
             />
           </div>
 
-          <div style={{
-            padding: collapsed ? '12px 8px' : 16,
-            borderTop: `1px solid ${token.colorBorderSecondary}`,
-            flexShrink: 0
-          }}>
+          <div
+            className="editorial-sider__footer"
+            style={{ padding: collapsed ? '14px 10px 16px' : undefined }}
+          >
             {collapsed ? (
               <Space direction="vertical" style={{ width: '100%', alignItems: 'center' }} size={10}>
                 <Button
@@ -671,22 +651,22 @@ export default function ProjectList() {
                   style={{
                     width: 40,
                     height: 40,
-                    borderRadius: 20,
-                    background: alphaColor(token.colorBgContainer, 0.65),
-                    border: `1px solid ${token.colorBorder}`,
-                    color: token.colorTextSecondary,
+                    borderRadius: 2,
+                    background: 'transparent',
+                    border: '1px solid var(--editorial-nav-rule)',
+                    color: 'var(--editorial-nav-text)',
                   }}
                 />
-                <UserMenu compact />
+                <UserMenu compact tone="nav" />
               </Space>
             ) : (
               <Space direction="vertical" style={{ width: '100%' }} size={12}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: token.colorTextTertiary }}>
-                  <span>主题模式</span>
-                  <span>{resolvedMode === 'dark' ? '深色' : '浅色'}</span>
+                <div className="editorial-sider-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>外观</span>
+                  <span>{resolvedMode === 'dark' ? '夜' : '昼'}</span>
                 </div>
                 <ThemeSwitch block />
-                <UserMenu />
+                <UserMenu tone="nav" />
               </Space>
             )}
           </div>
@@ -694,7 +674,7 @@ export default function ProjectList() {
       )}
 
       <div style={{
-        background: token.colorBgContainer,
+        backgroundColor: token.colorBgContainer,
         borderBottom: `1px solid ${token.colorBorderSecondary}`,
         padding: isMobile ? '0 12px' : '0 24px',
         display: 'flex',
@@ -709,7 +689,7 @@ export default function ProjectList() {
         flexShrink: 0,
         transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         overflow: 'hidden'
-      }}>
+      }} className="editorial-topbar">
         {isMobile ? (
           <>
             <Button
@@ -755,17 +735,32 @@ export default function ProjectList() {
           </>
         ) : (
           <>
-            <h2 style={{
-              margin: 0,
-              color: token.colorText,
-              fontSize: '18px',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}>
-              {currentViewTitle}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, minWidth: 0 }}>
+              <span
+                style={{
+                  color: 'var(--editorial-accent)',
+                  fontFamily: 'var(--font-display)',
+                  fontSize: 15,
+                  letterSpacing: '0.06em',
+                }}
+              >
+                {currentViewIndex}
+              </span>
+              <h2 style={{
+                margin: 0,
+                color: token.colorText,
+                fontFamily: 'var(--font-editorial)',
+                fontSize: '19px',
+                fontWeight: 500,
+                letterSpacing: '0.12em',
+                lineHeight: 1.15,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}>
+                {currentViewTitle}
+              </h2>
+            </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <ChangelogFloatingButton />
@@ -778,7 +773,7 @@ export default function ProjectList() {
                     color: token.colorTextSecondary,
                     width: 36,
                     height: 36,
-                    borderRadius: 18,
+                    borderRadius: 2,
                   }}
                   title="系统公告"
                 />
@@ -790,22 +785,10 @@ export default function ProjectList() {
 
       {isMobile && (
         <Drawer
+          rootClassName="editorial-navigation editorial-nav-drawer"
           title={
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{
-                width: 30,
-                height: 30,
-                background: token.colorPrimary,
-                borderRadius: 8,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: token.colorWhite,
-                fontSize: 16,
-              }}>
-                <BookOutlined />
-              </div>
-              <span style={{ fontWeight: 600, fontSize: 16, fontFamily: token.fontFamily }}>小新工坊</span>
+              <BrandMark size={30} textSize={16} color="var(--editorial-nav-text)" />
             </div>
           }
           placement="left"
@@ -814,11 +797,11 @@ export default function ProjectList() {
           width={280}
           styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
         >
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+          <div className="editorial-sider__menu" style={{ flex: 1, overflowY: 'auto' }}>
             <Menu
               mode="inline"
               selectedKeys={[activeView]}
-              style={{ borderRight: 0, paddingTop: 8 }}
+              style={{ borderRight: 0 }}
               onClick={({ key }) => {
                 changeView(key as ProjectListView);
                 setDrawerVisible(false);
@@ -828,14 +811,14 @@ export default function ProjectList() {
 
           </div>
 
-          <div style={{ padding: 16, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
+          <div className="editorial-sider__footer">
             <Space direction="vertical" style={{ width: '100%' }} size={12}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: token.colorTextTertiary }}>
-                <span>主题模式</span>
-                <span>{resolvedMode === 'dark' ? '深色' : '浅色'}</span>
+              <div className="editorial-sider-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>外观</span>
+                <span>{resolvedMode === 'dark' ? '夜' : '昼'}</span>
               </div>
               <ThemeSwitch block />
-              <UserMenu showFullInfo />
+              <UserMenu showFullInfo tone="nav" />
             </Space>
           </div>
         </Drawer>
@@ -863,6 +846,7 @@ export default function ProjectList() {
               : 0,
             background: token.colorBgLayout,
           }}
+          className={activeView === 'projects' ? 'editorial-canvas' : undefined}
         >
           {activeView === 'settings' && <SettingsPage />}
           {activeView === 'system-settings' && <SystemSettingsPage />}
@@ -887,6 +871,7 @@ export default function ProjectList() {
               onEnterProject={handleEnterProject}
               onDeleteProject={handleDelete}
               onGenerateCover={handleGenerateCover}
+              onDismissCoverError={handleDismissCoverError}
               onRefreshProjects={refreshProjects}
               onDownloadCover={handleDownloadCover}
               formatDate={formatDate}

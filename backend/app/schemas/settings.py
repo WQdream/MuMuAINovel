@@ -60,8 +60,9 @@ class SystemSMTPSettingsBase(BaseModel):
     smtp_use_tls: bool = Field(default=False, description="是否启用 TLS")
     smtp_use_ssl: bool = Field(default=True, description="是否启用 SSL")
     smtp_from_email: Optional[str] = Field(default=None, description="发件人邮箱")
-    smtp_from_name: str = Field(default="MuMuAINovel", description="发件人名称")
+    smtp_from_name: str = Field(default="小新工坊", description="发件人名称")
     email_auth_enabled: bool = Field(default=True, description="是否启用邮箱认证")
+    email_login_enabled: bool = Field(default=True, description="是否启用邮箱验证码登录")
     email_register_enabled: bool = Field(default=True, description="是否启用邮箱注册")
     verification_code_ttl_minutes: int = Field(default=10, ge=1, le=120, description="验证码有效期（分钟）")
     verification_resend_interval_seconds: int = Field(default=60, ge=10, le=3600, description="验证码重发间隔（秒）")
@@ -80,6 +81,20 @@ class SystemSMTPSettingsResponse(SystemSMTPSettingsBase):
     user_id: str
     created_at: datetime
     updated_at: datetime
+
+
+class SystemAuthPolicyUpdate(BaseModel):
+    """邮箱认证策略的局部更新模型"""
+    email_auth_enabled: Optional[bool] = Field(default=None, description="是否启用邮箱认证")
+    email_login_enabled: Optional[bool] = Field(default=None, description="是否启用邮箱验证码登录")
+    email_register_enabled: Optional[bool] = Field(default=None, description="是否启用邮箱注册")
+
+
+class SystemAuthPolicyResponse(BaseModel):
+    """邮箱认证策略响应模型"""
+    email_auth_enabled: bool
+    email_login_enabled: bool
+    email_register_enabled: bool
 
 
 class SMTPTestRequest(BaseModel):

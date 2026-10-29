@@ -59,6 +59,8 @@ class ProjectResponse(ProjectBase):
     cover_prompt: Optional[str] = None
     cover_status: Optional[str] = None
     cover_error: Optional[str] = None
+    cover_error_category: Optional[str] = None
+    cover_error_dismissed_at: Optional[datetime] = None
     cover_updated_at: Optional[datetime] = None
     outline_mode: str  # 显式声明以确保响应中包含
     created_at: datetime

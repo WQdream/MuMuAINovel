@@ -1,4 +1,4 @@
-/* AI 去味工作台：左右对照 + 分数条 + 命中明细，配色全部走 antd token 注入的变量。 */
+/* 精修台：左右对照 + 分数条 + 命中明细，配色全部走 antd token 注入的变量。 */
 .polish-page {
   display: flex;
   flex-direction: column;
@@ -7,6 +7,7 @@
   height: 100%;
   overflow-y: auto;
   padding: 2px;
+  container-type: inline-size;
 }
 
 .polish-header {
@@ -61,6 +62,12 @@
   }
 }
 
+@container (max-width: 840px) {
+  .polish-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .polish-col {
   display: flex;
   flex-direction: column;
@@ -68,7 +75,7 @@
   min-width: 0;
   padding: 13px;
   border: 1px solid var(--pl-border);
-  border-radius: 12px;
+  border-radius: 6px;
   background: var(--pl-card-bg);
 }
 
@@ -77,6 +84,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .polish-count {
@@ -331,7 +339,7 @@
   gap: 9px;
   padding: 13px;
   border: 1px solid var(--pl-border);
-  border-radius: 12px;
+  border-radius: 6px;
   background: var(--pl-card-bg);
 }
 

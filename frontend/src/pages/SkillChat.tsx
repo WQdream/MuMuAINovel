@@ -69,7 +69,7 @@ const SkillChat: React.FC = () => {
         setActiveCategory((prev) => prev || response.data[0].category);
       }
     } catch {
-      message.error('加载 Skill 列表失败');
+      message.error('加载技能列表失败');
     } finally {
       setSkillsLoading(false);
     }
@@ -180,6 +180,7 @@ const SkillChat: React.FC = () => {
     'Skill·润色': '#faad14',
     'Skill·工具': '#722ed1',
   };
+  const categoryLabel = (category: string) => category.replace(/^Skill·/, '技能·');
 
   if (selectedSkill) {
     return (
@@ -202,7 +203,7 @@ const SkillChat: React.FC = () => {
                   className="sk-dot"
                   style={{ background: categoryColors[selectedSkill.category] || 'var(--sk-accent)' }}
                 />
-                {selectedSkill.category}
+                {categoryLabel(selectedSkill.category)}
               </span>
             </div>
             <p className="sk-chat-subtitle">{selectedSkill.description}</p>
@@ -293,8 +294,8 @@ const SkillChat: React.FC = () => {
         <div className="sk-header-main">
           <ThunderboltOutlined className="sk-header-icon" />
           <div style={{ minWidth: 0 }}>
-            <h2 className="sk-title">Skill 工具箱</h2>
-            <p className="sk-subtitle">选择一个 Skill 开始创作对话，每个 Skill 都有独立的写作工作流。</p>
+            <h2 className="sk-title">技能工具箱</h2>
+            <p className="sk-subtitle">选择一个技能开始创作对话，每项技能都有独立的写作工作流。</p>
           </div>
         </div>
       </div>
@@ -318,7 +319,7 @@ const SkillChat: React.FC = () => {
                       className="sk-dot"
                       style={{ background: categoryColors[category] || 'var(--sk-accent)' }}
                     />
-                    {category.replace('Skill·', '')}
+                    {category.replace(/^Skill·/, '')}
                     <span className="sk-tab-count">{groupedSkills[category].length}</span>
                   </span>
                 ),
@@ -328,7 +329,7 @@ const SkillChat: React.FC = () => {
 
           <div className="sk-scroll">
             {currentSkills.length === 0 ? (
-              <div className="sk-empty">该分类下暂无 Skill</div>
+              <div className="sk-empty">该分类下暂无技能</div>
             ) : (
               <div className="sk-grid">
                 {currentSkills.map(skill => (
@@ -363,7 +364,7 @@ const SkillChat: React.FC = () => {
                             className="sk-dot"
                             style={{ background: categoryColors[skill.category] || 'var(--sk-accent)' }}
                           />
-                          {skill.category.replace('Skill·', '')}
+                          {skill.category.replace(/^Skill·/, '')}
                         </span>
                       </div>
                     </div>

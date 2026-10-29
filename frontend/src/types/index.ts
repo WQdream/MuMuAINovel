@@ -6,7 +6,6 @@ export interface User {
   avatar_url?: string;
   trust_level: number;
   is_admin: boolean;
-  linuxdo_id: string;
   created_at: string;
   last_login: string;
 }
@@ -14,6 +13,12 @@ export interface User {
 export interface EmailLoginPayload {
   email: string;
   code: string;
+}
+
+export interface LocalRegisterPayload {
+  username: string;
+  password: string;
+  invite_code: string;
 }
 
 export interface EmailRegisterPayload {
@@ -47,6 +52,7 @@ export interface SystemSMTPSettings {
   smtp_from_email?: string;
   smtp_from_name: string;
   email_auth_enabled: boolean;
+  email_login_enabled: boolean;
   email_register_enabled: boolean;
   verification_code_ttl_minutes: number;
   verification_resend_interval_seconds: number;
@@ -65,9 +71,22 @@ export interface SystemSMTPSettingsUpdate {
   smtp_from_email?: string;
   smtp_from_name?: string;
   email_auth_enabled?: boolean;
+  email_login_enabled?: boolean;
   email_register_enabled?: boolean;
   verification_code_ttl_minutes?: number;
   verification_resend_interval_seconds?: number;
+}
+
+export interface SystemAuthPolicy {
+  email_auth_enabled: boolean;
+  email_login_enabled: boolean;
+  email_register_enabled: boolean;
+}
+
+export interface SystemAuthPolicyUpdate {
+  email_auth_enabled?: boolean;
+  email_login_enabled?: boolean;
+  email_register_enabled?: boolean;
 }
 
 // 设置类型定义
@@ -301,12 +320,6 @@ export type SharedImageApiConfigUpdateRequest =
     sort_order?: number;
   };
 
-// LinuxDO 授权 URL 响应
-export interface AuthUrlResponse {
-  auth_url: string;
-  state: string;
-}
-
 // 项目类型定义
 export interface Project {
   id: string;  // UUID字符串
@@ -331,6 +344,8 @@ export interface Project {
   cover_prompt?: string;
   cover_status?: 'none' | 'generating' | 'ready' | 'failed';
   cover_error?: string;
+  cover_error_category?: 'auth' | 'timeout' | 'other';
+  cover_error_dismissed_at?: string;
   cover_updated_at?: string;
   created_at: string;
   updated_at: string;
@@ -1784,4 +1799,43 @@ export interface AdminAccessLogListResponse {
   page: number;
   limit: number;
   items: AdminAccessLogItem[];
+}
+
+// ========== 邀请码管理 ==========
+
+export interface InviteCodeItem {
+  id: string;
+  code: string;
+  note?: string | null;
+  created_by_user_id: string;
+  created_by_username?: string | null;
+  created_at: string;
+  is_used: boolean;
+  used_at?: string | null;
+  used_by_user_id?: string | null;
+  used_by_username?: string | null;
+  is_disabled: boolean;
+  disabled_at?: string | null;
+  disabled_by_user_id?: string | null;
+  disabled_by_username?: string | null;
+}
+
+export interface InviteCodeSummary {
+  total: number;
+  unused: number;
+  used: number;
+  disabled: number;
+}
+
+export interface InviteCodeListResponse {
+  items: InviteCodeItem[];
+  total: number;
+  page: number;
+  limit: number;
+  summary: InviteCodeSummary;
+}
+
+export interface InviteCodeCreateRequest {
+  count: number;
+  note?: string;
 }

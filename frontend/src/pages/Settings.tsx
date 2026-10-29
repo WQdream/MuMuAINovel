@@ -164,16 +164,16 @@ export default function SettingsPage() {
     }
   };
 
-  const mumuCoverBaseUrlOptions = [
-    { value: 'https://zhongzhuan.mumuverse.space/v1beta', label: 'https://zhongzhuan.mumuverse.space/v1beta', defaultModel: 'gemini-3.1-flash-image-preview' },
-    { value: 'https://zhongzhuan.mumuverse.space/v1', label: 'https://zhongzhuan.mumuverse.space/v1', defaultModel: 'gpt-image-2' },
-  ];
+  const openAIImageDefaults = {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-image-1',
+  };
   const defaultCoverSettings = {
     cover_enabled: false,
-    cover_api_provider: 'mumu',
+    cover_api_provider: 'openai',
     cover_api_key: '',
-    cover_api_base_url: mumuCoverBaseUrlOptions[0].value,
-    cover_image_model: mumuCoverBaseUrlOptions[0].defaultModel,
+    cover_api_base_url: openAIImageDefaults.baseUrl,
+    cover_image_model: openAIImageDefaults.model,
   };
 
   const selectedProvider = Form.useWatch('api_provider', textModelForm);
@@ -182,10 +182,10 @@ export default function SettingsPage() {
 
   const coverApiProviders = [
     {
-      value: 'mumu',
-      label: '通用OpenAI',
-      defaultUrl: mumuCoverBaseUrlOptions[0].value,
-      defaultModel: mumuCoverBaseUrlOptions[0].defaultModel,
+      value: 'openai',
+      label: 'OpenAI 兼容',
+      defaultUrl: openAIImageDefaults.baseUrl,
+      defaultModel: openAIImageDefaults.model,
     },
     { value: 'gemini', label: 'Google Gemini', defaultUrl: 'https://generativelanguage.googleapis.com/v1beta' },
     { value: 'grok', label: 'Grok', defaultUrl: 'https://api.x.ai/v1' },
@@ -199,8 +199,8 @@ export default function SettingsPage() {
     if (provider.defaultUrl) {
       nextValues.api_base_url = provider.defaultUrl;
     }
-    if (provider.value === 'mumu') {
-      nextValues.image_model = provider.defaultModel || mumuCoverBaseUrlOptions[0].defaultModel;
+    if (provider.value === 'openai') {
+      nextValues.image_model = provider.defaultModel || openAIImageDefaults.model;
     }
 
     coverForm.setFieldsValue(nextValues);
@@ -705,7 +705,7 @@ export default function SettingsPage() {
       const payload = {
         name: String(values.name ?? '').trim(),
         note: values.note ? String(values.note) : undefined,
-        api_provider: String(values.api_provider ?? 'mumu'),
+        api_provider: String(values.api_provider ?? 'openai'),
         api_key: String(values.api_key ?? ''),
         api_base_url: values.api_base_url ? String(values.api_base_url) : undefined,
         image_model: String(values.image_model ?? ''),
@@ -1773,8 +1773,8 @@ export default function SettingsPage() {
                         <Input
                           className="st-input-mono"
                           placeholder={
-                            selectedCoverProvider === 'mumu'
-                              ? 'gemini-3.1-flash-image-preview'
+                            selectedCoverProvider === 'openai'
+                              ? 'gpt-image-1'
                               : selectedCoverProvider === 'grok'
                                 ? 'grok-2-image'
                                 : 'gemini-2.0-flash-exp-image-generation'
@@ -1812,9 +1812,7 @@ export default function SettingsPage() {
                       <Input.Password
                         className="st-input-mono"
                         placeholder={
-                          selectedCoverProvider === 'mumu'
-                            ? '请输入 MuMuのAPI Key'
-                            : '输入图片 API Key'
+                          '输入图片 API Key'
                         }
                         autoComplete="new-password"
                       />
@@ -1837,8 +1835,8 @@ export default function SettingsPage() {
                         className="st-input-mono"
                         allowClear
                         placeholder={
-                          selectedCoverProvider === 'mumu'
-                            ? 'https://zhongzhuan.mumuverse.space/v1beta'
+                          selectedCoverProvider === 'openai'
+                            ? 'https://api.openai.com/v1'
                             : selectedCoverProvider === 'grok'
                               ? 'https://api.x.ai/v1'
                               : 'https://generativelanguage.googleapis.com/v1beta'

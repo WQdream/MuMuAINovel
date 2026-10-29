@@ -54,11 +54,11 @@ interface SkillDetail extends SkillItem {
 }
 
 const SKILL_CATEGORY_OPTIONS = [
-  { label: 'Skill·长篇', value: 'Skill·长篇' },
-  { label: 'Skill·短篇', value: 'Skill·短篇' },
-  { label: 'Skill·润色', value: 'Skill·润色' },
-  { label: 'Skill·工具', value: 'Skill·工具' },
-  { label: 'Skill', value: 'Skill' },
+  { label: '长篇', value: 'Skill·长篇' },
+  { label: '短篇', value: 'Skill·短篇' },
+  { label: '润色', value: 'Skill·润色' },
+  { label: '工具', value: 'Skill·工具' },
+  { label: '通用', value: 'Skill' },
 ];
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -76,7 +76,7 @@ const normalizeTriggers = (value?: string[]): string[] => {
 };
 
 const shortCategory = (category: string) => (
-  category.startsWith('Skill·') ? category.slice('Skill·'.length) : category
+  category.startsWith('Skill·') ? category.slice('Skill·'.length) : category === 'Skill' ? '通用' : category
 );
 
 const categoryColor = (category: string) => CATEGORY_COLORS[category] || DEFAULT_CATEGORY_COLOR;
@@ -156,12 +156,12 @@ export default function SkillManage() {
     try {
       const response = await fetch('/api/skills/list');
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, '加载 Skill 列表失败'));
+        throw new Error(await readErrorMessage(response, '加载技能列表失败'));
       }
       const data: SkillItem[] = await response.json();
       setSkills(data);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '加载 Skill 列表失败');
+      message.error(error instanceof Error ? error.message : '加载技能列表失败');
     } finally {
       setLoading(false);
     }
@@ -264,7 +264,7 @@ export default function SkillManage() {
     try {
       const response = await fetch(`/api/skills/detail/${skill.template_key}`);
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, '获取 Skill 详情失败'));
+        throw new Error(await readErrorMessage(response, '获取技能详情失败'));
       }
       const detail: SkillDetail = await response.json();
       setEditingSkill(detail);
@@ -281,7 +281,7 @@ export default function SkillManage() {
       setEditorDirty(false);
       setEditModalVisible(true);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '获取 Skill 详情失败');
+      message.error(error instanceof Error ? error.message : '获取技能详情失败');
     }
   };
 
@@ -334,7 +334,7 @@ export default function SkillManage() {
       if (!response.ok) {
         throw new Error(await readErrorMessage(response, '更新失败'));
       }
-      message.success('Skill 更新成功');
+      message.success('技能更新成功');
       setEditModalVisible(false);
       setEditingSkill(null);
       setEditorDirty(false);
@@ -380,7 +380,7 @@ export default function SkillManage() {
       if (!response.ok) {
         throw new Error(await readErrorMessage(response, '创建失败'));
       }
-      message.success('Skill 创建成功');
+      message.success('技能创建成功');
       setCreateModalVisible(false);
       createForm.resetFields();
       setEditorDirty(false);
@@ -446,7 +446,7 @@ export default function SkillManage() {
       {mode === 'create' ? (
         <Form.Item
           className="sm-field"
-          label="Skill 标识"
+          label="技能标识"
           name="name"
           tooltip="作为目录名和内部标识，创建后不可修改"
           normalize={(value?: string) => (
@@ -457,7 +457,7 @@ export default function SkillManage() {
               .replace(/-{2,}/g, '-')
           )}
           rules={[
-            { required: true, message: '请输入 Skill 标识' },
+            { required: true, message: '请输入技能标识' },
             {
               pattern: /^[a-z0-9][a-z0-9-]*$/,
               message: '仅支持小写字母、数字和短横线',
@@ -469,7 +469,7 @@ export default function SkillManage() {
       ) : (
         <Form.Item
           className="sm-field"
-          label="Skill 标识"
+          label="技能标识"
           tooltip="来自 SKILL.md 的 name 字段，编辑时不可修改"
         >
           <Input
@@ -528,13 +528,13 @@ export default function SkillManage() {
         label="描述"
         name="description"
         rules={[{ required: true, whitespace: true, message: '请输入描述' }]}
-        tooltip="会展示在 Skill 列表和工具箱卡片中"
+        tooltip="会展示在技能列表和工具箱卡片中"
       >
         <TextArea
           rows={2}
           maxLength={200}
           showCount
-          placeholder="简要说明 Skill 的用途、适用场景和使用方式..."
+          placeholder="简要说明技能的用途、适用场景和使用方式..."
         />
       </Form.Item>
     </>
@@ -549,10 +549,10 @@ export default function SkillManage() {
           </span>
           <div>
             <div className="sm-title-row">
-              <h2 className="sm-title">Skill 管理</h2>
+              <h2 className="sm-title">技能管理</h2>
               <span className="sm-count">{skills.length}</span>
             </div>
-            <p className="sm-subtitle">在线维护 Skill 工作流、触发词与参考资料。</p>
+            <p className="sm-subtitle">在线维护技能工作流、触发词与参考资料。</p>
           </div>
         </div>
         <div className="sm-header-actions">
@@ -560,13 +560,13 @@ export default function SkillManage() {
             刷新
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-            添加 Skill
+            添加技能
           </Button>
         </div>
       </header>
 
       <div className="sm-toolbar">
-        <div className="sm-filters" role="tablist" aria-label="按分类筛选 Skill">
+        <div className="sm-filters" role="tablist" aria-label="按分类筛选技能">
           <button
             type="button"
             role="tab"
@@ -609,15 +609,15 @@ export default function SkillManage() {
           </div>
         ) : skills.length === 0 ? (
           <div className="sm-state">
-            <Empty description="还没有 Skill，创建一个开始使用">
+            <Empty description="还没有技能，创建一个开始使用">
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
-                添加 Skill
+                添加技能
               </Button>
             </Empty>
           </div>
         ) : filteredSkills.length === 0 ? (
           <div className="sm-state">
-            <Empty description="没有匹配的 Skill">
+            <Empty description="没有匹配的技能">
               <Button
                 onClick={() => {
                   setQuery('');
@@ -631,7 +631,7 @@ export default function SkillManage() {
         ) : (
           <div className="sm-list">
             <div className="sm-list-head" aria-hidden="true">
-              <span>Skill</span>
+              <span>技能</span>
               <span>分类</span>
               <span>描述</span>
               <span>触发词</span>
@@ -707,13 +707,13 @@ export default function SkillManage() {
                         type="text"
                         className="sm-action"
                         icon={<EditOutlined />}
-                        aria-label="编辑 Skill"
+                        aria-label="编辑技能"
                         onClick={() => handleEdit(skill)}
                       />
                     </Tooltip>
                     <Popconfirm
-                      title="删除此 Skill？"
-                      description="删除后无法恢复，Skill 目录会被永久移除。"
+                      title="删除此技能？"
+                      description="删除后无法恢复，技能目录会被永久移除。"
                       onConfirm={() => handleDelete(skill.template_key)}
                       okText="删除"
                       cancelText="取消"
@@ -725,7 +725,7 @@ export default function SkillManage() {
                           danger
                           className="sm-action sm-action--danger"
                           icon={<DeleteOutlined />}
-                          aria-label="删除 Skill"
+                          aria-label="删除技能"
                         />
                       </Tooltip>
                     </Popconfirm>
@@ -832,7 +832,7 @@ export default function SkillManage() {
             </span>
             <div className="sm-editor-head-main">
               <h3 className="sm-editor-title">
-                {createModalVisible ? '添加新 Skill' : '编辑 Skill'}
+                {createModalVisible ? '添加新技能' : '编辑技能'}
               </h3>
               <p className="sm-editor-subtitle">
                 {createModalVisible ? (
@@ -883,7 +883,7 @@ export default function SkillManage() {
                 <div className="sm-workflow-split">
                   <div className="sm-workflow-pane sm-workflow-pane--edit" ref={workflowEditorRef}>
                     <Form.Item
-                      label="Skill 指令正文"
+                      label="技能指令正文"
                       name="body"
                       rules={[{ required: true, whitespace: true, message: '请输入工作流指令' }]}
                       tooltip="将作为系统提示词，描述角色、原则和执行步骤"
@@ -893,7 +893,7 @@ export default function SkillManage() {
                         className="sm-code-input sm-workflow-input"
                         placeholder={
                           createModalVisible
-                            ? '# my-new-skill：Skill 标题\n\n你是 xxx 专家。你的任务是帮用户完成 xxx。\n\n## 核心原则\n\n- 原则 1\n- 原则 2\n\n## 工作流程\n\n### Phase 1：需求确认\n...'
+                            ? '# my-new-skill：技能标题\n\n你是 xxx 专家。你的任务是帮用户完成 xxx。\n\n## 核心原则\n\n- 原则 1\n- 原则 2\n\n## 工作流程\n\n### Phase 1：需求确认\n...'
                             : ''
                         }
                         showCount
@@ -958,7 +958,7 @@ export default function SkillManage() {
 
             <footer className="sm-editor-foot">
               <span className="sm-editor-foot-hint">
-                {editorDirty ? '有未保存的修改' : createModalVisible ? '创建后可在「Skill 工具箱」中直接使用' : '保存后立即生效，无需重启服务'}
+                {editorDirty ? '有未保存的修改' : createModalVisible ? '创建后可在「技能工具箱」中直接使用' : '保存后立即生效，无需重启服务'}
               </span>
               <div className="sm-editor-foot-actions">
                 <Button onClick={() => requestCloseEditor(createModalVisible ? 'create' : 'edit')}>
@@ -969,7 +969,7 @@ export default function SkillManage() {
                   onClick={createModalVisible ? handleCreate : handleSaveEdit}
                   loading={saving}
                 >
-                  {createModalVisible ? '创建 Skill' : '保存修改'}
+                  {createModalVisible ? '创建技能' : '保存修改'}
                 </Button>
               </div>
             </footer>

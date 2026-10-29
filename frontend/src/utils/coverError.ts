@@ -1,79 +1,56 @@
-const MAX_COVER_ERROR_LENGTH = 500;
-const COVER_FAILURE_DISMISS_PREFIX = 'mumu.cover-failure.dismissed:';
+export type CoverFailureCategory = 'auth' | 'timeout' | 'other';
 
-function stringifyErrorValue(value: unknown): string {
-  if (typeof value === 'string') return value.trim();
-  if (value == null) return '';
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
+const COVER_ERROR_COPY: Record<CoverFailureCategory, string> = {
+  auth: '图像模型认证失败，请检查 API 密钥',
+  timeout: '生成超时，请稍后重试',
+  other: '封面生成失败，请检查图像模型配置',
+};
+
+export function getCoverErrorCopy(category?: string | null): string {
+  if (category === 'auth' || category === 'timeout') {
+    return COVER_ERROR_COPY[category];
   }
+  return COVER_ERROR_COPY.other;
 }
 
-export function truncateCoverError(value: string): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= MAX_COVER_ERROR_LENGTH) return normalized;
-  return `${normalized.slice(0, MAX_COVER_ERROR_LENGTH)}…`;
-}
-
-export function extractCoverError(error: unknown): string {
+function collectErrorText(error: unknown): string {
   const candidate = error as {
-    response?: { data?: unknown };
+    code?: string;
     message?: string;
+    response?: {
+      status?: number;
+      data?: unknown;
+    };
   };
-  const responseData = candidate?.response?.data;
-  let detail = '';
+  const parts = [candidate?.code, candidate?.message];
 
-  if (responseData && typeof responseData === 'object') {
-    const record = responseData as Record<string, unknown>;
-    detail = stringifyErrorValue(record.detail ?? record.message);
-  }
-  if (!detail) detail = stringifyErrorValue(responseData);
-  if (!detail) detail = candidate?.message || '封面生成失败，请稍后重试';
-
-  return truncateCoverError(detail);
-}
-
-export function formatCoverError(error?: string | null): string {
-  const normalized = (error || '').replace(/\s+/g, ' ').trim();
-  return normalized
-    ? truncateCoverError(normalized)
-    : '图片服务未返回具体原因，请检查图片模型配置后重试。';
-}
-
-export function isCoverRequestTimeout(error: unknown): boolean {
-  const candidate = error as { code?: string; message?: string };
-  return candidate?.code === 'ECONNABORTED' || /timeout/i.test(candidate?.message || '');
-}
-
-export function getCoverFailureDismissKey(projectId: string, coverError?: string | null): string {
-  return `${projectId}:${formatCoverError(coverError)}`;
-}
-
-export function isCoverFailureDismissed(key: string): boolean {
-  if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(`${COVER_FAILURE_DISMISS_PREFIX}${key}`) === '1';
+    parts.push(JSON.stringify(candidate?.response?.data));
   } catch {
-    return false;
+    parts.push(String(candidate?.response?.data || ''));
   }
+
+  return parts.filter(Boolean).join(' ').toLowerCase();
 }
 
-export function dismissCoverFailure(key: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(`${COVER_FAILURE_DISMISS_PREFIX}${key}`, '1');
-  } catch {
-    // localStorage may be unavailable in private browsing; the in-memory state still works.
-  }
-}
+export function getCoverFailureCopy(error: unknown): string {
+  const candidate = error as { response?: { status?: number } };
+  const status = candidate?.response?.status;
+  const text = collectErrorText(error);
 
-export function restoreCoverFailure(key: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.removeItem(`${COVER_FAILURE_DISMISS_PREFIX}${key}`);
-  } catch {
-    // Ignore storage failures; a new generation attempt should still be allowed.
+  if (
+    status === 401
+    || status === 403
+    || /unauthorized|authentication|api key|apikey|invalid key|permission denied|invalid token|token expired|bearer token|access token/.test(text)
+  ) {
+    return COVER_ERROR_COPY.auth;
   }
+  if (
+    status === 408
+    || status === 504
+    || /timeout|timed out|deadline exceeded|econnaborted/.test(text)
+  ) {
+    return COVER_ERROR_COPY.timeout;
+  }
+  return COVER_ERROR_COPY.other;
 }

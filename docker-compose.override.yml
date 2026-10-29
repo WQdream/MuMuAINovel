@@ -6,13 +6,13 @@
 #   4. 持久化 Chroma 向量库，重建镜像不丢记忆数据
 
 services:
-  mumuainovel:
+  app:
     environment:
       - HTTP_PROXY=
       - HTTPS_PROXY=
       - http_proxy=
       - https_proxy=
-      - NO_PROXY=localhost,127.0.0.1,postgres,mumuainovel
+      - NO_PROXY=localhost,127.0.0.1,postgres,app
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -26,12 +26,12 @@ services:
 
   frontend:
     image: node:22-alpine
-    container_name: mumuainovel-frontend
+    container_name: xiaoxin-workshop-frontend
     working_dir: /app
     depends_on:
-      - mumuainovel
+      - app
     environment:
-      - VITE_API_TARGET=http://mumuainovel:8000
+      - VITE_API_TARGET=http://app:8000
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules

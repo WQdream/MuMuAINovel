@@ -28,6 +28,7 @@ import AdminLayout from './pages/admin/AdminLayout';
 import AdminReview from './pages/admin/AdminReview';
 import AdminApiConfig from './pages/admin/AdminApiConfig';
 import AdminAudit from './pages/admin/AdminAudit';
+import AdminInvites from './pages/admin/AdminInvites';
 import SystemSettingsPage from './pages/SystemSettings';
 import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
@@ -45,7 +46,7 @@ function App() {
         }}
       >
         <Routes>
-          <Route path="/login" element={<><Login /><AppFooter /></>} />
+          <Route path="/login" element={<Login />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
 
           <Route path="/" element={<ProtectedRoute><><ProjectList /><AppFooter sidebarWidth={220} /></></ProtectedRoute>} />
@@ -59,6 +60,7 @@ function App() {
           <Route path="/admin" element={<ProtectedRoute><AdminLayout /></ProtectedRoute>}>
             <Route index element={<Navigate to="users" replace />} />
             <Route path="users" element={<UserManagement embedded />} />
+            <Route path="invites" element={<AdminInvites />} />
             <Route path="api-config" element={<AdminApiConfig />} />
             <Route path="review" element={<AdminReview />} />
             <Route path="audit" element={<AdminAudit />} />

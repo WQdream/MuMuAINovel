@@ -346,7 +346,7 @@ async def import_item(
 
     if existing_style and duplicate_action == "overwrite":
         existing_style.name = data.custom_name or existing_style.name
-        existing_style.description = f"从提示词工坊导入: {item_data.get('description', '') or ''}"
+        existing_style.description = f"从灵感模板导入: {item_data.get('description', '') or ''}"
         existing_style.prompt_content = item_data["prompt_content"]
         await db.commit()
         await db.refresh(existing_style)
@@ -385,7 +385,7 @@ async def import_item(
         user_id=user_id,
         name=new_name,
         style_type="custom",
-        description=f"从提示词工坊导入: {item_data.get('description', '') or ''}",
+        description=f"从灵感模板导入: {item_data.get('description', '') or ''}",
         prompt_content=item_data["prompt_content"],
         order_index=max_order + 1
     )

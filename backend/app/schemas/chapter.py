@@ -124,7 +124,7 @@ class ChapterGenerateRequest(BaseModel):
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
     auto_polish: bool = Field(
         False,
-        description="生成完成后是否自动跑一次「AI 去味」（story-deslop 一轮改写 + 标点整理），原文另存快照可回滚",
+        description="生成完成后是否自动跑一次「精修」（一轮去 AI 腔改写 + 标点整理），原文另存快照可回滚",
     )
 
 
@@ -147,7 +147,7 @@ class BatchGenerateRequest(BaseModel):
     skill_key: Optional[str] = Field(None, description="Skill 标识，指定后以该 Skill 的工作流指导创作")
     auto_polish: bool = Field(
         False,
-        description="每章生成完成后是否自动去味（一轮改写 + 标点整理，不复改）",
+        description="每章生成完成后是否自动精修（一轮改写 + 标点整理，不复改）",
     )
 
 

@@ -405,11 +405,11 @@ export function useChapterSync() {
             const after = typeof message.score_after === 'number' ? message.score_after : -1;
             const punctuation = typeof message.punctuation_fixed === 'number' ? message.punctuation_fixed : 0;
             onProgressUpdate?.(
-              `自动去味完成：干净度 ${before} → ${after}${punctuation ? `，整理标点 ${punctuation} 处` : ''}`,
+              `自动精修完成：干净度 ${before} → ${after}${punctuation ? `，整理标点 ${punctuation} 处` : ''}`,
               95,
             );
           } else {
-            onProgressUpdate?.(`自动去味已跳过：${skipped || '模型未交付完整正文'}`, 95);
+            onProgressUpdate?.(`自动精修已跳过：${skipped || '模型未交付完整正文'}`, 95);
           }
         }
       };

@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import PROJECT_ROOT
@@ -89,6 +89,8 @@ class CoverGenerationService:
         try:
             project.cover_status = "generating"
             project.cover_error = None
+            project.cover_error_category = None
+            project.cover_error_dismissed_at = None
             project.cover_prompt = prompt
             await db.commit()
             await db.refresh(project)
@@ -110,6 +112,8 @@ class CoverGenerationService:
             project.cover_image_url = image_url
             project.cover_status = "ready"
             project.cover_error = None
+            project.cover_error_category = None
+            project.cover_error_dismissed_at = None
             project.cover_updated_at = datetime.utcnow()
             project.cover_prompt = result.get("revised_prompt") or prompt
             await db.commit()
@@ -137,6 +141,11 @@ class CoverGenerationService:
             detail = self._extract_upstream_error_detail(exc)
             project.cover_status = "failed"
             project.cover_error = detail
+            project.cover_error_category = self._classify_cover_error(
+                detail,
+                status_code=exc.response.status_code if exc.response is not None else None,
+            )
+            project.cover_error_dismissed_at = None
             await db.commit()
             raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
         except HTTPException as exc:
@@ -150,6 +159,11 @@ class CoverGenerationService:
             logger.error("封面生成业务错误: project_id=%s error=%s", project.id, exc.detail, exc_info=True)
             project.cover_status = "failed"
             project.cover_error = str(exc.detail)
+            project.cover_error_category = self._classify_cover_error(
+                str(exc.detail),
+                status_code=exc.status_code,
+            )
+            project.cover_error_dismissed_at = None
             await db.commit()
             raise
         except Exception as exc:
@@ -163,6 +177,8 @@ class CoverGenerationService:
             logger.error("封面生成失败: project_id=%s error=%s", project.id, exc, exc_info=True)
             project.cover_status = "failed"
             project.cover_error = str(exc)
+            project.cover_error_category = self._classify_cover_error(str(exc))
+            project.cover_error_dismissed_at = None
             await db.commit()
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -226,11 +242,38 @@ class CoverGenerationService:
             raise HTTPException(status_code=404, detail="封面文件不存在，请重新生成")
         return project, absolute_path
 
+    async def dismiss_cover_error(
+        self,
+        *,
+        db: AsyncSession,
+        user_id: str,
+        project_id: str,
+    ) -> Project:
+        project = await self._get_project(db=db, user_id=user_id, project_id=project_id)
+        if project.cover_status != "failed" or not project.cover_error:
+            raise HTTPException(status_code=400, detail="当前没有需要隐藏的封面失败提示")
+
+        # 仅隐藏提示，不应把作品的更新时间改成“今天”，否则会打乱作品排序和日期展示。
+        await db.execute(
+            update(Project)
+            .where(Project.id == project.id, Project.user_id == user_id)
+            .values(
+                cover_error_dismissed_at=datetime.utcnow(),
+                updated_at=Project.updated_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        await db.refresh(project)
+        return project
+
     async def clear_cover_metadata(self, *, db: AsyncSession, project: Project) -> None:
         project.cover_image_url = None
         project.cover_prompt = None
         project.cover_status = "none"
         project.cover_error = None
+        project.cover_error_category = None
+        project.cover_error_dismissed_at = None
         project.cover_updated_at = None
         await db.commit()
 
@@ -284,14 +327,14 @@ class CoverGenerationService:
             return GeminiCoverProvider(api_key=api_key, base_url=normalized_base_url)
         if provider_value == "grok":
             return GrokCoverProvider(api_key=api_key, base_url=normalized_base_url)
-        if provider_value == "mumu":
+        if provider_value in {"openai", "mumu"}:
             if normalized_base_url.endswith("/v1beta"):
                 return GeminiCoverProvider(api_key=api_key, base_url=normalized_base_url)
             return GrokCoverProvider(
                 api_key=api_key,
-                base_url=normalized_base_url or "https://zhongzhuan.mumuverse.space/v1",
+                base_url=normalized_base_url or "https://api.openai.com/v1",
             )
-        raise HTTPException(status_code=400, detail="当前版本仅支持 Gemini、Grok 或 MuMuのAPI 作为封面图片 Provider")
+        raise HTTPException(status_code=400, detail="当前版本仅支持 OpenAI 兼容、Gemini 或 Grok 作为封面图片 Provider")
 
     def _save_cover_file(
         self,
@@ -324,6 +367,41 @@ class CoverGenerationService:
             return GENERATED_COVER_STORAGE_DIR / relative_path
 
         raise HTTPException(status_code=404, detail="封面文件路径无效，请重新生成")
+
+    @staticmethod
+    def _classify_cover_error(detail: str, *, status_code: Optional[int] = None) -> str:
+        if status_code in {401, 403}:
+            return "auth"
+        if status_code in {408, 504}:
+            return "timeout"
+
+        normalized = (detail or "").lower()
+        auth_markers = (
+            "api key",
+            "apikey",
+            "unauthorized",
+            "authentication",
+            "invalid key",
+            "invalid_api_key",
+            "permission denied",
+            "invalid token",
+            "token expired",
+            "bearer token",
+            "access token",
+        )
+        if any(marker in normalized for marker in auth_markers):
+            return "auth"
+
+        timeout_markers = (
+            "timeout",
+            "timed out",
+            "deadline exceeded",
+            "connect timeout",
+            "read timeout",
+        )
+        if any(marker in normalized for marker in timeout_markers):
+            return "timeout"
+        return "other"
 
     @staticmethod
     def _extract_upstream_error_detail(exc: httpx.HTTPStatusError) -> str:

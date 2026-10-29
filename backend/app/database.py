@@ -26,6 +26,7 @@ from app.models import (
     AgentConversation, AgentMessage, AgentToolCall, AgentExecutionStep,
     KnowledgeBase, KnowledgeDocument, KnowledgeChunk,
     AdminAccessLog, SharedApiConfig, SharedImageApiConfig, ApiUsageCounter,
+    InviteCode,
 )
 
 # 引擎缓存：每个用户一个引擎

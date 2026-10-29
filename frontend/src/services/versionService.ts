@@ -6,77 +6,13 @@ interface VersionCheckResult {
   releaseUrl: string;
 }
 
-/**
- * 比较版本号
- * @returns -1: v1 < v2, 0: v1 = v2, 1: v1 > v2
- */
-function compareVersion(v1: string, v2: string): number {
-  const parts1 = v1.split('.').map(Number);
-  const parts2 = v2.split('.').map(Number);
-  
-  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-    const num1 = parts1[i] || 0;
-    const num2 = parts2[i] || 0;
-    
-    if (num1 < num2) return -1;
-    if (num1 > num2) return 1;
-  }
-  
-  return 0;
-}
-
-/**
- * 使用 shields.io Badge API 获取最新版本
- * 优点：无 CORS 问题，自动从 GitHub 获取，无需维护
- */
 export async function checkLatestVersion(): Promise<VersionCheckResult> {
-  try {
-    // 使用 shields.io 的 GitHub release badge API
-    const badgeUrl = 'https://img.shields.io/github/v/release/xiamuceer-j/MuMuAINovel';
-    
-    const response = await fetch(badgeUrl, {
-      method: 'GET',
-      cache: 'no-cache',
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
-    }
-    
-    // shields.io 返回的是 SVG 格式
-    const svgText = await response.text();
-    
-    // 从 SVG 中提取版本号
-    // SVG 中版本号通常在 <text> 标签内，格式如: v1.0.0 或 1.0.0
-    const versionRegex = /v?([\d.]+)/g;
-    const matches = svgText.match(versionRegex);
-    
-    if (matches && matches.length > 0) {
-      // 通常最后一个匹配是版本号（前面的可能是标签文本）
-      const versionMatch = matches[matches.length - 1];
-      const latestVersion = versionMatch.replace('v', '');
-      
-      // 验证版本号格式 (x.x.x)
-      if (/^\d+\.\d+(\.\d+)?$/.test(latestVersion)) {
-        const hasUpdate = compareVersion(VERSION_INFO.version, latestVersion) < 0;
-        
-        return {
-          hasUpdate,
-          latestVersion,
-          releaseUrl: `https://github.com/xiamuceer-j/MuMuAINovel/releases/tag/v${latestVersion}`,
-        };
-      }
-    }
-    
-    throw new Error('无法从 Badge API 解析版本信息');
-  } catch {
-    // 失败时返回无更新
-    return {
-      hasUpdate: false,
-      latestVersion: VERSION_INFO.version,
-      releaseUrl: VERSION_INFO.githubUrl,
-    };
-  }
+  // 独立部署版本不向上游项目发起版本查询。接入自有发布服务后再替换这里。
+  return {
+    hasUpdate: false,
+    latestVersion: VERSION_INFO.version,
+    releaseUrl: VERSION_INFO.repoUrl,
+  };
 }
 
 /**

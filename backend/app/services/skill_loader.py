@@ -553,9 +553,9 @@ def get_skill_detail(skill_key: str) -> Optional[Dict]:
 
 def _validate_skill_metadata(name: str, display_name: str, category: str, description: str, triggers: List[str], body: str):
     if not name.strip():
-        raise ValueError("Skill 内部标识不能为空")
+        raise ValueError("技能内部标识不能为空")
     if not re.fullmatch(r'[a-z0-9][a-z0-9\-]*', name.strip()):
-        raise ValueError("Skill 内部标识只能包含小写字母、数字和短横线，且必须以字母或数字开头")
+        raise ValueError("技能内部标识只能包含小写字母、数字和短横线，且必须以字母或数字开头")
     if not display_name.strip():
         raise ValueError("显示名称不能为空")
     if not category.strip():
@@ -593,7 +593,7 @@ def create_skill_files(
     
     skill_dir = os.path.join(SKILLS_DIR, dir_name)
     if os.path.exists(skill_dir):
-        raise ValueError(f"Skill 目录已存在: {dir_name}")
+        raise ValueError(f"技能目录已存在: {dir_name}")
     
     os.makedirs(skill_dir, exist_ok=True)
     
@@ -645,11 +645,11 @@ def update_skill_files(
     """更新已有 Skill 文件"""
     detail = get_skill_detail(skill_key)
     if not detail:
-        raise ValueError(f"未找到 Skill: {skill_key}")
+        raise ValueError(f"未找到技能: {skill_key}")
     
     skill_dir = detail.get("skill_dir", "")
     if not skill_dir or not os.path.isdir(skill_dir):
-        raise ValueError(f"Skill 目录不存在: {skill_dir}")
+        raise ValueError(f"技能目录不存在: {skill_dir}")
     
     skill_md_path = os.path.join(skill_dir, "SKILL.md")
     
@@ -720,11 +720,11 @@ def delete_skill_files(skill_key: str) -> bool:
     import shutil
     detail = get_skill_detail(skill_key)
     if not detail:
-        raise ValueError(f"未找到 Skill: {skill_key}")
+        raise ValueError(f"未找到技能: {skill_key}")
     
     skill_dir = detail.get("skill_dir", "")
     if not skill_dir or not os.path.isdir(skill_dir):
-        raise ValueError(f"Skill 目录不存在")
+        raise ValueError("技能目录不存在")
     
     shutil.rmtree(skill_dir)
     refresh_skills_cache()
