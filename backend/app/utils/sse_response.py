@@ -181,6 +181,16 @@ class WizardProgressTracker:
         self.current_progress = progress
         msg = message or f"保存{self.task_name}到数据库..."
         return await SSEResponse.send_progress(msg, progress, "processing")
+
+    async def stage(self, stage: str, message: str, progress: int) -> str:
+        """发送创作内核阶段（context/writing/checking/repairing/tracking）。"""
+        self.current_progress = max(0, min(int(progress), 100))
+        return await SSEResponse.send_progress(
+            message,
+            self.current_progress,
+            "processing",
+            stage=stage,
+        )
     
     async def complete(self, message: str = None) -> str:
         """完成阶段"""
@@ -262,7 +272,8 @@ class SSEResponse:
     async def send_progress(
         message: str,
         progress: int,
-        status: str = "processing"
+        status: str = "processing",
+        stage: Optional[str] = None,
     ) -> str:
         """
         发送进度消息
@@ -272,12 +283,15 @@ class SSEResponse:
             progress: 进度百分比(0-100)
             status: 状态(processing/success/error)
         """
-        return SSEResponse.format_sse({
+        payload = {
             "type": "progress",
             "message": message,
             "progress": progress,
             "status": status
-        })
+        }
+        if stage:
+            payload["stage"] = stage
+        return SSEResponse.format_sse(payload)
     
     @staticmethod
     async def send_chunk(content: str) -> str:

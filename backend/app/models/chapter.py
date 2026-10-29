@@ -17,6 +17,10 @@ class Chapter(Base):
     summary = Column(Text, comment="章节摘要")
     word_count = Column(Integer, default=0, comment="字数统计")
     status = Column(String(20), default="draft", comment="章节状态")
+    quality_status = Column(String(30), default="draft", comment="创作质量门禁状态")
+    tracking_status = Column(String(30), default="uninitialized", comment="连续性追踪状态")
+    tracking_revision = Column(Integer, default=0, comment="已提交到项目状态的修订号")
+    tracking_body_sha256 = Column(String(64), comment="已提交追踪时对应的正文哈希")
     
     # 大纲关联字段（实现一对多关系）
     outline_id = Column(String(36), ForeignKey("outlines.id", ondelete="SET NULL"), nullable=True, comment="关联的大纲ID")

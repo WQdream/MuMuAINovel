@@ -27,6 +27,10 @@ class ChapterExportData(BaseModel):
     outline_title: Optional[str] = None  # 关联的大纲标题（用于导入时重建关联）
     sub_index: Optional[int] = None  # 大纲下的子章节序号
     expansion_plan: Optional[Dict[str, Any]] = None  # 展开规划详情（JSON对象）
+    quality_status: str = "draft"
+    tracking_status: str = "uninitialized"
+    tracking_revision: int = 0
+    tracking_body_sha256: Optional[str] = None
 
 
 class CharacterExportData(BaseModel):
@@ -205,9 +209,39 @@ class ProjectDefaultStyleExportData(BaseModel):
     style_name: str  # 通过风格名称关联
 
 
+class StoryTrackingStateExportData(BaseModel):
+    """项目连续性权威状态导出数据。"""
+
+    schema_version: int = 1
+    state_revision: int = 0
+    last_committed_chapter: int = 0
+    imported_through_chapter: int = 0
+    state_status: str = "needs_review"
+    state_json: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ChapterTrackingTransactionExportData(BaseModel):
+    """章节追踪事务导出数据。"""
+
+    chapter_number: int
+    chapter_title: Optional[str] = None
+    mode: str = "append"
+    revision: int
+    expected_state_revision: int
+    result_state_revision: Optional[int] = None
+    body_sha256: str
+    status: str = "pending"
+    transaction_json: Dict[str, Any] = Field(default_factory=dict)
+    quality_report: Dict[str, Any] = Field(default_factory=dict)
+    audit_json: Dict[str, Any] = Field(default_factory=dict)
+    error_message: Optional[str] = None
+    created_at: Optional[str] = None
+    committed_at: Optional[str] = None
+
+
 class ProjectExportData(BaseModel):
     """项目完整导出数据"""
-    version: str = "1.1.0"  # 升级版本号
+    version: str = "1.2.0"  # 升级版本号
     export_time: str
     project: Dict[str, Any]
     chapters: List[ChapterExportData] = []
@@ -224,6 +258,8 @@ class ProjectExportData(BaseModel):
     story_memories: List[StoryMemoryExportData] = []
     plot_analysis: List[PlotAnalysisExportData] = []
     project_default_style: Optional[ProjectDefaultStyleExportData] = None
+    story_tracking_state: Optional[StoryTrackingStateExportData] = None
+    chapter_tracking_transactions: List[ChapterTrackingTransactionExportData] = []
 
 
 class ImportValidationResult(BaseModel):

@@ -66,6 +66,25 @@ const summarizeAnalysisError = (error?: string | null): string | null => {
   return text.length > 24 ? `${text.slice(0, 24)}…` : text;
 };
 
+const QUALITY_STATUS_LABELS: Record<string, string> = {
+  draft: '未检查',
+  checking: '检查中',
+  ready: '质量通过',
+  needs_decision: '待确认字数',
+  blocked: '质量阻断',
+  invalid: '正文无效',
+  tool_unavailable: '未机器检测',
+  stale: '需重同步',
+};
+
+const TRACKING_STATUS_LABELS: Record<string, string> = {
+  uninitialized: '追踪未初始化',
+  pending: '追踪待提交',
+  current: '追踪已同步',
+  stale: '追踪陈旧',
+  failed: '追踪失败',
+};
+
 export default function Chapters() {
   const { currentProject, chapters, outlines, setCurrentChapter, setCurrentProject } = useStore();
   const [modal, contextHolder] = Modal.useModal();
@@ -941,6 +960,70 @@ export default function Chapters() {
     } catch {
       message.error('保存失败');
     }
+  };
+
+  const handleQualityDecision = (
+    chapter: Chapter,
+    action: 'accept_current_length' | 'accept_unchecked' | 'resync_tracking',
+  ) => {
+    const actionMeta = {
+      accept_current_length: {
+        title: '接受当前字数？',
+        content: '本章会跳过字数区间检查并提交追踪。该例外会写入审计记录。',
+        okText: '接受并提交',
+      },
+      accept_unchecked: {
+        title: '接受未机器检测？',
+        content: '当前环境无法运行去 AI 味检测。确认后将按现有确定性结果提交追踪，并永久保留例外审计。',
+        okText: '接受未检测',
+      },
+      resync_tracking: {
+        title: '重新同步连续性追踪？',
+        content: `将从第${chapter.chapter_number}章开始重分析，并把后续章节依次标记为待重同步。`,
+        okText: '开始重同步',
+      },
+    }[action];
+
+    modal.confirm({
+      title: actionMeta.title,
+      content: actionMeta.content,
+      okText: actionMeta.okText,
+      cancelText: '取消',
+      centered: true,
+      onOk: async () => {
+        try {
+          const result = await chapterApi.decideChapterQuality(
+            chapter.id,
+            action,
+            action === 'accept_current_length'
+              ? '作者在前端接受当前字数区间例外'
+              : action === 'accept_unchecked'
+                ? '作者在前端接受未机器检测例外'
+                : '作者要求重同步连续性追踪',
+          );
+          await refreshChapters();
+          if (result.analysis_task_id) {
+            setAnalysisTasksMap(prev => ({
+              ...prev,
+              [chapter.id]: {
+                has_task: true,
+                task_id: result.analysis_task_id!,
+                chapter_id: chapter.id,
+                status: 'pending',
+                progress: 0,
+              },
+            }));
+          }
+          message.success(
+            result.queued
+              ? '重同步任务已排队'
+              : '质量例外已接受，追踪事务已提交',
+          );
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '处理质量门禁失败');
+        }
+      },
+    });
   };
 
   const handleRestorePolishSnapshot = () => {
@@ -2104,7 +2187,17 @@ export default function Chapters() {
     const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
     const hasContent = Boolean(item.content && item.content.trim() !== '');
     const summary = (item.content || '').replace(/\s+/g, ' ').trim();
-    const statusColor = item.status === 'completed'
+    const qualityNeedsAttention = hasContent && (
+      item.quality_status !== 'ready' || item.tracking_status !== 'current'
+    );
+    const qualityLabel = QUALITY_STATUS_LABELS[item.quality_status] || item.quality_status;
+    const trackingLabel = TRACKING_STATUS_LABELS[item.tracking_status] || item.tracking_status;
+    const statusColor = qualityNeedsAttention
+      ? ['blocked', 'invalid', 'failed'].includes(item.quality_status) ||
+        item.tracking_status === 'failed'
+        ? token.colorError
+        : token.colorWarning
+      : item.status === 'completed'
       ? token.colorSuccess
       : item.status === 'writing'
         ? token.colorPrimary
@@ -2232,6 +2325,20 @@ export default function Chapters() {
             <span style={{ width: 5, height: 5, borderRadius: 3, background: statusColor }} />
             {getStatusText(item.status)}
           </span>
+          {qualityNeedsAttention && (
+            <Tooltip title={`${qualityLabel}；${trackingLabel}`}>
+              <span style={{
+                fontSize: 11,
+                color: statusColor,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: 150,
+              }}>
+                {qualityLabel} · {trackingLabel}
+              </span>
+            </Tooltip>
+          )}
           {renderAnalysisHint()}
 
           <Space size={0} style={{ flexShrink: 0, marginLeft: 'auto' }}>
@@ -2256,6 +2363,28 @@ export default function Chapters() {
               trigger={['click']}
               menu={{
                 items: [
+                  ...(qualityNeedsAttention
+                    ? [{
+                        key: 'quality-resync',
+                        icon: <SyncOutlined />,
+                        label: '重同步连续性追踪',
+                      }]
+                    : []),
+                  ...(item.quality_status === 'needs_decision'
+                    ? [{
+                        key: 'quality-accept-length',
+                        icon: <InfoCircleOutlined />,
+                        label: '接受当前字数',
+                      }]
+                    : []),
+                  ...(item.quality_status === 'tool_unavailable'
+                    ? [{
+                        key: 'quality-accept-unchecked',
+                        icon: <InfoCircleOutlined />,
+                        label: '接受未机器检测',
+                      }]
+                    : []),
+                  ...(qualityNeedsAttention ? [{ type: 'divider' as const }] : []),
                   {
                     key: 'analysis',
                     icon: isAnalyzing ? <SyncOutlined spin /> : <FundOutlined />,
@@ -2292,7 +2421,13 @@ export default function Chapters() {
                     : []),
                 ],
                 onClick: ({ key }) => {
-                  if (key === 'analysis') {
+                  if (key === 'quality-resync') {
+                    handleQualityDecision(item, 'resync_tracking');
+                  } else if (key === 'quality-accept-length') {
+                    handleQualityDecision(item, 'accept_current_length');
+                  } else if (key === 'quality-accept-unchecked') {
+                    handleQualityDecision(item, 'accept_unchecked');
+                  } else if (key === 'analysis') {
                     handleShowAnalysis(item.id);
                   } else if (key === 'metadata') {
                     handleOpenModal(item.id);

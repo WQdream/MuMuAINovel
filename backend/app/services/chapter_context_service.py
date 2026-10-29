@@ -16,6 +16,7 @@ from app.models.foreshadow import Foreshadow
 from app.models.relationship import CharacterRelationship, Organization, OrganizationMember
 from app.logger import get_logger
 from app.services.knowledge_service import knowledge_service
+from app.services.story_tracking_service import build_tracking_card
 
 logger = get_logger(__name__)
 
@@ -131,6 +132,7 @@ class OneToManyContext:
     
     # === P0-核心信息 ===
     chapter_outline: str = ""           # 本章大纲（从expansion_plan构建）
+    tracking_context: Optional[str] = None
     recent_chapters_context: Optional[str] = None  # 最近10章expansion_plan摘要
     continuation_point: Optional[str] = None  # 衔接锚点（上一章完整正文）
     previous_chapter_summary: Optional[str] = None  # 上一章剧情摘要
@@ -164,7 +166,7 @@ class OneToManyContext:
     def get_total_context_length(self) -> int:
         """计算总上下文长度"""
         total = 0
-        for field_name in ['chapter_outline', 'recent_chapters_context', 'continuation_point',
+        for field_name in ['chapter_outline', 'tracking_context', 'recent_chapters_context', 'continuation_point',
                           'chapter_characters', 'chapter_careers',
                           'relevant_memories', 'foreshadow_reminders',
                           'previous_chapter_summary']:
@@ -187,6 +189,7 @@ class OneToOneContext:
     
     # === P0-核心信息 ===
     chapter_outline: str = ""           # 从outline.structure提取
+    tracking_context: Optional[str] = None
     target_word_count: int = 3000
     min_word_count: int = 2500
     max_word_count: int = 4000
@@ -218,7 +221,7 @@ class OneToOneContext:
     def get_total_context_length(self) -> int:
         """计算总上下文长度"""
         total = 0
-        for field_name in ['chapter_outline', 'recent_chapters_context', 'continuation_point', 'previous_chapter_summary',
+        for field_name in ['chapter_outline', 'tracking_context', 'recent_chapters_context', 'continuation_point', 'previous_chapter_summary',
                           'chapter_characters', 'chapter_careers', 'foreshadow_reminders',
                           'relevant_memories']:
             value = getattr(self, field_name, None)
@@ -243,13 +246,13 @@ class OneToManyContextBuilder:
     """
     
     # 配置常量
-    ENDING_LENGTH = None         # None 表示使用上一章完整正文
+    ENDING_LENGTH = 800
     MEMORY_CANDIDATE_LIMIT = 50  # 向量检索候选池大小
-    MEMORY_CONTEXT_LIMIT = 10    # 最终注入提示词的记忆条数
+    MEMORY_CONTEXT_LIMIT = 3     # 最终注入提示词的记忆条数
     MEMORY_FALLBACK_COUNT = 5    # 无高分命中时保留的候选数量
     MEMORY_COUNT = MEMORY_CONTEXT_LIMIT  # 兼容旧统计/引用
     MEMORY_SIMILARITY_THRESHOLD = 0.6  # 记忆相关度阈值
-    RECENT_CHAPTERS_COUNT = 10   # 最近章节规划数量
+    RECENT_CHAPTERS_COUNT = 3    # 最近章节规划数量
     
     def __init__(self, memory_service=None, foreshadow_service=None):
         """
@@ -376,6 +379,13 @@ class OneToManyContextBuilder:
             )
             if context.foreshadow_reminders:
                 logger.info(f"  ✅ 伏笔提醒: {len(context.foreshadow_reminders)}字符")
+
+        card = await build_tracking_card(db, project.id)
+        context.tracking_context = card.rendered
+        context.chapter_outline = (
+            f"【续写状态卡】\n{card.rendered}\n\n【本章细纲】\n{context.chapter_outline}"
+            "\n\n【硬约束】\n- 细纲契约与状态卡优先于通用写作建议；不得提前释放其中禁止的信息。"
+        )
         
         # === 统计信息 ===
         context.context_stats = {
@@ -388,6 +398,7 @@ class OneToManyContextBuilder:
             "recent_context_length": len(context.recent_chapters_context or ""),
             "memories_length": len(context.relevant_memories or ""),
             "foreshadow_length": len(context.foreshadow_reminders or ""),
+            "tracking_context_length": len(context.tracking_context or ""),
             "total_length": context.get_total_context_length()
         }
         
@@ -462,7 +473,7 @@ class OneToManyContextBuilder:
             return "暂无相关角色", None
         
         # 限制最多10个角色
-        characters = characters[:10]
+        characters = characters[:20]
         character_ids = [c.id for c in characters]
         
         # === 批量查询关系数据 ===
@@ -1159,9 +1170,9 @@ class OneToOneContextBuilder:
     2. 根据角色名检索相关记忆（相关度>0.6）
     """
     
-    RECENT_CHAPTERS_COUNT = 10   # 最近章节摘要数量
+    RECENT_CHAPTERS_COUNT = 3    # 最近章节摘要数量
     MEMORY_CANDIDATE_LIMIT = 50  # 向量检索候选池大小
-    MEMORY_CONTEXT_LIMIT = 10    # 最终注入提示词的记忆条数
+    MEMORY_CONTEXT_LIMIT = 3     # 最终注入提示词的记忆条数
     MEMORY_FALLBACK_COUNT = 5    # 无高分命中时保留的候选数量
 
     def __init__(self, memory_service=None, foreshadow_service=None):
@@ -1240,8 +1251,8 @@ class OneToOneContextBuilder:
             
             if prev_chapter and prev_chapter.content:
                 content = prev_chapter.content.strip()
-                context.continuation_point = content
-                logger.info(f"  ✅ P1-上一章完整正文: {len(context.continuation_point)}字符")
+                context.continuation_point = content[-800:]
+                logger.info(f"  ✅ P1-上一章结尾锚点: {len(context.continuation_point)}字符")
                 
                 # 获取上一章摘要（优先从记忆系统获取，其次使用章节摘要）
                 summary_result = await db.execute(
@@ -1293,7 +1304,7 @@ class OneToOneContextBuilder:
                 .where(Character.project_id == project.id)
                 .where(Character.name.in_(character_names))
             )
-            characters = characters_result.scalars().all()
+            characters = characters_result.scalars().all()[:20]
             
             if characters:
                 # 构建包含职业信息的角色上下文和职业详情
@@ -1381,6 +1392,13 @@ class OneToOneContextBuilder:
                 part for part in (context.relevant_memories, knowledge_context) if part
             )
             logger.info(f"  ✅ 本地知识库上下文: {len(knowledge_context)}字符")
+
+        card = await build_tracking_card(db, project.id)
+        context.tracking_context = card.rendered
+        context.chapter_outline = (
+            f"【续写状态卡】\n{card.rendered}\n\n【本章细纲】\n{context.chapter_outline}"
+            "\n\n【硬约束】\n- 细纲契约与状态卡优先于通用写作建议；不得提前释放其中禁止的信息。"
+        )
         
         # === 统计信息 ===
         context.context_stats = {
@@ -1395,6 +1413,7 @@ class OneToOneContextBuilder:
             "careers_length": len(context.chapter_careers or ""),
             "foreshadow_length": len(context.foreshadow_reminders or ""),
             "memories_length": len(context.relevant_memories or ""),
+            "tracking_context_length": len(context.tracking_context or ""),
             "total_length": context.get_total_context_length()
         }
         

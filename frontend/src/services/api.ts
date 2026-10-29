@@ -29,6 +29,9 @@ import type {
   Chapter,
   ChapterCreate,
   ChapterUpdate,
+  ChapterCanGenerateResponse,
+  ChapterQualityResponse,
+  ProjectTrackingResponse,
   GenerateOutlineRequest,
   GenerateOutlineDirectionsRequest,
   OutlineDirectionSuggestion,
@@ -864,7 +867,28 @@ export const chapterApi = {
     api.post<unknown, PolishSnapshotRestoreResult>(`/chapters/${id}/polish-snapshot/restore`),
 
   checkCanGenerate: (chapterId: string) =>
-    api.get<unknown, import('../types').ChapterCanGenerateResponse>(`/chapters/${chapterId}/can-generate`),
+    api.get<unknown, ChapterCanGenerateResponse>(`/chapters/${chapterId}/can-generate`),
+
+  getProjectTracking: (projectId: string) =>
+    api.get<unknown, ProjectTrackingResponse>(`/chapters/project/${projectId}/tracking`),
+
+  getChapterQuality: (chapterId: string) =>
+    api.get<unknown, ChapterQualityResponse>(`/chapters/${chapterId}/quality`),
+
+  decideChapterQuality: (
+    chapterId: string,
+    action: 'accept_current_length' | 'accept_unchecked' | 'rewrite' | 'resync_tracking',
+    reason?: string,
+  ) =>
+    api.post<unknown, {
+      queued?: boolean;
+      accepted?: boolean;
+      analysis_task_id?: string;
+      quality_status?: ChapterQualityResponse['quality_status'];
+      tracking_status?: ChapterQualityResponse['tracking_status'];
+      tracking_revision?: number;
+      message?: string;
+    }>(`/chapters/${chapterId}/quality/decision`, { action, reason }),
 
   getBatchAnalysisStatuses: (projectId: string, chapterIds?: string[]) =>
     api.post<unknown, BatchAnalysisStatusResponse>(`/chapters/project/${projectId}/analysis/statuses`, {

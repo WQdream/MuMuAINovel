@@ -374,8 +374,17 @@ export function useChapterSync() {
         if (messageType === 'start') {
           onProgressUpdate?.(typeof message.message === 'string' ? message.message : '开始生成...', 0);
         } else if (messageType === 'progress') {
+          const stageLabels: Record<string, string> = {
+            context: '构建上下文',
+            writing: '生成正文',
+            checking: '质量检查',
+            repairing: '自动修复',
+            tracking: '追踪提交',
+          };
+          const stage = typeof message.stage === 'string' ? message.stage : '';
+          const baseMessage = typeof message.message === 'string' ? message.message : '生成中...';
           onProgressUpdate?.(
-            typeof message.message === 'string' ? message.message : '生成中...',
+            stageLabels[stage] ? `[${stageLabels[stage]}] ${baseMessage}` : baseMessage,
             typeof message.progress === 'number' ? message.progress : 0,
           );
         } else if ((messageType === 'content' || messageType === 'chunk') && messageContent) {

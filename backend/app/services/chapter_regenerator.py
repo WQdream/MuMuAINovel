@@ -27,7 +27,9 @@ class ChapterRegenerator:
         project_context: Dict[str, Any],
         style_content: str = "",
         user_id: str = None,
-        db: AsyncSession = None
+        db: AsyncSession = None,
+        base_prompt: Optional[str] = None,
+        system_prompt: Optional[str] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         根据反馈重新生成章节（流式）
@@ -58,22 +60,24 @@ class ChapterRegenerator:
             
             # 2. 构建完整提示词
             yield {'type': 'progress', 'progress': 10, 'message': '正在构建生成提示词...'}
-            full_prompt = await self._build_regeneration_prompt(
-                chapter=chapter,
-                modification_instructions=modification_instructions,
-                project_context=project_context,
-                regenerate_request=regenerate_request,
-                style_content=style_content,
-                user_id=user_id,
-                db=db
-            )
+            full_prompt = base_prompt
+            if not full_prompt:
+                full_prompt = await self._build_regeneration_prompt(
+                    chapter=chapter,
+                    modification_instructions=modification_instructions,
+                    project_context=project_context,
+                    regenerate_request=regenerate_request,
+                    style_content=style_content,
+                    user_id=user_id,
+                    db=db
+                )
 
             logger.info(f"🎯 提示词构建完成，开始AI生成")
             yield {'type': 'progress', 'progress': 15, 'message': '开始AI生成内容...'}
             
             # 3. 构建系统提示词（注入写作风格）
-            system_prompt_with_style = None
-            if style_content:
+            system_prompt_with_style = system_prompt
+            if not system_prompt_with_style and style_content:
                 system_prompt_with_style = f"""【🎨 写作风格要求 - 最高优先级】
 
 {style_content}

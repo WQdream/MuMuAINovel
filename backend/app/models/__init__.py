@@ -27,6 +27,7 @@ from app.models.shared_api_config import SharedApiConfig
 from app.models.shared_image_api_config import SharedImageApiConfig
 from app.models.api_usage import ApiUsageCounter
 from app.models.invite_code import InviteCode
+from app.models.story_tracking import StoryTrackingState, ChapterTrackingTransaction
 
 __all__ = [
     "Project",
@@ -70,4 +71,6 @@ __all__ = [
     "SharedImageApiConfig",
     "ApiUsageCounter",
     "InviteCode",
+    "StoryTrackingState",
+    "ChapterTrackingTransaction",
 ]

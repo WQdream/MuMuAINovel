@@ -50,6 +50,10 @@ class ChapterResponse(BaseModel):
     summary: Optional[str] = None
     word_count: int = 0
     status: str
+    quality_status: str = "draft"
+    tracking_status: str = "uninitialized"
+    tracking_revision: int = 0
+    tracking_body_sha256: Optional[str] = None
     outline_id: Optional[str] = None
     sub_index: Optional[int] = 1
     expansion_plan: Optional[str] = None

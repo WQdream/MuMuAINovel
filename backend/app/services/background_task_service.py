@@ -119,6 +119,15 @@ class TaskProgressTracker:
             }
         )
 
+    async def stage(self, stage: str, message: str, progress: int):
+        """写入统一创作阶段，供后台任务面板展示。"""
+        self.current_progress = max(0, min(int(progress), 100))
+        await self._update_task(
+            progress=self.current_progress,
+            status_message=message,
+            progress_details={"stage": stage, "message": message},
+        )
+
     async def set_result(self, task_result: Dict[str, Any]):
         await self._update_task(task_result=task_result)
 

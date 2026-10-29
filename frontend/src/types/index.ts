@@ -639,6 +639,10 @@ export interface Chapter {
   chapter_number: number;
   word_count: number;
   status: 'draft' | 'writing' | 'completed';
+  quality_status: 'draft' | 'checking' | 'ready' | 'needs_decision' | 'blocked' | 'invalid' | 'tool_unavailable' | 'stale';
+  tracking_status: 'uninitialized' | 'pending' | 'current' | 'stale' | 'failed';
+  tracking_revision: number;
+  tracking_body_sha256?: string;
   expansion_plan?: string; // JSON字符串，解析后为ExpansionPlanData
   outline_id?: string; // 关联的大纲ID
   sub_index?: number; // 大纲下的子章节序号
@@ -681,6 +685,10 @@ export interface ChapterGenerateRequest {
 export interface ChapterCanGenerateResponse {
   can_generate: boolean;
   reason: string;
+  gate_status: 'ready' | 'blocked';
+  quality_status?: Chapter['quality_status'];
+  tracking_status?: Chapter['tracking_status'];
+  next_actions: string[];
   previous_chapters: {
     id: string;
     chapter_number: number;
@@ -689,6 +697,46 @@ export interface ChapterCanGenerateResponse {
     word_count: number;
   }[];
   chapter_number: number;
+}
+
+export interface ChapterQualityFinding {
+  severity: 'blocking' | 'advisory' | 'info';
+  code: string;
+  message: string;
+  evidence?: string;
+}
+
+export interface ChapterQualityResponse {
+  chapter_id: string;
+  quality_status: Chapter['quality_status'];
+  tracking_status: Chapter['tracking_status'];
+  tracking_revision: number;
+  report: {
+    status: Chapter['quality_status'];
+    findings: ChapterQualityFinding[];
+    word_count: number;
+    target_word_count: number;
+    checker_available: boolean;
+    checker_error?: string;
+    available_actions: string[];
+  };
+  transaction_id?: string;
+}
+
+export interface ProjectTrackingResponse {
+  project_id: string;
+  state_revision: number;
+  state_status: string;
+  last_committed_chapter: number;
+  imported_through_chapter: number;
+  context_card: string;
+  stale_chapters: Array<{
+    id: string;
+    chapter_number: number;
+    title: string;
+    quality_status: Chapter['quality_status'];
+    tracking_status: Chapter['tracking_status'];
+  }>;
 }
 
 // AI生成请求类型

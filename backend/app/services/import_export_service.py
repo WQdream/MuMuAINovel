@@ -15,6 +15,7 @@ from app.models.career import Career, CharacterCareer
 from app.models.memory import StoryMemory, PlotAnalysis
 from app.models.analysis_task import AnalysisTask
 from app.models.project_default_style import ProjectDefaultStyle
+from app.models.story_tracking import StoryTrackingState, ChapterTrackingTransaction
 from app.schemas.import_export import (
     ProjectExportData,
     ChapterExportData,
@@ -30,10 +31,13 @@ from app.schemas.import_export import (
     StoryMemoryExportData,
     PlotAnalysisExportData,
     ProjectDefaultStyleExportData,
+    StoryTrackingStateExportData,
+    ChapterTrackingTransactionExportData,
     ImportValidationResult,
     ImportResult
 )
 from app.logger import get_logger
+from app.services.story_tracking_service import body_sha256, ensure_project_state
 
 logger = get_logger(__name__)
 
@@ -41,8 +45,8 @@ logger = get_logger(__name__)
 class ImportExportService:
     """导入导出服务类"""
     
-    SUPPORTED_VERSIONS = ["1.0.0", "1.1.0"]  # 支持的版本列表
-    CURRENT_VERSION = "1.1.0"  # 当前导出版本
+    SUPPORTED_VERSIONS = ["1.0.0", "1.1.0", "1.2.0"]  # 支持的版本列表
+    CURRENT_VERSION = "1.2.0"  # 当前导出版本
     
     @staticmethod
     async def export_project(
@@ -76,6 +80,9 @@ class ImportExportService:
         project = result.scalar_one_or_none()
         if not project:
             raise ValueError(f"项目不存在: {project_id}")
+
+        # 先完成历史项目回填，确保导出的章节状态与追踪事务一致。
+        await ensure_project_state(db, project_id)
         
         # 项目基本信息
         project_data = {
@@ -159,6 +166,15 @@ class ImportExportService:
         project_default_style = await ImportExportService._export_project_default_style(project_id, db)
         if project_default_style:
             logger.info(f"导出项目默认风格: {project_default_style.style_name}")
+
+        story_tracking_state, chapter_tracking_transactions = (
+            await ImportExportService._export_story_tracking(project_id, db)
+        )
+        logger.info(
+            "导出追踪状态: revision=%s, transactions=%s",
+            story_tracking_state.state_revision if story_tracking_state else 0,
+            len(chapter_tracking_transactions),
+        )
         
         export_data = ProjectExportData(
             version=ImportExportService.CURRENT_VERSION,
@@ -176,7 +192,9 @@ class ImportExportService:
             character_careers=character_careers,
             story_memories=story_memories,
             plot_analysis=plot_analysis,
-            project_default_style=project_default_style
+            project_default_style=project_default_style,
+            story_tracking_state=story_tracking_state,
+            chapter_tracking_transactions=chapter_tracking_transactions,
         )
         
         logger.info(f"项目导出完成: {project_id}")
@@ -223,7 +241,11 @@ class ImportExportService:
                 created_at=ch.created_at.isoformat() if ch.created_at else None,
                 outline_title=outline_mapping.get(ch.outline_id) if ch.outline_id else None,
                 sub_index=ch.sub_index,
-                expansion_plan=expansion_plan
+                expansion_plan=expansion_plan,
+                quality_status=ch.quality_status or "draft",
+                tracking_status=ch.tracking_status or "uninitialized",
+                tracking_revision=ch.tracking_revision or 0,
+                tracking_body_sha256=ch.tracking_body_sha256,
             ))
         
         return exported_chapters
@@ -619,6 +641,62 @@ class ImportExportService:
             return ProjectDefaultStyleExportData(style_name=style.name)
         
         return None
+
+    @staticmethod
+    async def _export_story_tracking(
+        project_id: str,
+        db: AsyncSession,
+    ) -> tuple[
+        Optional[StoryTrackingStateExportData],
+        List[ChapterTrackingTransactionExportData],
+    ]:
+        """导出权威追踪状态和全部章节事务。"""
+        state_row = await ensure_project_state(db, project_id)
+        state_export = StoryTrackingStateExportData(
+            schema_version=state_row.schema_version,
+            state_revision=state_row.state_revision or 0,
+            last_committed_chapter=state_row.last_committed_chapter or 0,
+            imported_through_chapter=state_row.imported_through_chapter or 0,
+            state_status=state_row.state_status or "needs_review",
+            state_json=dict(state_row.state_json or {}),
+        )
+
+        rows = (
+            await db.execute(
+                select(ChapterTrackingTransaction, Chapter)
+                .join(Chapter, Chapter.id == ChapterTrackingTransaction.chapter_id)
+                .where(ChapterTrackingTransaction.project_id == project_id)
+                .order_by(Chapter.chapter_number, ChapterTrackingTransaction.revision)
+            )
+        ).all()
+        transactions = [
+            ChapterTrackingTransactionExportData(
+                chapter_number=chapter.chapter_number,
+                chapter_title=chapter.title,
+                mode=transaction_row.mode,
+                revision=transaction_row.revision,
+                expected_state_revision=transaction_row.expected_state_revision,
+                result_state_revision=transaction_row.result_state_revision,
+                body_sha256=transaction_row.body_sha256,
+                status=transaction_row.status,
+                transaction_json=dict(transaction_row.transaction_json or {}),
+                quality_report=dict(transaction_row.quality_report or {}),
+                audit_json=dict(transaction_row.audit_json or {}),
+                error_message=transaction_row.error_message,
+                created_at=(
+                    transaction_row.created_at.isoformat()
+                    if transaction_row.created_at
+                    else None
+                ),
+                committed_at=(
+                    transaction_row.committed_at.isoformat()
+                    if transaction_row.committed_at
+                    else None
+                ),
+            )
+            for transaction_row, chapter in rows
+        ]
+        return state_export, transactions
     
     @staticmethod
     def validate_import_data(data: Dict) -> ImportValidationResult:
@@ -664,7 +742,11 @@ class ImportExportService:
             "character_careers": len(data.get("character_careers", [])),
             "story_memories": len(data.get("story_memories", [])),
             "plot_analysis": len(data.get("plot_analysis", [])),
-            "has_default_style": data.get("project_default_style") is not None
+            "has_default_style": data.get("project_default_style") is not None,
+            "has_story_tracking_state": data.get("story_tracking_state") is not None,
+            "chapter_tracking_transactions": len(
+                data.get("chapter_tracking_transactions", [])
+            ),
         }
         
         # 检查数据完整性
@@ -767,6 +849,24 @@ class ImportExportService:
             )
             statistics["chapters"] = chapters_count
             logger.info(f"导入章节数: {chapters_count}")
+
+            tracking_state_imported, tracking_transactions_imported = (
+                await ImportExportService._import_story_tracking(
+                    new_project.id,
+                    data,
+                    db,
+                    warnings,
+                )
+            )
+            statistics["story_tracking_state"] = 1 if tracking_state_imported else 0
+            statistics["chapter_tracking_transactions"] = (
+                tracking_transactions_imported
+            )
+            logger.info(
+                "导入追踪状态: state=%s, transactions=%s",
+                tracking_state_imported,
+                tracking_transactions_imported,
+            )
             
             # 导入关系
             relationships_count = await ImportExportService._import_relationships(
@@ -843,6 +943,14 @@ class ImportExportService:
             if default_style_imported:
                 logger.info("导入项目默认风格成功")
             
+            # 1.0/1.1 旧格式没有追踪状态，导入完成后执行一次本地回填。
+            if not tracking_state_imported:
+                await ensure_project_state(db, new_project.id, force_backfill=True)
+                statistics["tracking_backfilled"] = 1
+                warnings.append(
+                    "旧格式未携带连续性追踪状态，已从本地章节摘要、分析、角色和伏笔回填"
+                )
+
             # 提交事务
             await db.commit()
             
@@ -866,6 +974,118 @@ class ImportExportService:
                 warnings=warnings
             )
     
+    @staticmethod
+    async def _import_story_tracking(
+        project_id: str,
+        data: Dict,
+        db: AsyncSession,
+        warnings: List[str],
+    ) -> tuple[bool, int]:
+        """导入权威追踪状态和章节事务，并校验事务正文哈希。"""
+        state_data = data.get("story_tracking_state")
+        if not isinstance(state_data, dict):
+            return False, 0
+
+        chapters = (
+            await db.execute(
+                select(Chapter)
+                .where(Chapter.project_id == project_id)
+                .order_by(Chapter.chapter_number)
+            )
+        ).scalars().all()
+        chapters_by_number = {
+            chapter.chapter_number: chapter for chapter in chapters
+        }
+
+        state_json = json.loads(
+            json.dumps(state_data.get("state_json") or {}, ensure_ascii=False)
+        )
+        state_json["project_id"] = project_id
+        state_row = StoryTrackingState(
+            project_id=project_id,
+            schema_version=int(state_data.get("schema_version") or 1),
+            state_revision=int(state_data.get("state_revision") or 0),
+            last_committed_chapter=int(
+                state_data.get("last_committed_chapter") or 0
+            ),
+            imported_through_chapter=int(
+                state_data.get("imported_through_chapter") or 0
+            ),
+            state_status=str(state_data.get("state_status") or "needs_review"),
+            state_json=state_json,
+        )
+        db.add(state_row)
+
+        imported_count = 0
+        body_mismatch = False
+        committed_chapter_ids: set[str] = set()
+        for raw in data.get("chapter_tracking_transactions", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            chapter_number = int(raw.get("chapter_number") or 0)
+            chapter = chapters_by_number.get(chapter_number)
+            if not chapter:
+                warnings.append(
+                    f"跳过找不到对应章节的追踪事务：第{chapter_number}章"
+                )
+                continue
+
+            status = str(raw.get("status") or "pending")
+            body_hash = str(raw.get("body_sha256") or "")
+            if status == "committed" and body_sha256(chapter.content or "") != body_hash:
+                body_mismatch = True
+                chapter.quality_status = "stale"
+                chapter.tracking_status = "stale"
+                chapter.status = "draft"
+            elif status == "committed":
+                committed_chapter_ids.add(chapter.id)
+
+            transaction_row = ChapterTrackingTransaction(
+                project_id=project_id,
+                chapter_id=chapter.id,
+                mode=str(raw.get("mode") or "append"),
+                revision=int(raw.get("revision") or 1),
+                expected_state_revision=int(
+                    raw.get("expected_state_revision") or 0
+                ),
+                result_state_revision=raw.get("result_state_revision"),
+                body_sha256=body_hash,
+                status=status,
+                transaction_json=dict(raw.get("transaction_json") or {}),
+                quality_report=dict(raw.get("quality_report") or {}),
+                audit_json={
+                    **dict(raw.get("audit_json") or {}),
+                    "imported": True,
+                },
+                error_message=raw.get("error_message"),
+            )
+            db.add(transaction_row)
+            imported_count += 1
+
+        missing_committed = [
+            chapter
+            for chapter in chapters
+            if (chapter.content or "").strip()
+            and chapter.id not in committed_chapter_ids
+        ]
+        for chapter in missing_committed:
+            chapter.quality_status = "stale"
+            chapter.tracking_status = "stale"
+            chapter.status = "draft"
+
+        if body_mismatch:
+            state_row.state_status = "needs_review"
+            warnings.append(
+                "部分已提交追踪事务与导入正文哈希不一致，对应章节已标记为陈旧"
+            )
+        if missing_committed:
+            state_row.state_status = "needs_review"
+            warnings.append(
+                f"{len(missing_committed)} 个正文章节没有已提交追踪事务，已降级为待重同步"
+            )
+        await db.flush()
+        return True, imported_count
+
     @staticmethod
     async def _import_chapters(
         project_id: str,
@@ -897,9 +1117,14 @@ class ImportExportService:
                 status=ch_data.get("status", "draft"),
                 outline_id=outline_id,
                 sub_index=ch_data.get("sub_index"),
-                expansion_plan=expansion_plan
+                expansion_plan=expansion_plan,
+                quality_status=ch_data.get("quality_status", "draft"),
+                tracking_status=ch_data.get("tracking_status", "uninitialized"),
+                tracking_revision=ch_data.get("tracking_revision", 0) or 0,
+                tracking_body_sha256=ch_data.get("tracking_body_sha256"),
             )
             db.add(chapter)
+            await db.flush()
             count += 1
         
         return count
