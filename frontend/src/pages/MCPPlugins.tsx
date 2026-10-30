@@ -46,7 +46,7 @@ export default function MCPPluginsPage() {
   const [form] = Form.useForm();
   const { token } = theme.useToken();
   const { resolvedMode } = useThemeMode();
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--mcp-page-bg': token.colorBgLayout,
     '--mcp-text': token.colorText,

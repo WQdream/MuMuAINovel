@@ -24,7 +24,6 @@ import {
 import { useStore } from '../store';
 import { writingStyleApi } from '../services/api';
 import type { WritingStyle, WritingStyleCreate, WritingStyleUpdate } from '../types';
-import { useThemeMode } from '../theme/useThemeMode';
 import './WritingStyles.css';
 
 const { TextArea } = Input;
@@ -41,11 +40,9 @@ export default function WritingStyles() {
   const [editForm] = Form.useForm();
 
   const { token } = theme.useToken();
-  const { resolvedMode } = useThemeMode();
 
   const isMobile = window.innerWidth <= 768;
-  // 深色模式下主题色接近纯黑，默认标识需要提亮才能看清。
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--ws-text': token.colorText,
     '--ws-secondary': token.colorTextSecondary,

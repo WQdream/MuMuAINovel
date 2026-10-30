@@ -566,7 +566,8 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 目标字数：约{target_word_count}字
+- 必须完成长度：至少{min_word_count}字；建议控制在{min_word_count}-{max_word_count}字
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -606,7 +607,10 @@ class PromptService:
 ✅ 保持角色性格、说话方式一致
 ✅ 角色互动须符合关系设定（师徒、朋友、敌对等）
 ✅ 组织相关情节须体现成员身份和职位层级
-✅ 字数控制在目标范围内
+✅ 首次输出不得少于{min_word_count}字，接近{target_word_count}字后再自然收尾
+✅ 完稿前核对大纲要求的事件是否已全部发生，不得在大纲事件完成前提前结尾
+✅ 篇幅不足时，用有效动作、对话、感官细节、人物反应和因果推进补足，不得复述或注水
+✅ 最终不得超过{max_word_count}字
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
 
 【禁止事项】
@@ -635,7 +639,8 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 目标字数：约{target_word_count}字
+- 必须完成长度：至少{min_word_count}字；建议控制在{min_word_count}-{max_word_count}字
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -668,14 +673,18 @@ class PromptService:
 【必须遵守】
 ✅ 严格按照大纲推进情节
 ✅ 保持角色性格、说话方式一致
-✅ 字数需要严格控制在目标字数内
+✅ 首次输出不得少于{min_word_count}字，接近{target_word_count}字后再自然收尾
+✅ 完稿前核对大纲要求的事件是否已全部发生，不得在大纲事件完成前提前结尾
+✅ 篇幅不足时，用有效动作、对话、感官细节、人物反应和因果推进补足，不得复述或注水
+✅ 最终字数不得超过{max_word_count}字
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
 
 【禁止事项】
 ❌ 输出章节标题、序号等元信息
 ❌ 使用"总之"、"综上所述"等AI常见总结语
 ❌ 添加作者注释或创作说明
-❌ 生成字数禁止超过目标字数
+❌ 大纲事件尚未完成时收尾
+❌ 用重复、总结或空泛形容凑字数
 </constraints>
 
 <output>
@@ -696,7 +705,8 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 目标字数：约{target_word_count}字
+- 必须完成长度：至少{min_word_count}字；建议控制在{min_word_count}-{max_word_count}字
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -745,7 +755,10 @@ class PromptService:
 ✅ 严格按照大纲推进情节
 ✅ 自然承接上一章末尾内容，保持连贯性
 ✅ 保持角色性格、说话方式一致
-✅ 字数需要严格控制在目标字数内
+✅ 首次输出不得少于{min_word_count}字，接近{target_word_count}字后再自然收尾
+✅ 完稿前核对大纲要求的事件是否已全部发生，不得在大纲事件完成前提前结尾
+✅ 篇幅不足时，用有效动作、对话、感官细节、人物反应和因果推进补足，不得复述或注水
+✅ 最终字数不得超过{max_word_count}字
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
 
 【禁止事项】
@@ -754,7 +767,8 @@ class PromptService:
 ❌ 在结尾处使用开放式反问
 ❌ 添加作者注释或创作说明
 ❌ 重复上一章已发生的事件
-❌ 生成字数禁止超过目标字数
+❌ 大纲事件尚未完成时收尾
+❌ 用重复、总结或空泛形容凑字数
 </constraints>
 
 <output>
@@ -775,7 +789,8 @@ class PromptService:
 撰写第{chapter_number}章《{chapter_title}》的完整正文。
 
 【基本要求】
-- 目标字数：{target_word_count}字（允许±200字浮动）
+- 目标字数：约{target_word_count}字
+- 必须完成长度：至少{min_word_count}字；建议控制在{min_word_count}-{max_word_count}字
 - 叙事视角：{narrative_perspective}
 </task>
 
@@ -836,7 +851,10 @@ class PromptService:
 ✅ 保持角色性格、说话方式一致
 ✅ 角色互动须符合关系设定（师徒、朋友、敌对等）
 ✅ 组织相关情节须体现成员身份和职位层级
-✅ 字数控制在目标范围内
+✅ 首次输出不得少于{min_word_count}字，接近{target_word_count}字后再自然收尾
+✅ 完稿前核对大纲要求的事件是否已全部发生，不得在大纲事件完成前提前结尾
+✅ 篇幅不足时，用有效动作、对话、感官细节、人物反应和因果推进补足，不得复述或注水
+✅ 最终不得超过{max_word_count}字
 ✅ 如有伏笔提醒，请在本章中适当埋入或回收相应伏笔
 
 【🔴 反重复特别指令】
@@ -852,6 +870,8 @@ class PromptService:
 ❌ 重复叙述上一章已发生的事件（包括环境描写、心理活动）
 ❌ 在开篇使用"接上回"、"书接上文"等套话
 ❌ 角色行为超出其职业阶段的能力范围
+❌ 大纲事件尚未完成时收尾
+❌ 用重复、总结或空泛形容凑字数
 </constraints>
 
 <output>
@@ -2937,14 +2957,16 @@ class PromptService:
                 "category": "章节创作",
                 "description": "1-N模式：根据大纲创作章节内容（用于第1章，无前置章节）",
                 "parameters": ["project_title", "genre", "chapter_number", "chapter_title", "chapter_outline",
-                             "target_word_count", "narrative_perspective", "characters_info"]
+                             "target_word_count", "min_word_count", "max_word_count",
+                             "narrative_perspective", "characters_info"]
             },
             "CHAPTER_GENERATION_ONE_TO_MANY_NEXT": {
                 "name": "章节创作-1-N模式（第2章及以后）",
                 "category": "章节创作",
                 "description": "1-N模式：基于前置章节内容创作新章节（用于第2章及以后）",
                 "parameters": ["project_title", "genre", "chapter_number", "chapter_title", "chapter_outline",
-                             "target_word_count", "narrative_perspective", "characters_info", "continuation_point",
+                             "target_word_count", "min_word_count", "max_word_count",
+                             "narrative_perspective", "characters_info", "continuation_point",
                              "foreshadow_reminders", "relevant_memories", "story_skeleton", "previous_chapter_summary"]
             },
             "CHAPTER_GENERATION_ONE_TO_ONE": {
@@ -2952,14 +2974,16 @@ class PromptService:
                 "category": "章节创作",
                 "description": "1-1模式：章节创作（用于第1章，无前置章节）",
                 "parameters": ["project_title", "genre", "chapter_number", "chapter_title", "chapter_outline",
-                             "target_word_count", "narrative_perspective", "characters_info", "chapter_careers"]
+                             "target_word_count", "min_word_count", "max_word_count",
+                             "narrative_perspective", "characters_info", "chapter_careers"]
             },
             "CHAPTER_GENERATION_ONE_TO_ONE_NEXT": {
                 "name": "章节创作-1-1模式（第2章及以后）",
                 "category": "章节创作",
                 "description": "1-1模式：基于上一章内容创作新章节（用于第2章及以后）",
                 "parameters": ["project_title", "genre", "chapter_number", "chapter_title", "chapter_outline",
-                             "target_word_count", "narrative_perspective", "previous_chapter_content",
+                             "target_word_count", "min_word_count", "max_word_count",
+                             "narrative_perspective", "previous_chapter_content",
                              "characters_info", "chapter_careers", "foreshadow_reminders", "relevant_memories"]
             },
             "CHAPTER_REGENERATION_SYSTEM": {

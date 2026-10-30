@@ -7,6 +7,11 @@ from app.models.chapter import Chapter
 from app.models.memory import PlotAnalysis
 from app.schemas.regeneration import ChapterRegenerateRequest, PreserveElementsConfig
 from app.logger import get_logger
+from app.services.chapter_length_guard import (
+    ChapterLengthGuard,
+    iter_guarded_chunks,
+    visible_char_count,
+)
 import difflib
 
 logger = get_logger(__name__)
@@ -90,21 +95,39 @@ class ChapterRegenerator:
             target_word_count = regenerate_request.target_word_count
             accumulated_length = 0
             
-            async for chunk in self.ai_service.generate_text_stream(
+            guard = ChapterLengthGuard(target_word_count)
+            source = self.ai_service.generate_text_stream(
                 prompt=full_prompt,
                 system_prompt=system_prompt_with_style,
                 temperature=0.7
-            ):
+            )
+            async for chunk in iter_guarded_chunks(source, guard):
                 # 发送内容块
                 yield {'type': 'chunk', 'content': chunk}
                 
                 # 更新累积字数并计算进度（15%-95%）
-                accumulated_length += len(chunk)
+                accumulated_length += visible_char_count(chunk)
                 # 进度从15%开始，到95%结束，为后处理预留5%
                 generation_progress = min(15 + (accumulated_length / target_word_count) * 80, 95)
                 yield {'type': 'progress', 'progress': int(generation_progress), 'word_count': accumulated_length}
             
-            logger.info(f"✅ 章节重新生成完成，共生成 {accumulated_length} 字")
+            guard_result = guard.finish()
+            logger.info(
+                "✅ 章节重新生成完成: 观察 %s 字，安全输出 %s 字，截断=%s，边界=%s",
+                guard_result.observed_chars,
+                guard_result.content_chars,
+                guard_result.truncated,
+                guard_result.cutoff_kind or "none",
+            )
+            if guard_result.truncated:
+                yield {
+                    'type': 'progress',
+                    'progress': 95,
+                    'message': (
+                        f"已达到目标字数安全上限，正文按完整段落收尾，"
+                        f"共 {guard_result.content_chars} 字"
+                    ),
+                }
             yield {'type': 'progress', 'progress': 100, 'message': '生成完成'}
             
         except Exception as e:

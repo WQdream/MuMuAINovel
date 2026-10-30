@@ -10,6 +10,7 @@ TASK_TYPE_RESOURCES: dict[str, tuple[str, ...]] = {
     "chapter_regenerate": ("chapters", "projects"),
     "chapter_partial_regenerate": ("chapters", "projects"),
     "chapter_analysis": ("analysis", "characters", "foreshadows"),
+    "tracking_resync": ("chapters", "projects", "analysis", "characters", "foreshadows"),
     "character_generate": ("characters",),
     "organization_generate": ("characters", "organizations"),
     "career_generate": ("careers",),

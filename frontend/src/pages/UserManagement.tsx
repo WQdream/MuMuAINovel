@@ -443,102 +443,92 @@ export default function UserManagement({ embedded = false }: UserManagementProps
     {
       title: '操作',
       key: 'action',
-      width: isMobile ? 80 : embedded ? 318 : 300,
+      width: isMobile ? 80 : embedded ? 156 : 300,
+      align: 'right' as const,
       fixed: 'right' as const,
       render: (_: unknown, record: UserWithStatus) => {
         const isActive = record.is_active !== false;
 
+        const secondaryMenuItems = [
+          {
+            key: 'reset',
+            label: '重置密码',
+            icon: <KeyOutlined />,
+            onClick: () => handleResetPassword(record),
+          },
+          {
+            key: 'toggle',
+            label: isActive ? '禁用用户' : '启用用户',
+            icon: isActive ? <StopOutlined /> : <CheckCircleOutlined />,
+            danger: isActive,
+            onClick: () => {
+              modal.confirm({
+                title: `确定${isActive ? '禁用' : '启用'}该用户吗？`,
+                onOk: () => handleToggleStatus(record),
+                okText: '确定',
+                cancelText: '取消',
+              });
+            },
+          },
+          ...(!record.is_admin ? [{
+            key: 'delete',
+            label: '删除用户',
+            icon: <DeleteOutlined />,
+            danger: true,
+            onClick: () => {
+              modal.confirm({
+                title: '确定删除该用户吗？此操作不可恢复！',
+                onOk: () => handleDelete(record),
+                okText: '确定',
+                cancelText: '取消',
+                okButtonProps: { danger: true },
+              });
+            },
+          }] : []),
+        ];
+
         // 移动端：使用下拉菜单
         if (isMobile) {
-          const menuItems = [
-            {
-              key: 'edit',
-              label: '编辑用户',
-              icon: <EditOutlined />,
-              onClick: () => handleEdit(record),
-            },
-            {
-              key: 'reset',
-              label: '重置密码',
-              icon: <KeyOutlined />,
-              onClick: () => handleResetPassword(record),
-            },
-            {
-              key: 'toggle',
-              label: isActive ? '禁用用户' : '启用用户',
-              icon: isActive ? <StopOutlined /> : <CheckCircleOutlined />,
-              danger: isActive,
-              onClick: () => {
-                modal.confirm({
-                  title: `确定${isActive ? '禁用' : '启用'}该用户吗？`,
-                  onOk: () => handleToggleStatus(record),
-                  okText: '确定',
-                  cancelText: '取消',
-                });
-              },
-            },
-            ...(!record.is_admin ? [{
-              key: 'delete',
-              label: '删除用户',
-              icon: <DeleteOutlined />,
-              danger: true,
-              onClick: () => {
-                modal.confirm({
-                  title: '确定删除该用户吗？此操作不可恢复！',
-                  onOk: () => handleDelete(record),
-                  okText: '确定',
-                  cancelText: '取消',
-                  okButtonProps: { danger: true },
-                });
-              },
-            }] : []),
-          ];
-
           return (
-            <Dropdown menu={{ items: menuItems }} trigger={['click']}>
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'edit',
+                    label: '编辑用户',
+                    icon: <EditOutlined />,
+                    onClick: () => handleEdit(record),
+                  },
+                  ...secondaryMenuItems,
+                ],
+              }}
+              trigger={['click']}
+            >
               <Button type="text" icon={<MoreOutlined />} />
             </Dropdown>
           );
         }
 
-        // 桌面端：嵌入管理后台时用克制的文字按钮，独立页保留链接按钮
+        // 桌面端：嵌入管理后台时保留主操作，其余收进「更多」避免操作列过宽。
         if (embedded) {
           return (
-            <Space size={4}>
+            <Space size={2}>
               <Button type="text" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
                 编辑
               </Button>
-              <Button type="text" size="small" icon={<KeyOutlined />} onClick={() => handleResetPassword(record)}>
-                重置密码
-              </Button>
-              <Popconfirm
-                title={`确定${isActive ? '禁用' : '启用'}该用户吗？`}
-                onConfirm={() => handleToggleStatus(record)}
-                okText="确定"
-                cancelText="取消"
+              <Dropdown
+                menu={{ items: secondaryMenuItems }}
+                trigger={['click']}
+                placement="bottomRight"
               >
                 <Button
                   type="text"
                   size="small"
-                  danger={isActive}
-                  icon={isActive ? <StopOutlined /> : <CheckCircleOutlined />}
+                  icon={<MoreOutlined />}
                 >
-                  {isActive ? '禁用' : '启用'}
+                  更多
                 </Button>
-              </Popconfirm>
-              {!record.is_admin && (
-                <Popconfirm
-                  title="确定删除该用户吗？此操作不可恢复！"
-                  onConfirm={() => handleDelete(record)}
-                  okText="确定"
-                  cancelText="取消"
-                  okButtonProps={{ danger: true }}
-                >
-                  <Button type="text" size="small" danger icon={<DeleteOutlined />}>
-                    删除
-                  </Button>
-                </Popconfirm>
-              )}
+              </Dropdown>
             </Space>
           );
         }

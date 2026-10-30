@@ -21,14 +21,13 @@ export default function BrandMark({
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: compact ? 0 : 10, minWidth: 0 }}>
       <img
-        src="/logo.svg"
+        src="/logo.png"
         alt={BRAND.name}
         style={{
           width: size,
           height: size,
           flexShrink: 0,
-          borderRadius: 2,
-          boxShadow: '0 0 0 1px rgba(201, 169, 110, 0.12)',
+          objectFit: 'contain',
         }}
       />
       {showText && (

@@ -11,7 +11,7 @@ import {
   DownOutlined,
   ClearOutlined,
 } from '@ant-design/icons';
-import { getProjectTasks, getTaskStatus, cancelTask, cancelBatchTask, deleteTask, clearProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
+import { getProjectTasks, getTaskStatus, cancelTask, cancelBatchTask, deleteTask, clearProjectTasks, type TaskStatus, type TrackingResyncTaskResult } from '../services/backgroundTaskService';
 import { eventBus, EventNames } from '../store/eventBus';
 
 interface FloatingTaskPanelProps {
@@ -225,6 +225,8 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
         return '向导创建';
       case 'chapter_analysis':
         return '章节分析';
+      case 'tracking_resync':
+        return '重分析连续性追踪';
       case 'chapter_regenerate':
         return '章节重写';
       case 'chapter_partial_regenerate':
@@ -240,6 +242,79 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
     }
   };
 
+  const getTrackingResyncResult = (task: TaskStatus): TrackingResyncTaskResult | null => {
+    if (task.task_type !== 'tracking_resync' || !task.task_result) return null;
+    const result = task.task_result as Partial<TrackingResyncTaskResult>;
+    if (
+      typeof result.total_chapters !== 'number' ||
+      typeof result.processed_chapters !== 'number'
+    ) {
+      return null;
+    }
+    return result as TrackingResyncTaskResult;
+  };
+
+  const renderTrackingResyncSummary = (task: TaskStatus) => {
+    const result = getTrackingResyncResult(task);
+    if (!result) return null;
+
+    const retriedChapters = Array.isArray(result.retried_chapters)
+      ? result.retried_chapters
+      : [];
+    const failedChapters = Array.isArray(result.failed_chapters)
+      ? result.failed_chapters
+      : [];
+    const remainingChapters = Array.isArray(result.remaining_stale_chapters)
+      ? result.remaining_stale_chapters.length
+      : result.downstream_stale_chapters || 0;
+
+    return (
+      <div
+        style={{
+          marginBottom: 6,
+          padding: '8px 9px',
+          borderRadius: token.borderRadius,
+          background: token.colorFillQuaternary,
+          border: `1px solid ${token.colorBorderSecondary}`,
+          fontSize: 12,
+          lineHeight: 1.65,
+          color: token.colorTextSecondary,
+        }}
+      >
+        <div>
+          已处理 <strong style={{ color: token.colorText }}>{result.processed_chapters}</strong>
+          /{result.total_chapters} 章
+          <span style={{ margin: '0 6px', color: token.colorBorder }}>·</span>
+          追踪版本 {result.tracking_revision || 0}
+        </div>
+        <div>
+          {result.cancelled ? '已取消，' : ''}
+          仍待重建 <strong style={{ color: token.colorText }}>{remainingChapters}</strong> 章
+        </div>
+        {retriedChapters.length > 0 && (
+          <div>自动重试：第 {retriedChapters.join('、')} 章</div>
+        )}
+        {failedChapters.map((chapter) => (
+          <Tooltip
+            key={`${chapter.chapter_number}-${chapter.error}`}
+            title={chapter.error}
+          >
+            <div
+              style={{
+                color: token.colorError,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              失败：第{chapter.chapter_number}章 · {chapter.error}
+            </div>
+          </Tooltip>
+        ))}
+      </div>
+    );
+  };
+
   const activeTasks = taskList.filter((t) => t.status === 'running' || t.status === 'pending');
   const hasActiveTasks = activeTasks.length > 0;
 
@@ -253,6 +328,7 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
         bottom: 10,
         right: rightOffset,
         width: collapsed ? 260 : 400,
+        maxWidth: `calc(100vw - ${rightOffset * 2}px)`,
         maxHeight: collapsed ? 60 : 500,
         zIndex: 1000,
         boxShadow: token.boxShadowSecondary,
@@ -355,6 +431,8 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
                         </div>
                       )}
 
+                      {task.task_type === 'tracking_resync' && renderTrackingResyncSummary(task)}
+
                       {(task.status === 'running' || task.status === 'pending') && (
                         <Progress
                           percent={task.progress}
@@ -380,7 +458,16 @@ export const FloatingTaskPanel: React.FC<FloatingTaskPanelProps> = ({
                         <Space size={4}>
                           {task.can_cancel && (task.status === 'running' || task.status === 'pending') && (
                             <Popconfirm
-                              title="确认取消任务？"
+                              title={
+                                task.task_type === 'tracking_resync'
+                                  ? '确认停止重分析？'
+                                  : '确认取消任务？'
+                              }
+                              description={
+                                task.task_type === 'tracking_resync'
+                                  ? '当前章节分析完成后停止，未处理章节仍保持待重建。'
+                                  : undefined
+                              }
                               onConfirm={() => handleCancelTask(task)}
                               okText="确认"
                               cancelText="取消"

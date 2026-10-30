@@ -3,6 +3,7 @@ import zhCN from 'antd/locale/zh_CN';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PropsWithChildren } from 'react';
 import { getThemeConfig, type ResolvedThemeMode } from './themeConfig';
+import { getEditorialPalette } from './themePalette';
 import { ThemeModeContext } from './themeContext';
 import { getStoredThemeMode, setStoredThemeMode, type ThemeMode } from './themeStorage';
 
@@ -117,51 +118,39 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
     root.setAttribute('data-theme-resolved', resolvedMode);
     root.style.colorScheme = resolvedMode;
 
-    const tooltipBg = themeConfig.token?.colorPrimary ?? '#884d5c';
+    const palette = getEditorialPalette(resolvedMode);
+    const tooltipBg = palette.tooltip;
     root.style.setProperty('--app-tooltip-bg', tooltipBg);
     root.style.setProperty('--app-tooltip-shadow', hexToRgba(tooltipBg, 0.3));
-    // 品牌视觉变量：浅色为宣纸 + 古铜，深色为暖石墨 + 香槟金
-    const isDark = resolvedMode === 'dark';
-    root.style.setProperty('--editorial-paper', isDark ? '#121211' : '#F5F2EC');
-    root.style.setProperty('--editorial-surface', isDark ? '#1A1917' : '#FBFAF7');
-    root.style.setProperty('--editorial-ink', isDark ? '#ECE6DA' : '#1B1A17');
-    root.style.setProperty('--editorial-muted', isDark ? '#9A9387' : '#7A7368');
-    root.style.setProperty('--editorial-accent', isDark ? '#C9A96E' : '#9C7A4B');
-    root.style.setProperty('--editorial-accent-soft', isDark ? 'rgba(201, 169, 110, 0.14)' : 'rgba(156, 122, 75, 0.1)');
-    root.style.setProperty('--editorial-rule', isDark ? '#2E2B26' : '#E2DBCE');
-    root.style.setProperty('--editorial-nav', isDark ? '#0C0C0B' : '#EEE9DF');
-    root.style.setProperty('--editorial-nav-raised', isDark ? '#151411' : '#F8F4EC');
-    root.style.setProperty('--editorial-nav-text', isDark ? '#F5EDDF' : '#2D2821');
-    root.style.setProperty(
-      '--editorial-nav-muted',
-      isDark ? 'rgba(245, 237, 223, 0.68)' : 'rgba(45, 40, 33, 0.74)',
-    );
-    root.style.setProperty(
-      '--editorial-nav-group',
-      isDark ? 'rgba(245, 237, 223, 0.52)' : '#6E665A',
-    );
-    root.style.setProperty(
-      '--editorial-nav-rule',
-      isDark ? 'rgba(245, 237, 223, 0.09)' : 'rgba(45, 40, 33, 0.11)',
-    );
-    root.style.setProperty(
-      '--editorial-nav-hover',
-      isDark ? 'rgba(245, 237, 223, 0.055)' : 'rgba(45, 40, 33, 0.045)',
-    );
-    root.style.setProperty(
-      '--editorial-nav-selected',
-      isDark ? 'rgba(201, 169, 110, 0.09)' : 'rgba(126, 98, 56, 0.1)',
-    );
-    root.style.setProperty('--editorial-nav-accent', isDark ? '#C9A96E' : '#7E6238');
-    root.style.setProperty(
-      '--editorial-nav-control',
-      isDark ? 'rgba(245, 237, 223, 0.025)' : 'rgba(45, 40, 33, 0.035)',
-    );
-    root.style.setProperty(
-      '--editorial-nav-control-active',
-      isDark ? 'rgba(245, 237, 223, 0.075)' : 'rgba(255, 255, 255, 0.56)',
-    );
-    root.style.setProperty('--editorial-gold', '#C9A96E');
+    root.style.setProperty('--editorial-paper', palette.paper);
+    root.style.setProperty('--editorial-surface', palette.surface);
+    root.style.setProperty('--editorial-surface-raised', palette.surfaceRaised);
+    root.style.setProperty('--editorial-surface-muted', palette.surfaceMuted);
+    root.style.setProperty('--editorial-card-bg', `linear-gradient(145deg, ${palette.surfaceRaised} 0%, ${palette.surface} 58%, ${palette.surfaceMuted} 100%)`);
+    root.style.setProperty('--editorial-card-shadow', palette.cardShadow);
+    root.style.setProperty('--editorial-shadow', palette.shadow);
+    root.style.setProperty('--editorial-ink', palette.ink);
+    root.style.setProperty('--editorial-muted', palette.muted);
+    root.style.setProperty('--editorial-subtle', palette.subtle);
+    root.style.setProperty('--editorial-accent', palette.accent);
+    root.style.setProperty('--editorial-accent-strong', palette.accentStrong);
+    root.style.setProperty('--editorial-accent-soft', palette.accentSoft);
+    root.style.setProperty('--editorial-accent-faint', palette.accentFaint);
+    root.style.setProperty('--editorial-rule', palette.rule);
+    root.style.setProperty('--editorial-rule-strong', palette.ruleStrong);
+    root.style.setProperty('--editorial-nav', palette.nav);
+    root.style.setProperty('--editorial-nav-raised', palette.navRaised);
+    root.style.setProperty('--editorial-nav-text', palette.navText);
+    root.style.setProperty('--editorial-nav-muted', palette.navMuted);
+    root.style.setProperty('--editorial-nav-group', palette.navGroup);
+    root.style.setProperty('--editorial-nav-rule', palette.navRule);
+    root.style.setProperty('--editorial-nav-hover', palette.navHover);
+    root.style.setProperty('--editorial-nav-selected', palette.navSelected);
+    root.style.setProperty('--editorial-nav-selected-border', palette.navSelectedBorder);
+    root.style.setProperty('--editorial-nav-accent', palette.navAccent);
+    root.style.setProperty('--editorial-nav-control', palette.navControl);
+    root.style.setProperty('--editorial-nav-control-active', palette.navControlActive);
+    root.style.setProperty('--editorial-gold', palette.gold);
     root.style.setProperty(
       '--font-editorial',
       "'Iowan Old Style', 'Songti SC', 'STSong', 'Noto Serif SC', 'Source Han Serif SC', Georgia, serif",

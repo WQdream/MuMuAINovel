@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Button, Modal, Form, Input, Select, message, Empty, Space, Tag, Card, InputNumber, Alert, Radio, Descriptions, Pagination, theme, Dropdown, Switch, Tooltip } from 'antd';
-import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, FormOutlined, PlusOutlined, ReadOutlined, MoreOutlined, SearchOutlined, HistoryOutlined } from '@ant-design/icons';
+import { Button, Modal, Form, Input, Select, message, Empty, Space, Tag, Card, InputNumber, Alert, Radio, Descriptions, Pagination, theme, Dropdown, Switch, Tooltip, Drawer } from 'antd';
+import { EditOutlined, FileTextOutlined, ThunderboltOutlined, LockOutlined, DownloadOutlined, SettingOutlined, FundOutlined, SyncOutlined, RocketOutlined, StopOutlined, InfoCircleOutlined, CaretRightOutlined, DeleteOutlined, FormOutlined, PlusOutlined, ReadOutlined, MoreOutlined, SearchOutlined, HistoryOutlined, CloseOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus, EventNames } from '../store/eventBus';
 import { useChapterSync } from '../store/hooks';
-import { generateChapterBackground } from '../services/backgroundTaskService';
+import { generateChapterBackground, getProjectTasks, getTaskStatus } from '../services/backgroundTaskService';
 import { projectApi, writingStyleApi, chapterApi } from '../services/api';
 import type { Chapter, ChapterUpdate, ApiError, WritingStyle, AnalysisTask, ExpansionPlanData, PolishSnapshot } from '../types';
 import type { TextAreaRef } from 'antd/es/input/TextArea';
@@ -74,16 +74,61 @@ const QUALITY_STATUS_LABELS: Record<string, string> = {
   blocked: '质量阻断',
   invalid: '正文无效',
   tool_unavailable: '未机器检测',
-  stale: '需重同步',
+  stale: '待重新分析',
 };
 
 const TRACKING_STATUS_LABELS: Record<string, string> = {
   uninitialized: '追踪未初始化',
   pending: '追踪待提交',
   current: '追踪已同步',
-  stale: '追踪陈旧',
+  stale: '连续性待重建',
   failed: '追踪失败',
 };
+
+const CHAPTER_STATUS_LABELS: Record<string, string> = {
+  ...QUALITY_STATUS_LABELS,
+  ...TRACKING_STATUS_LABELS,
+};
+
+type ChapterGenerationGate = {
+  canGenerate: boolean;
+  reason: string;
+  blockingKind?: 'missing_content' | 'analysis_pending' | 'tracking_stale' | 'quality_attention';
+  repairRange?: { start: number; end: number };
+};
+
+function formatChapterNumberRanges(chapterNumbers: number[]): string {
+  const sorted = Array.from(new Set(chapterNumbers)).sort((a, b) => a - b);
+  if (sorted.length === 0) return '';
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (const chapterNumber of sorted) {
+    const current = ranges[ranges.length - 1];
+    if (current && chapterNumber === current.end + 1) {
+      current.end = chapterNumber;
+    } else {
+      ranges.push({ start: chapterNumber, end: chapterNumber });
+    }
+  }
+
+  return ranges
+    .map(({ start, end }) => (
+      start === end ? `第${start}章` : `第${start}–${end}章`
+    ))
+    .join('、');
+}
+
+function humanizeChapterStatusError(message: string): string {
+  return message.replace(/\(([a-z_]+)\)/g, (match, status: string) => (
+    CHAPTER_STATUS_LABELS[status] ? `（${CHAPTER_STATUS_LABELS[status]}）` : match
+  ));
+}
+
+function getChapterApiError(error: unknown, fallback: string): string {
+  const apiError = error as ApiError;
+  const detail = apiError.response?.data?.detail;
+  return typeof detail === 'string' && detail.trim() ? detail : fallback;
+}
 
 export default function Chapters() {
   const { currentProject, chapters, outlines, setCurrentChapter, setCurrentProject } = useStore();
@@ -97,6 +142,8 @@ export default function Chapters() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm();
   const [editorForm] = Form.useForm();
+  const editorContent = String(Form.useWatch('content', editorForm) || '');
+  const visibleEditorCharCount = Array.from(editorContent.replace(/\s+/gu, '')).length;
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const contentTextAreaRef = useRef<TextAreaRef>(null);
   const [writingStyles, setWritingStyles] = useState<WritingStyle[]>([]);
@@ -124,6 +171,13 @@ export default function Chapters() {
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [analysisChapterId, setAnalysisChapterId] = useState<string | null>(null);
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [trackingResyncVisible, setTrackingResyncVisible] = useState(false);
+  const [trackingResyncStart, setTrackingResyncStart] = useState<number>();
+  const [trackingResyncEnd, setTrackingResyncEnd] = useState<number>();
+  const [trackingResyncSubmitting, setTrackingResyncSubmitting] = useState(false);
+  const [trackingResyncTaskId, setTrackingResyncTaskId] = useState<string | null>(null);
+  const [trackingResyncInfoExpanded, setTrackingResyncInfoExpanded] = useState(false);
+  const [trackingResyncRulesExpanded, setTrackingResyncRulesExpanded] = useState(false);
   // 分析任务状态管理
   const [analysisTasksMap, setAnalysisTasksMap] = useState<Record<string, AnalysisTask>>({});
   const analysisPollingIntervalRef = useRef<number | null>(null);
@@ -367,12 +421,24 @@ export default function Chapters() {
       analysisPollingInFlightRef.current = false;
       activeAnalysisPollingIdsRef.current.clear();
       setAnalysisTasksMap({});
+      setTrackingResyncTaskId(null);
 
       void refreshChapters(projectId).then((latestChapters) => {
         if (currentProjectIdRef.current === projectId) {
           void loadAnalysisTasks(latestChapters, projectId);
         }
       });
+      void getProjectTasks(projectId, 'tracking_resync', 5)
+        .then((result) => {
+          if (currentProjectIdRef.current !== projectId) return;
+          const activeTask = result.items.find(
+            (task) => task.status === 'pending' || task.status === 'running',
+          );
+          if (activeTask) setTrackingResyncTaskId(activeTask.id);
+        })
+        .catch((error) => {
+          console.error('恢复连续性重分析任务状态失败:', error);
+        });
       loadWritingStyles();
       checkAndRestoreBatchTask();
     }
@@ -516,6 +582,45 @@ export default function Chapters() {
     eventBus.on(EventNames.BACKGROUND_TASK_SETTLED, handleTaskSettled);
     return () => eventBus.off(EventNames.BACKGROUND_TASK_SETTLED, handleTaskSettled);
   }, [loadAnalysisTasks, refreshChapters]);
+
+  // 总任务运行期间持续读取子分析记录，让章节卡片显示当前追踪重分析进度。
+  useEffect(() => {
+    if (!trackingResyncTaskId) return;
+
+    let stopped = false;
+    let requestInFlight = false;
+    const checkTask = async () => {
+      if (requestInFlight || document.visibilityState !== 'visible') return;
+      requestInFlight = true;
+      try {
+        const task = await getTaskStatus(trackingResyncTaskId);
+        if (stopped) return;
+
+        if (task.status === 'pending' || task.status === 'running') {
+          await loadAnalysisTasks();
+          return;
+        }
+
+        setTrackingResyncTaskId(null);
+        const latestChapters = await refreshChapters();
+        await loadAnalysisTasks(latestChapters);
+      } catch (error) {
+        console.error('同步连续性重分析进度失败:', error);
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    void checkTask();
+    const timer = window.setInterval(() => {
+      void checkTask();
+    }, 3500);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [loadAnalysisTasks, refreshChapters, trackingResyncTaskId]);
 
   // 启动单个章节的任务轮询（内部合并到批量轮询）
   const startPollingTask = (chapterId: string) => {
@@ -687,7 +792,7 @@ export default function Chapters() {
     // 检查通知权限
     if (Notification.permission === 'granted') {
       // 选择图标
-      const icon = type === 'success' ? '/logo.svg' : type === 'error' ? '/favicon.ico' : '/logo.svg';
+      const icon = type === 'success' ? '/logo.png' : type === 'error' ? '/favicon.ico' : '/logo.png';
       
       const notification = new Notification(title, {
         body,
@@ -807,20 +912,47 @@ export default function Chapters() {
 
   // 预计算每章可生成状态，避免在渲染阶段重复 O(n²) 扫描
   const chapterGenerateGateMap = useMemo(() => {
-    const gateMap: Record<string, { canGenerate: boolean; reason: string }> = {};
+    const gateMap: Record<string, ChapterGenerationGate> = {};
     const incompleteChapterNumbers: number[] = [];
     const unanalyzedChapters: Array<{ chapterNumber: number; reason: string }> = [];
+    const qualityAttentionChapters: Array<{
+      chapterNumber: number;
+      reason: string;
+      stale: boolean;
+    }> = [];
 
     sortedChapters.forEach((chapter) => {
       if (incompleteChapterNumbers.length > 0) {
         gateMap[chapter.id] = {
           canGenerate: false,
-          reason: `需要先完成前置章节：第 ${incompleteChapterNumbers.join('、')} 章`
+          reason: `需要先完成前置章节：第 ${incompleteChapterNumbers.join('、')} 章`,
+          blockingKind: 'missing_content',
+        };
+      } else if (qualityAttentionChapters.length > 0) {
+        const staleChapters = qualityAttentionChapters.filter(item => item.stale);
+        const otherQualityChapters = qualityAttentionChapters.filter(item => !item.stale);
+        gateMap[chapter.id] = {
+          canGenerate: false,
+          reason: staleChapters.length > 0
+            ? `${formatChapterNumberRanges(staleChapters.map(item => item.chapterNumber))}的正文已变更，质量与连续性记录已过期。请先运行「重分析连续性追踪」${
+                otherQualityChapters.length > 0
+                  ? `；另有${otherQualityChapters.map(item => item.reason).join('、')}需要处理`
+                  : ''
+              }`
+            : `前置章节尚未通过质量门禁：${qualityAttentionChapters.map(item => item.reason).join('、')}`,
+          blockingKind: staleChapters.length > 0 ? 'tracking_stale' : 'quality_attention',
+          repairRange: staleChapters.length > 0
+            ? {
+                start: Math.min(...staleChapters.map(item => item.chapterNumber)),
+                end: Math.max(...staleChapters.map(item => item.chapterNumber)),
+              }
+            : undefined,
         };
       } else if (unanalyzedChapters.length > 0) {
         gateMap[chapter.id] = {
           canGenerate: false,
-          reason: `需要先分析前置章节：第 ${unanalyzedChapters.map(c => c.chapterNumber).join('、')} 章 (${unanalyzedChapters.map(c => c.reason).join('、')})`
+          reason: `需要先分析前置章节：${formatChapterNumberRanges(unanalyzedChapters.map(c => c.chapterNumber))}（${unanalyzedChapters.map(c => c.reason).join('、')}）`,
+          blockingKind: 'analysis_pending',
         };
       } else {
         gateMap[chapter.id] = { canGenerate: true, reason: '' };
@@ -829,22 +961,30 @@ export default function Chapters() {
       // 将当前章纳入“后续章节”的前置条件
       if (!chapter.content || chapter.content.trim() === '') {
         incompleteChapterNumbers.push(chapter.chapter_number);
-      }
-
-      const task = analysisTasksMap[chapter.id];
-      if (!task || !task.has_task) {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '未分析' });
-      } else if (task.status === 'pending') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '等待分析' });
-      } else if (task.status === 'running') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '分析中' });
-      } else if (task.status === 'failed') {
-        unanalyzedChapters.push({
+      } else if (chapter.quality_status !== 'ready' || chapter.tracking_status !== 'current') {
+        const qualityLabel = QUALITY_STATUS_LABELS[chapter.quality_status] || chapter.quality_status;
+        const trackingLabel = TRACKING_STATUS_LABELS[chapter.tracking_status] || chapter.tracking_status;
+        qualityAttentionChapters.push({
           chapterNumber: chapter.chapter_number,
-          reason: `分析失败：${summarizeAnalysisError(task.error_message) || '未知原因'}`,
+          reason: `第${chapter.chapter_number}章（${qualityLabel}，${trackingLabel}）`,
+          stale: chapter.quality_status === 'stale' || chapter.tracking_status === 'stale',
         });
-      } else if (task.status !== 'completed') {
-        unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '状态未知' });
+      } else {
+        const task = analysisTasksMap[chapter.id];
+        if (!task || !task.has_task) {
+          unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '未分析' });
+        } else if (task.status === 'pending') {
+          unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '等待分析' });
+        } else if (task.status === 'running') {
+          unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '分析中' });
+        } else if (task.status === 'failed') {
+          unanalyzedChapters.push({
+            chapterNumber: chapter.chapter_number,
+            reason: `分析失败：${summarizeAnalysisError(task.error_message) || '未知原因'}`,
+          });
+        } else if (task.status !== 'completed') {
+          unanalyzedChapters.push({ chapterNumber: chapter.chapter_number, reason: '状态未知' });
+        }
       }
     });
 
@@ -873,6 +1013,27 @@ export default function Chapters() {
     return sortedChapters.reduce((sum, chapter) => sum + (chapter.word_count || 0), 0);
   }, [sortedChapters]);
 
+  const trackingEligibleChapters = useMemo(
+    () => sortedChapters.filter((chapter) => Boolean(chapter.content?.trim())),
+    [sortedChapters],
+  );
+
+  const trackingSelectedChapters = useMemo(() => {
+    if (trackingResyncStart === undefined || trackingResyncEnd === undefined) return [];
+    return trackingEligibleChapters.filter(
+      (chapter) =>
+        chapter.chapter_number >= trackingResyncStart &&
+        chapter.chapter_number <= trackingResyncEnd,
+    );
+  }, [trackingEligibleChapters, trackingResyncEnd, trackingResyncStart]);
+
+  const trackingDownstreamChapters = useMemo(() => {
+    if (trackingResyncEnd === undefined) return [];
+    return trackingEligibleChapters.filter(
+      (chapter) => chapter.chapter_number > trackingResyncEnd,
+    );
+  }, [trackingEligibleChapters, trackingResyncEnd]);
+
   if (!currentProject) return null;
 
   // 获取人称的中文显示文本（同时支持中英文值）
@@ -894,6 +1055,10 @@ export default function Chapters() {
     return chapterGenerateGateMap[chapter.id]?.canGenerate ?? true;
   };
 
+  const getChapterGenerationGate = (chapter: Chapter): ChapterGenerationGate => {
+    return chapterGenerateGateMap[chapter.id] ?? { canGenerate: true, reason: '' };
+  };
+
   const getGenerateDisabledReason = (chapter: Chapter): string => {
     return chapterGenerateGateMap[chapter.id]?.reason || '';
   };
@@ -911,7 +1076,7 @@ export default function Chapters() {
     if (!editingId) return;
 
     try {
-      await updateChapter(editingId, values);
+      await updateChapter(editingId, values, { skipErrorToast: true });
 
       // 刷新章节列表以获取完整的章节数据（包括outline_title等联查字段）
       await refreshChapters();
@@ -919,8 +1084,8 @@ export default function Chapters() {
       message.success('章节更新成功');
       setIsModalOpen(false);
       form.resetFields();
-    } catch {
-      message.error('操作失败');
+    } catch (error) {
+      message.error(getChapterApiError(error, '操作失败'));
     }
   };
 
@@ -949,7 +1114,7 @@ export default function Chapters() {
     if (!editingId || !currentProject) return;
 
     try {
-      await updateChapter(editingId, values);
+      await updateChapter(editingId, values, { skipErrorToast: true });
 
       // 刷新项目信息以更新总字数统计
       const updatedProject = await projectApi.getProject(currentProject.id);
@@ -957,14 +1122,14 @@ export default function Chapters() {
 
       message.success('章节保存成功');
       setIsEditorOpen(false);
-    } catch {
-      message.error('保存失败');
+    } catch (error) {
+      message.error(getChapterApiError(error, '保存失败'));
     }
   };
 
   const handleQualityDecision = (
     chapter: Chapter,
-    action: 'accept_current_length' | 'accept_unchecked' | 'resync_tracking',
+    action: 'accept_current_length' | 'accept_unchecked',
   ) => {
     const actionMeta = {
       accept_current_length: {
@@ -977,11 +1142,6 @@ export default function Chapters() {
         content: '当前环境无法运行去 AI 味检测。确认后将按现有确定性结果提交追踪，并永久保留例外审计。',
         okText: '接受未检测',
       },
-      resync_tracking: {
-        title: '重新同步连续性追踪？',
-        content: `将从第${chapter.chapter_number}章开始重分析，并把后续章节依次标记为待重同步。`,
-        okText: '开始重同步',
-      },
     }[action];
 
     modal.confirm({
@@ -992,33 +1152,15 @@ export default function Chapters() {
       centered: true,
       onOk: async () => {
         try {
-          const result = await chapterApi.decideChapterQuality(
+          await chapterApi.decideChapterQuality(
             chapter.id,
             action,
             action === 'accept_current_length'
               ? '作者在前端接受当前字数区间例外'
-              : action === 'accept_unchecked'
-                ? '作者在前端接受未机器检测例外'
-                : '作者要求重同步连续性追踪',
+              : '作者在前端接受未机器检测例外',
           );
           await refreshChapters();
-          if (result.analysis_task_id) {
-            setAnalysisTasksMap(prev => ({
-              ...prev,
-              [chapter.id]: {
-                has_task: true,
-                task_id: result.analysis_task_id!,
-                chapter_id: chapter.id,
-                status: 'pending',
-                progress: 0,
-              },
-            }));
-          }
-          message.success(
-            result.queued
-              ? '重同步任务已排队'
-              : '质量例外已接受，追踪事务已提交',
-          );
+          message.success('质量例外已接受，追踪事务已提交');
         } catch (error) {
           message.error(error instanceof Error ? error.message : '处理质量门禁失败');
         }
@@ -1057,6 +1199,7 @@ export default function Chapters() {
 
   const handleGenerate = async () => {
     if (!editingId) return;
+    const generatedChapterId = editingId;
 
     try {
       setIsContinuing(true);
@@ -1065,7 +1208,7 @@ export default function Chapters() {
       setSingleChapterProgressMessage('准备开始生成...');
 
       const result = await generateChapterContentStream(
-        editingId,
+        generatedChapterId,
         (content) => {
           editorForm.setFieldsValue({ content });
 
@@ -1094,7 +1237,7 @@ export default function Chapters() {
       // 自动去味后的正文不会作为流式 chunk 回传，必须重新取一次章节，
       // 否则编辑框仍显示去味前的流式内容，用户保存时会把去味结果覆盖掉。
       try {
-        const latestChapter = await chapterApi.getChapter(editingId);
+        const latestChapter = await chapterApi.getChapter(generatedChapterId);
         editorForm.setFieldsValue({
           title: latestChapter.title,
           content: latestChapter.content,
@@ -1103,7 +1246,7 @@ export default function Chapters() {
         console.warn('生成完成后刷新章节正文失败:', refreshError);
       }
       if (autoPolish) {
-        void loadPolishSnapshot(editingId);
+        void loadPolishSnapshot(generatedChapterId);
       }
 
       // 如果返回了分析任务ID，启动轮询
@@ -1111,23 +1254,38 @@ export default function Chapters() {
         const taskId = result.analysis_task_id;
         setAnalysisTasksMap(prev => ({
           ...prev,
-          [editingId]: {
+          [generatedChapterId]: {
             has_task: true,
             task_id: taskId,
-            chapter_id: editingId,
+            chapter_id: generatedChapterId,
             status: 'pending',
             progress: 0
           }
         }));
 
         // 启动轮询
-        startPollingTask(editingId);
+        startPollingTask(generatedChapterId);
       }
     } catch (error) {
       const apiError = error as ApiError;
-      const errorMessage = apiError.response?.data?.detail || apiError.message || '未知错误';
+      const errorMessage = humanizeChapterStatusError(
+        apiError.response?.data?.detail || apiError.message || '未知错误',
+      );
       message.error('AI创作失败：' + errorMessage, 8);
       setSingleChapterProgressMessage('生成失败：' + errorMessage);
+      try {
+        const persistedChapter = await chapterApi.getChapter(generatedChapterId);
+        if (editingIdRef.current === generatedChapterId) {
+          setCurrentChapter(persistedChapter);
+          editorForm.setFieldsValue({
+            title: persistedChapter.title,
+            content: persistedChapter.content,
+          });
+          message.warning('本次生成的草稿未保存，已恢复数据库中的旧正文。', 6);
+        }
+      } catch (restoreError) {
+        console.warn('生成失败后恢复章节正文失败:', restoreError);
+      }
       await refreshChapters().catch(() => []);
     } finally {
       setIsContinuing(false);
@@ -1643,8 +1801,13 @@ export default function Chapters() {
 
     // 检查该章节是否可以生成
     if (!canGenerateChapter(firstIncompleteChapter)) {
-      const reason = getGenerateDisabledReason(firstIncompleteChapter);
-      message.warning(reason);
+      const gate = getChapterGenerationGate(firstIncompleteChapter);
+      if (gate.blockingKind === 'tracking_stale' && gate.repairRange) {
+        message.info('检测到前置章节待重新分析，已为你带出对应章节范围');
+        handleOpenTrackingResync(gate.repairRange);
+      } else {
+        message.warning(gate.reason);
+      }
       return;
     }
 
@@ -2182,6 +2345,83 @@ export default function Chapters() {
     message.success('局部重写已应用');
   };
 
+  const handleOpenTrackingResync = (requestedRange?: { start: number; end: number }) => {
+    if (!currentProject || trackingEligibleChapters.length === 0) {
+      message.warning('当前项目还没有包含正文的章节，暂时无法重分析连续性追踪');
+      return;
+    }
+
+    const firstStale = trackingEligibleChapters.find(
+      (chapter) =>
+        chapter.quality_status === 'stale' ||
+        chapter.tracking_status === 'stale',
+    );
+    const defaultEnd = trackingEligibleChapters[trackingEligibleChapters.length - 1].chapter_number;
+    if (requestedRange) {
+      const requestedChapters = trackingEligibleChapters.filter(
+        (chapter) =>
+          chapter.chapter_number >= requestedRange.start &&
+          chapter.chapter_number <= requestedRange.end,
+      );
+      setTrackingResyncStart(requestedChapters[0]?.chapter_number ?? requestedRange.start);
+      setTrackingResyncEnd(
+        requestedChapters[requestedChapters.length - 1]?.chapter_number ?? requestedRange.end,
+      );
+    } else {
+      setTrackingResyncStart(
+        firstStale?.chapter_number ?? trackingEligibleChapters[0].chapter_number,
+      );
+      setTrackingResyncEnd(defaultEnd);
+    }
+    setTrackingResyncInfoExpanded(false);
+    setTrackingResyncRulesExpanded(false);
+    setTrackingResyncVisible(true);
+  };
+
+  const handleSubmitTrackingResync = async () => {
+    if (
+      !currentProject ||
+      trackingResyncStart === undefined ||
+      trackingResyncEnd === undefined
+    ) {
+      message.warning('请选择要重分析的起止章节');
+      return;
+    }
+    if (trackingSelectedChapters.length === 0) {
+      message.warning('所选范围内没有包含正文的章节');
+      return;
+    }
+
+    setTrackingResyncSubmitting(true);
+    try {
+      const result = await chapterApi.resyncTracking(
+        currentProject.id,
+        trackingResyncStart,
+        trackingResyncEnd,
+      );
+      setTrackingResyncVisible(false);
+      setTrackingResyncTaskId(result.task_id);
+
+      // 先通知右下角任务面板，再刷新章节数据，避免用户误以为点击没有生效。
+      eventBus.emit(EventNames.BACKGROUND_TASK_CREATED, {
+        projectId: currentProject.id,
+        taskId: result.task_id,
+      });
+
+      const latestChapters = await refreshChapters();
+      void loadAnalysisTasks(latestChapters);
+      message.success(
+        result.downstream_stale_chapters > 0
+          ? `重分析任务已创建：本次 ${result.selected_chapters} 章，后续 ${result.downstream_stale_chapters} 章将标记为待重建`
+          : `重分析任务已创建：本次处理 ${result.selected_chapters} 章`,
+      );
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '创建重分析任务失败');
+    } finally {
+      setTrackingResyncSubmitting(false);
+    }
+  };
+
   const renderChapterListItem = (item: Chapter) => {
     const task = analysisTasksMap[item.id];
     const isAnalyzing = task && (task.status === 'pending' || task.status === 'running');
@@ -2210,11 +2450,16 @@ export default function Chapters() {
       const failedReason = task.status === 'failed'
         ? summarizeAnalysisError(task.error_message)
         : null;
+      const isTrackingResync = task.task_origin === 'tracking_resync';
       const text = task.status === 'pending'
-        ? '待分析'
+        ? isTrackingResync ? '等待追踪重分析' : '待分析'
         : task.status === 'running'
-          ? isRetrying ? `重试中 ${task.progress}%` : `分析中 ${task.progress}%`
-          : failedReason ? `分析失败：${failedReason}` : '分析失败';
+          ? isTrackingResync
+            ? `追踪重分析中 ${task.progress}%`
+            : isRetrying ? `重试中 ${task.progress}%` : `分析中 ${task.progress}%`
+          : failedReason
+            ? `${isTrackingResync ? '追踪重分析失败' : '分析失败'}：${failedReason}`
+            : isTrackingResync ? '追踪重分析失败' : '分析失败';
       const color = task.status === 'failed'
         ? token.colorError
         : isRetrying
@@ -2363,13 +2608,6 @@ export default function Chapters() {
               trigger={['click']}
               menu={{
                 items: [
-                  ...(qualityNeedsAttention
-                    ? [{
-                        key: 'quality-resync',
-                        icon: <SyncOutlined />,
-                        label: '重同步连续性追踪',
-                      }]
-                    : []),
                   ...(item.quality_status === 'needs_decision'
                     ? [{
                         key: 'quality-accept-length',
@@ -2384,7 +2622,12 @@ export default function Chapters() {
                         label: '接受未机器检测',
                       }]
                     : []),
-                  ...(qualityNeedsAttention ? [{ type: 'divider' as const }] : []),
+                  ...(
+                    item.quality_status === 'needs_decision' ||
+                    item.quality_status === 'tool_unavailable'
+                      ? [{ type: 'divider' as const }]
+                      : []
+                  ),
                   {
                     key: 'analysis',
                     icon: isAnalyzing ? <SyncOutlined spin /> : <FundOutlined />,
@@ -2421,9 +2664,7 @@ export default function Chapters() {
                     : []),
                 ],
                 onClick: ({ key }) => {
-                  if (key === 'quality-resync') {
-                    handleQualityDecision(item, 'resync_tracking');
-                  } else if (key === 'quality-accept-length') {
+                  if (key === 'quality-accept-length') {
                     handleQualityDecision(item, 'accept_current_length');
                   } else if (key === 'quality-accept-unchecked') {
                     handleQualityDecision(item, 'accept_unchecked');
@@ -2500,6 +2741,15 @@ export default function Chapters() {
             size={isMobile ? 'small' : 'middle'}
           >
             {batchGenerating ? '生成中...' : '批量生成'}
+          </Button>
+          <Button
+            icon={<SyncOutlined />}
+            onClick={() => handleOpenTrackingResync()}
+            disabled={trackingEligibleChapters.length === 0 || trackingResyncSubmitting}
+            loading={trackingResyncSubmitting}
+            size={isMobile ? 'small' : 'middle'}
+          >
+            {isMobile ? '连续性重分析' : '重分析连续性追踪'}
           </Button>
           {currentProject.outline_mode === 'one-to-many' && (
             <Button
@@ -2820,22 +3070,50 @@ export default function Chapters() {
               </Form.Item>
               {editingId && (() => {
                 const currentChapter = chapters.find(c => c.id === editingId);
-                const canGenerate = currentChapter ? canGenerateChapter(currentChapter) : false;
-                const disabledReason = currentChapter ? getGenerateDisabledReason(currentChapter) : '';
+                const generationGate: ChapterGenerationGate = currentChapter
+                  ? getChapterGenerationGate(currentChapter)
+                  : { canGenerate: false, reason: '' };
+                const canGenerate = generationGate.canGenerate;
+                const canRepairTracking = Boolean(
+                  generationGate.blockingKind === 'tracking_stale' &&
+                  generationGate.repairRange,
+                );
+                const disabledReason = generationGate.reason;
 
                 return (
                   <>
                   <Button
-                    type="primary"
-                    icon={canGenerate ? <ThunderboltOutlined /> : <LockOutlined />}
-                    onClick={() => currentChapter && showGenerateModal(currentChapter)}
+                    type={canGenerate ? 'primary' : 'default'}
+                    icon={
+                      canGenerate
+                        ? <ThunderboltOutlined />
+                        : canRepairTracking
+                          ? <SyncOutlined />
+                          : <LockOutlined />
+                    }
+                    onClick={() => {
+                      if (!currentChapter) return;
+                      if (canRepairTracking && generationGate.repairRange) {
+                        const currentContent = editorForm.getFieldValue('content') || '';
+                        if (currentContent !== (currentChapter.content || '')) {
+                          message.warning('当前正文有未保存修改，请先保存本章，再进行连续性重分析');
+                          return;
+                        }
+                        setIsEditorOpen(false);
+                        handleOpenTrackingResync(generationGate.repairRange);
+                        return;
+                      }
+                      if (canGenerate) showGenerateModal(currentChapter);
+                    }}
                     loading={isContinuing || isGenerating}
-                    disabled={!canGenerate}
-                    danger={!canGenerate}
+                    disabled={!canGenerate && !canRepairTracking}
+                    danger={!canGenerate && !canRepairTracking}
                     style={{ fontWeight: 'bold' }}
                     title={!canGenerate ? disabledReason : '根据大纲和前置章节内容创作（流式）'}
                   >
-                    {isMobile ? 'AI' : 'AI创作'}
+                    {canRepairTracking
+                      ? (isMobile ? '重分析' : '先重分析')
+                      : (isMobile ? 'AI' : 'AI创作')}
                   </Button>
                   <Button
                     icon={<RocketOutlined />}
@@ -2938,7 +3216,7 @@ export default function Chapters() {
                     <div
                       title={skill.creation_capable
                         ? skill.description
-                        : '精修请去「精修台」；拆文、扫榜请用分析页'}
+                        : '去 AI 味请前往「去AI味」；拆文、扫榜请用分析页'}
                       style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                     >
                       <span>{skill.template_name}</span>
@@ -3070,6 +3348,17 @@ export default function Chapters() {
               disabled={isGenerating}
             />
           </Form.Item>
+          <div
+            style={{
+              marginTop: -16,
+              marginBottom: 16,
+              textAlign: 'right',
+              color: token.colorTextSecondary,
+              fontSize: 12,
+            }}
+          >
+            当前 {visibleEditorCharCount.toLocaleString('zh-CN')} 字
+          </div>
 
           {/* 局部重写浮动工具栏 */}
           <div data-partial-regenerate-toolbar>
@@ -3342,7 +3631,7 @@ export default function Chapters() {
                       <div
                         title={skill.creation_capable
                           ? skill.description
-                          : '精修请去「精修台」；拆文、扫榜请用分析页'}
+                          : '去 AI 味请前往「去AI味」；拆文、扫榜请用分析页'}
                         style={{ display: 'flex', alignItems: 'center', gap: 8 }}
                       >
                         <span>{skill.template_name}</span>
@@ -3465,6 +3754,210 @@ export default function Chapters() {
           onChapterChange={handleReaderChapterChange}
         />
       )}
+
+      <Drawer
+        title={null}
+        open={trackingResyncVisible}
+        onClose={() => {
+          if (!trackingResyncSubmitting) setTrackingResyncVisible(false);
+        }}
+        className="tracking-resync-drawer"
+        width={isMobile ? '100%' : 520}
+        maskClosable={!trackingResyncSubmitting}
+        closable={false}
+        footer={null}
+        styles={{ body: { padding: 0, overflow: 'hidden' } }}
+      >
+        <div className="tracking-resync-sheet">
+          <header className="tracking-resync-head">
+            <span className="tracking-resync-mark">
+              <SyncOutlined />
+            </span>
+            <div className="tracking-resync-head-main">
+              <span className="tracking-resync-kicker">CONTINUITY · REBUILD</span>
+              <h3>重分析连续性追踪</h3>
+              <p>重新校准章节记忆、人物状态与故事时间线</p>
+            </div>
+            <Button
+              type="text"
+              size="small"
+              className="tracking-resync-close"
+              icon={<CloseOutlined />}
+              aria-label="关闭重分析连续性追踪"
+              onClick={() => setTrackingResyncVisible(false)}
+              disabled={trackingResyncSubmitting}
+            />
+          </header>
+
+          <div className="tracking-resync-body">
+            <section className="tracking-resync-section">
+              <div className="tracking-resync-section-label">
+                <span>分析范围</span>
+                <small>起止章节均包含</small>
+              </div>
+              <div className="tracking-resync-range">
+                <label className="tracking-resync-field">
+                  <span>起始章节</span>
+                  <Select
+                    value={trackingResyncStart}
+                    onChange={(value: number) => {
+                      setTrackingResyncStart(value);
+                      if (trackingResyncEnd === undefined || trackingResyncEnd < value) {
+                        setTrackingResyncEnd(
+                          trackingEligibleChapters[trackingEligibleChapters.length - 1]?.chapter_number,
+                        );
+                      }
+                    }}
+                    showSearch
+                    optionFilterProp="label"
+                    style={{ width: '100%' }}
+                    placeholder="选择起始章节"
+                    options={trackingEligibleChapters.map((chapter) => ({
+                      value: chapter.chapter_number,
+                      label: `第${chapter.chapter_number}章 · ${chapter.title || '未命名章节'}`,
+                    }))}
+                  />
+                </label>
+                <label className="tracking-resync-field">
+                  <span>结束章节</span>
+                  <Select
+                    value={trackingResyncEnd}
+                    onChange={(value: number) => setTrackingResyncEnd(value)}
+                    showSearch
+                    optionFilterProp="label"
+                    style={{ width: '100%' }}
+                    placeholder="选择结束章节"
+                    disabled={trackingResyncStart === undefined}
+                    options={trackingEligibleChapters
+                      .filter(
+                        (chapter) =>
+                          trackingResyncStart === undefined ||
+                          chapter.chapter_number >= trackingResyncStart,
+                      )
+                      .map((chapter) => ({
+                        value: chapter.chapter_number,
+                        label: `第${chapter.chapter_number}章 · ${chapter.title || '未命名章节'}`,
+                      }))}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="tracking-resync-overview">
+              <div className="tracking-resync-metric">
+                <span>本次分析</span>
+                <strong>{trackingSelectedChapters.length}<em>章</em></strong>
+              </div>
+              <div className="tracking-resync-metric">
+                <span>预计 AI 调用</span>
+                <strong>
+                  {trackingSelectedChapters.length}
+                  <em>–</em>
+                  {trackingSelectedChapters.length * 2}
+                  <em>次</em>
+                </strong>
+              </div>
+              <div className="tracking-resync-metric">
+                <span>后续待重建</span>
+                <strong>{trackingDownstreamChapters.length}<em>章</em></strong>
+              </div>
+              <div className="tracking-resync-overview-note">
+                <InfoCircleOutlined />
+                <span>空正文章节自动跳过；单章技术失败时最多重试一次。</span>
+              </div>
+            </section>
+
+            <div className="tracking-resync-disclosures">
+              <div
+                className={`tracking-resync-disclosure${trackingResyncInfoExpanded ? ' is-open' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="tracking-resync-disclosure-toggle"
+                  aria-expanded={trackingResyncInfoExpanded}
+                  onClick={() => setTrackingResyncInfoExpanded((expanded) => !expanded)}
+                >
+                  <span className="tracking-resync-disclosure-title">本次重建说明</span>
+                  <small>重建内容与影响</small>
+                  <CaretRightOutlined className="tracking-resync-disclosure-chevron" />
+                </button>
+                {trackingResyncInfoExpanded && (
+                  <div className="tracking-resync-disclosure-content">
+                    <p className="tracking-resync-lead">
+                      用当前正文重新整理章节事实，让角色状态、伏笔、时间线与项目连续性重新回到同一套上下文。
+                    </p>
+                    <div className="tracking-resync-capabilities">
+                      {['章节记忆', '角色状态', '伏笔状态', '时间线', '项目连续性'].map((label) => (
+                        <span key={label} className="tracking-resync-capability">
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div
+                className={`tracking-resync-disclosure${trackingResyncRulesExpanded ? ' is-open' : ''}`}
+              >
+                <button
+                  type="button"
+                  className="tracking-resync-disclosure-toggle"
+                  aria-expanded={trackingResyncRulesExpanded}
+                  onClick={() => setTrackingResyncRulesExpanded((expanded) => !expanded)}
+                >
+                  <span className="tracking-resync-disclosure-title">执行规则</span>
+                  <small>顺序处理 · 取消与质量门禁</small>
+                  <CaretRightOutlined className="tracking-resync-disclosure-chevron" />
+                </button>
+                {trackingResyncRulesExpanded && (
+                  <div className="tracking-resync-disclosure-content">
+                    <div className="tracking-resync-rules">
+                      {[
+                        '任务按章节顺序执行，右下角任务面板展示总进度与最终摘要。',
+                        '同一项目同时只能运行一个重分析任务。',
+                        '取消会在当前章节完成后生效，剩余章节继续保持待重建。',
+                        '质量门禁要求人工确认时立即暂停，不会自动重试。',
+                      ].map((rule, index) => (
+                        <div key={rule} className="tracking-resync-rule">
+                          <span>{String(index + 1).padStart(2, '0')}</span>
+                          <p>{rule}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <footer className="tracking-resync-foot">
+            <div className="tracking-resync-foot-hint">
+              <span />
+              {trackingSelectedChapters.length > 0
+                ? `准备重建 ${trackingSelectedChapters.length} 章的故事连续性`
+                : '请选择需要重分析的章节范围'}
+            </div>
+            <div className="tracking-resync-foot-actions">
+              <Button
+                onClick={() => setTrackingResyncVisible(false)}
+                disabled={trackingResyncSubmitting}
+              >
+                取消
+              </Button>
+              <Button
+                type="primary"
+                icon={<SyncOutlined />}
+                onClick={handleSubmitTrackingResync}
+                loading={trackingResyncSubmitting}
+                disabled={trackingSelectedChapters.length === 0}
+              >
+                开始重分析
+              </Button>
+            </div>
+          </footer>
+        </div>
+      </Drawer>
 
       {/* 分析过程监控（默认关闭，从「更多」菜单手动打开） */}
       <AnalysisMonitorDrawer

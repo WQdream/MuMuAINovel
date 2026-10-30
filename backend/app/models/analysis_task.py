@@ -17,6 +17,12 @@ class AnalysisTask(Base):
     chapter_id = Column(String(36), ForeignKey('chapters.id', ondelete='CASCADE'), nullable=False, comment="章节ID")
     user_id = Column(String(50), nullable=False, comment="用户ID")
     project_id = Column(String(36), nullable=False, comment="项目ID")
+    background_task_id = Column(
+        String(36),
+        ForeignKey("background_tasks.id", ondelete="CASCADE"),
+        nullable=True,
+        comment="所属后台任务ID；连续性追踪重分析的子任务不单独显示在任务面板",
+    )
     
     # 任务状态
     status = Column(String(20), nullable=False, default='pending', comment="任务状态: pending/running/completed/failed")
@@ -36,6 +42,7 @@ class AnalysisTask(Base):
         Index('idx_chapter_id_created', 'chapter_id', 'created_at'),
         Index('idx_status', 'status'),
         Index('idx_analysis_task_panel', 'project_id', 'user_id', 'archived_at', 'created_at'),
+        Index('idx_analysis_task_background_task', 'background_task_id'),
     )
     
     def __repr__(self):

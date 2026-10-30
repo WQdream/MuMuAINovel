@@ -121,7 +121,7 @@ export default function SystemSettingsPage() {
 
   const announcementContent = Form.useWatch('content', announcementForm) || '';
 
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--sys-page-bg': token.colorBgLayout,
     '--sys-text': token.colorText,

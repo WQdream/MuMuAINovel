@@ -1,4 +1,4 @@
-"""木木创作助手会话编排、工具循环和持久化。"""
+"""小新创作助手会话编排、工具循环和持久化。"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -570,7 +570,7 @@ class ProjectAgentService:
 
             await self.db.commit()
 
-        raise RuntimeError("木木创作助手超过最大工具调用轮数")
+        raise RuntimeError("小新创作助手超过最大工具调用轮数")
 
     async def finalize_interrupted_turn(self, reason: str, *, cancelled: bool) -> None:
         """把已提交的部分调用记录绑定到一条可见的终止消息。"""

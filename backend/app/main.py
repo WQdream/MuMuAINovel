@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=config_settings.app_name,
     version=config_settings.app_version,
-    description="AI写小说工具 - 智能小说创作助手",
+    description="小新工坊 - 智能小说创作助手",
     lifespan=lifespan
 )
 

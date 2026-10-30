@@ -10,7 +10,6 @@ import {
 import { settingsApi, mcpPluginApi } from '../services/api';
 import type { ImageModelConfig, SettingsUpdate, TextModelConfig } from '../types';
 import { eventBus, EventNames } from '../store/eventBus';
-import { useThemeMode } from '../theme/useThemeMode';
 import './Settings.css';
 
 const { Text } = Typography;
@@ -20,7 +19,6 @@ const { TextArea } = Input;
 
 export default function SettingsPage() {
   const { token } = theme.useToken();
-  const { resolvedMode } = useThemeMode();
   const screens = useBreakpoint();
   const isMobile = !screens.md; // md断点是768px
   const [form] = Form.useForm();
@@ -74,7 +72,7 @@ export default function SettingsPage() {
     return tab === 'cover' ? 'cover' : 'current';
   });
 
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--st-page-bg': token.colorBgLayout,
     '--st-text': token.colorText,

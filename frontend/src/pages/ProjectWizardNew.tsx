@@ -8,6 +8,7 @@ import {
   RocketOutlined, ArrowLeftOutlined, CheckCircleOutlined
 } from '@ant-design/icons';
 import { AIProjectGenerator, type GenerationConfig } from '../components/AIProjectGenerator';
+import BrandMark from '../components/BrandMark';
 import type { WizardBasicInfo } from '../types';
 
 const { TextArea } = Input;
@@ -350,41 +351,64 @@ export default function ProjectWizardNew() {
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        background: token.colorPrimary,
-        boxShadow: `0 6px 20px color-mix(in srgb, ${token.colorPrimary} 30%, transparent)`,
+        background: 'color-mix(in srgb, var(--editorial-surface-raised) 90%, transparent)',
+        borderBottom: '1px solid var(--editorial-rule)',
+        boxShadow: '0 12px 28px -26px color-mix(in srgb, var(--editorial-ink) 36%, transparent)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
       }}>
         <div style={{
           maxWidth: 1200,
           margin: '0 auto',
-          display: 'flex',
+          display: 'grid',
+          gridTemplateColumns: '1fr auto 1fr',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: isMobile ? '12px 16px' : '16px 24px',
+          minHeight: isMobile ? 52 : 56,
+          padding: isMobile ? '8px 12px' : '8px 24px',
         }}>
           <Button
+            type="text"
             icon={<ArrowLeftOutlined />}
             onClick={() => navigate('/')}
-            size={isMobile ? 'middle' : 'large'}
+            size="small"
             disabled={currentStep === 'generating'}
             style={{
-              background: `color-mix(in srgb, ${token.colorWhite} 20%, transparent)`,
-              borderColor: `color-mix(in srgb, ${token.colorWhite} 30%, transparent)`,
-              color: token.colorWhite,
+              justifySelf: 'start',
+              height: isMobile ? 30 : 34,
+              paddingInline: isMobile ? 8 : 11,
+              border: '1px solid var(--editorial-rule)',
+              borderRadius: 2,
+              background: 'color-mix(in srgb, var(--editorial-surface) 72%, transparent)',
+              boxShadow: '0 1px 0 color-mix(in srgb, white 60%, transparent) inset',
+              color: 'var(--editorial-muted)',
             }}
           >
             {isMobile ? '返回' : '返回首页'}
           </Button>
 
-          <Title level={isMobile ? 4 : 2} style={{
-            margin: 0,
-            color: token.colorWhite,
-            textShadow: '0 2px 4px color-mix(in srgb, var(--ant-color-black) 18%, transparent)',
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: isMobile ? 7 : 9,
+            minWidth: 0,
           }}>
-            <RocketOutlined style={{ marginRight: 8 }} />
-            项目创建向导
-          </Title>
+            <BrandMark size={isMobile ? 20 : 22} showText={false} />
+            <Title level={5} style={{
+              margin: 0,
+              color: 'var(--editorial-ink)',
+              fontFamily: 'var(--font-editorial)',
+              fontSize: isMobile ? 15 : 17,
+              fontWeight: 500,
+              letterSpacing: '0.12em',
+              lineHeight: 1.2,
+              whiteSpace: 'nowrap',
+            }}>
+              项目创建向导
+            </Title>
+          </div>
 
-          <div style={{ width: isMobile ? 60 : 120 }}></div>
+          <span aria-hidden="true" />
         </div>
       </div>
 

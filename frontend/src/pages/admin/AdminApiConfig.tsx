@@ -594,10 +594,6 @@ export default function AdminApiConfig() {
       <div className="adm-page-head">
         <div className="adm-page-head-main">
           <h1 className="adm-page-title">API 配置</h1>
-          <p className="adm-page-desc">
-            在这里维护公共模型配置，开放后用户可在「API 设置 → 从管理员配置加载」一键导入使用。
-            密钥只保存在管理后台，用户拿到的是引用，随时可以停用或轮换。
-          </p>
         </div>
         <div className="adm-page-actions">
           <Button

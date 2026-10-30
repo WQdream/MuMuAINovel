@@ -7,7 +7,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useParams } from 'react-router-dom';
-import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued';
 import {
   Alert, Button, Checkbox, Empty, Input, Modal, Progress, Segmented,
   Select, Space, Spin, Switch, Tag, Tooltip, theme,
@@ -19,7 +18,7 @@ import {
 } from '@ant-design/icons';
 import { chapterApi, polishApi } from '../services/api';
 import type { Chapter, PolishFinding, PolishResult } from '../types';
-import { useThemeMode } from '../theme/useThemeMode';
+import InlineDiffComparison from '../components/InlineDiffComparison';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import './Polish.css';
 
@@ -50,10 +49,9 @@ function scoreTone(score: number): Tone {
 export default function Polish() {
   const { projectId } = useParams<{ projectId: string }>();
   const { token } = theme.useToken();
-  const { resolvedMode } = useThemeMode();
 
   // 深色下主色接近纯黑，改后栏底色提亮一点才看得出层次
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--pl-text': token.colorText,
     '--pl-secondary': token.colorTextSecondary,
@@ -62,6 +60,10 @@ export default function Polish() {
     '--pl-fill': token.colorFillQuaternary,
     '--pl-card-bg': token.colorBgContainer,
     '--pl-accent': accentColor,
+    '--pl-danger': token.colorErrorText,
+    '--pl-danger-bg': token.colorErrorBg,
+    '--pl-success': token.colorSuccessText,
+    '--pl-success-bg': token.colorSuccessBg,
   } as CSSProperties;
 
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -104,70 +106,6 @@ export default function Polish() {
   const findings = useMemo<PolishFinding[]>(() => result?.findings ?? [], [result]);
   const blocking = findings.filter(item => item.severity === 'blocking');
   const advisory = findings.filter(item => item.severity !== 'blocking');
-  const diffStyles = useMemo(() => ({
-    variables: {
-      light: {
-        diffViewerBackground: token.colorBgContainer,
-        diffViewerColor: token.colorText,
-        addedBackground: token.colorSuccessBg,
-        addedColor: token.colorText,
-        removedBackground: token.colorErrorBg,
-        removedColor: token.colorText,
-        wordAddedBackground: token.colorSuccessBorder,
-        wordRemovedBackground: token.colorErrorBorder,
-        addedGutterBackground: token.colorSuccessBg,
-        removedGutterBackground: token.colorErrorBg,
-        gutterBackground: token.colorFillQuaternary,
-        gutterBackgroundDark: token.colorFillTertiary,
-      },
-      dark: {
-        diffViewerBackground: token.colorBgContainer,
-        diffViewerColor: token.colorText,
-        addedBackground: 'rgba(82, 196, 26, 0.16)',
-        addedColor: token.colorText,
-        removedBackground: 'rgba(255, 77, 79, 0.16)',
-        removedColor: token.colorText,
-        wordAddedBackground: 'rgba(82, 196, 26, 0.34)',
-        wordRemovedBackground: 'rgba(255, 77, 79, 0.34)',
-        addedGutterBackground: 'rgba(82, 196, 26, 0.12)',
-        removedGutterBackground: 'rgba(255, 77, 79, 0.12)',
-        gutterBackground: token.colorFillQuaternary,
-        gutterBackgroundDark: token.colorFillSecondary,
-      },
-    },
-    line: {
-      padding: '7px 1px',
-      fontSize: '13px',
-      lineHeight: '1.95',
-      whiteSpace: 'pre-wrap' as const,
-      wordBreak: 'break-word' as const,
-    },
-    wordAdded: {
-      padding: '0 1px',
-      borderRadius: '2px',
-      background: resolvedMode === 'dark'
-        ? 'rgba(82, 196, 26, 0.45)'
-        : token.colorSuccessBg,
-      textDecoration: 'underline 1px',
-      textUnderlineOffset: '2px',
-    },
-    wordRemoved: {
-      padding: '0 1px',
-      borderRadius: '2px',
-      background: resolvedMode === 'dark'
-        ? 'rgba(255, 77, 79, 0.45)'
-        : token.colorErrorBg,
-      textDecoration: 'line-through',
-      textDecorationThickness: '1px',
-    },
-    contentText: {
-      fontFamily: 'inherit',
-    },
-    lineNumber: {
-      fontFamily: 'inherit',
-      fontSize: '11px',
-    },
-  }), [resolvedMode, token]);
 
   const runCheck = async () => {
     if (!source.trim()) {
@@ -209,7 +147,7 @@ export default function Polish() {
 
   const runPolish = async () => {
     if (!source.trim()) {
-      setError('先粘贴或选择需要精修的正文');
+      setError('先粘贴或选择需要去 AI 味的正文');
       return;
     }
     setPolishing(true);
@@ -226,7 +164,7 @@ export default function Polish() {
       setView('split');
       if (!res.checker_available) setError(res.check_error ?? '运行环境未执行机器检测');
     } catch (e) {
-      setError(e instanceof Error ? e.message : '精修失败');
+      setError(e instanceof Error ? e.message : '去 AI 味失败');
     } finally {
       setPolishing(false);
     }
@@ -295,7 +233,7 @@ export default function Polish() {
       }
       setChapters(await chapterApi.getChapters(projectId || ''));
       setBatchIds([]);
-      Modal.success({ title: '批量精修完成', content: `已改写并写回 ${saved}/${targets.length} 章` });
+      Modal.success({ title: '批量去 AI 味完成', content: `已改写并写回 ${saved}/${targets.length} 章` });
     } finally {
       setPolishing(false);
       setBatchProgress({ done: 0, total: 0 });
@@ -342,7 +280,7 @@ export default function Polish() {
     <div className="polish-page" style={themeVars}>
       <header className="polish-header">
         <div className="polish-header-main">
-          <h2 className="polish-title"><ScanOutlined /> 精修台</h2>
+          <h2 className="polish-title"><ScanOutlined /> 去AI味</h2>
           <p className="polish-subtitle">
             在这里检查 AI 腔、重复句式和标点问题，再按审稿规则完成一轮改写。分数是本地风格门禁的「干净度」，
             不是 AIGC 检测概率；脚本零命中也不等于机器查得出来。
@@ -364,7 +302,7 @@ export default function Polish() {
             </Button>
           </Tooltip>
           <Button type="primary" icon={<ThunderboltOutlined />} onClick={runPolish} loading={polishing} disabled={busy}>
-            开始精修
+            开始去 AI 味
           </Button>
         </Space>
       </header>
@@ -415,7 +353,7 @@ export default function Polish() {
               批量（{batchIds.length}/{chapters.length}）
             </Checkbox>
             <Button size="small" icon={<FieldTimeOutlined />} disabled={!batchIds.length || busy} onClick={runBatch}>
-              批量精修并写回
+              批量去 AI 味并写回
             </Button>
           </div>
           {polishing && batchProgress.total > 0 && (
@@ -431,7 +369,7 @@ export default function Polish() {
               onChange={value => setView(value as ViewMode)}
               options={[
                 { label: '对照', value: 'split', icon: <DiffOutlined /> },
-                { label: '改后', value: 'result' },
+                { label: '改写后', value: 'result' },
                 { label: '原文', value: 'original' },
                 { label: '分析', value: 'analysis', icon: <BarChartOutlined /> },
               ]}
@@ -442,44 +380,29 @@ export default function Polish() {
           </div>
 
           <div className="polish-scoreboard">
-            <ScoreChip label="改前" score={result?.score_before ?? -1} blocking={result?.blocking_before ?? 0} />
-            <span className="polish-arrow">→</span>
-            <ScoreChip
-              label={hasResult ? '改后' : '当前'}
-              score={hasResult ? afterScore : (result?.score_before ?? -1)}
-              blocking={hasResult ? (result?.blocking_after ?? 0) : (result?.blocking_before ?? 0)}
-            />
-            {result && result.rounds > 1 && <Tag color="processing">复改 {result.rounds - 1} 轮</Tag>}
-            {!!result?.punctuation_fixed && <Tag color="success">整理标点 {result.punctuation_fixed}</Tag>}
-            {!!result?.output_notes?.length && <Tag color="blue">正文与分析已分离</Tag>}
-            {!!result?.analysis && <Tag color="cyan">分析可查看</Tag>}
-            {analysisOnly && <Tag color="geekblue">仅分析</Tag>}
-            {result && !result.checker_available && <Tag>未机器检测</Tag>}
+            {result ? (
+              <>
+                <ScoreChip label="改前" score={result.score_before} blocking={result.blocking_before} />
+                <span className="polish-arrow">→</span>
+                <ScoreChip
+                  label={hasResult ? '改写后' : '当前'}
+                  score={hasResult ? afterScore : result.score_before}
+                  blocking={hasResult ? result.blocking_after : result.blocking_before}
+                  emphasis={hasResult}
+                />
+                {!!result.rounds && result.rounds > 1 && (
+                  <span className="polish-rounds">自动复改 {result.rounds - 1} 轮</span>
+                )}
+              </>
+            ) : (
+              <span className="polish-score-empty">运行检测后显示本地风格干净度</span>
+            )}
           </div>
 
           <Spin spinning={polishing || analyzing} tip={analyzing ? '正在做三层诊断…' : '改写中，可能包含多轮复改…'}>
             {view === 'split' ? (
               hasResult ? (
-                <div className="polish-diff-viewer">
-                  <div className="polish-diff-key">
-                    <span className="polish-diff-key__removed">删除</span>
-                    <span className="polish-diff-key__added">新增</span>
-                    <span>逐字对照，正文按原稿顺序展示</span>
-                  </div>
-                  <ReactDiffViewer
-                    oldValue={source}
-                    newValue={result?.polished_text || ''}
-                    splitView
-                    compareMethod={DiffMethod.CHARS}
-                    leftTitle="原文"
-                    rightTitle="改后"
-                    showDiffOnly={false}
-                    hideLineNumbers={false}
-                    useDarkTheme={resolvedMode === 'dark'}
-                    styles={diffStyles}
-                    renderContent={value => <>{value}</>}
-                  />
-                </div>
+                <InlineDiffComparison original={source} revised={result?.polished_text || ''} />
               ) : (
                 <div className="polish-diff">
                   <div className="polish-diff-half">
@@ -489,9 +412,9 @@ export default function Polish() {
                     </div>
                   </div>
                   <div className="polish-diff-half">
-                    <span className="polish-diff-label">改后</span>
+                    <span className="polish-diff-label">改写后</span>
                     <div className="polish-pane polish-pane--result">
-                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点「开始精修」看结果" />
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="点「开始去 AI 味」看结果" />
                     </div>
                   </div>
                 </div>
@@ -515,7 +438,7 @@ export default function Polish() {
                       ? '本次模型直接交付了正文，没有附带扫描报告'
                       : analysisOnly
                         ? '点「只分析」后，这里会显示三层诊断报告'
-                        : '完成精修后，这里会显示模型的扫描分析'}
+                        : '完成去 AI 味后，这里会显示模型扫描分析'}
                   />
                 )}
                 <div className="polish-analysis-findings">
@@ -573,10 +496,20 @@ export default function Polish() {
   );
 }
 
-function ScoreChip({ label, score, blocking }: { label: string; score: number; blocking: number }) {
+function ScoreChip({
+  label,
+  score,
+  blocking,
+  emphasis = false,
+}: {
+  label: string;
+  score: number;
+  blocking: number;
+  emphasis?: boolean;
+}) {
   const tone = scoreTone(score);
   return (
-    <div className={`polish-chip polish-chip--${tone}`}>
+    <div className={`polish-chip polish-chip--${tone}${emphasis ? ' polish-chip--emphasis' : ''}`}>
       <span className="polish-chip-label">{label}</span>
       <span className="polish-chip-score">{score < 0 ? '—' : score}</span>
       <span className="polish-chip-note">

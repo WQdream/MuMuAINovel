@@ -182,7 +182,7 @@ export default function KnowledgeBasePage() {
   const isEmpty = documents.length === 0;
 
 
-  const primaryButtonBg = isDark ? '#EDEDE7' : token.colorPrimary;
+  const primaryButtonBg = token.colorPrimary;
   const primaryButtonColor = isDark ? '#1F1F1B' : token.colorTextLightSolid;
 
   const statusTone = (status: string) => {

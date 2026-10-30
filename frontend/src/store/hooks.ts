@@ -258,9 +258,13 @@ export function useChapterSync() {
   }, [addChapter]);
 
   // 更新章节（带同步）
-  const updateChapterSync = useCallback(async (id: string, data: ChapterUpdate) => {
+  const updateChapterSync = useCallback(async (
+    id: string,
+    data: ChapterUpdate,
+    options?: { skipErrorToast?: boolean }
+  ) => {
     try {
-      const updated = await chapterApi.updateChapter(id, data);
+      const updated = await chapterApi.updateChapter(id, data, options);
       updateChapter(id, updated);
       return updated;
     } catch (error) {

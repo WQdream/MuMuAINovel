@@ -2,7 +2,7 @@
 import { Button, Modal, Form, Input, message, Empty, Space, Popconfirm, Card, Select, Radio, Tag, InputNumber, Tabs, Pagination, theme, Upload, Alert, Divider, Dropdown, Drawer } from 'antd';
 import type { ReactNode } from 'react';
 import type { FormInstance } from 'antd';
-import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined, UploadOutlined, DownloadOutlined, MoreOutlined, CloseOutlined, BulbOutlined, ReloadOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, ThunderboltOutlined, BranchesOutlined, AppstoreAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, PlusOutlined, FileTextOutlined, UploadOutlined, DownloadOutlined, MoreOutlined, CloseOutlined, BulbOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { useStore } from '../store';
 import { eventBus, EventNames } from '../store/eventBus';
 import { getProjectTasks, type TaskStatus } from '../services/backgroundTaskService';
@@ -2346,11 +2346,12 @@ export default function Outline() {
           gap: 12,
           flexWrap: 'wrap',
         }}>
-          <Input.Search
+          <Input
             allowClear
             placeholder="搜索序号、标题或内容"
             value={outlineSearchKeyword}
             onChange={(e) => setOutlineSearchKeyword(e.target.value)}
+            suffix={<SearchOutlined style={{ color: token.colorTextTertiary, fontSize: 13 }} />}
             style={{ width: isMobile ? '100%' : 320 }}
           />
           {!isMobile && (

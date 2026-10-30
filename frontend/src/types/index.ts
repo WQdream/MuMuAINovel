@@ -739,6 +739,39 @@ export interface ProjectTrackingResponse {
   }>;
 }
 
+export interface TrackingResyncResponse {
+  task_id: string;
+  task_type: 'tracking_resync';
+  status: 'pending';
+  start_chapter: number;
+  end_chapter: number;
+  selected_chapters: number;
+  downstream_stale_chapters: number;
+  message: string;
+}
+
+export interface TrackingResyncTaskResult {
+  version: number;
+  start_chapter: number;
+  end_chapter: number;
+  total_chapters: number;
+  processed_chapters: number;
+  retried_chapters: number[];
+  failed_chapters: Array<{
+    chapter_number: number;
+    title: string;
+    error: string;
+  }>;
+  downstream_stale_chapters: number;
+  remaining_stale_chapters: Array<{
+    chapter_number: number;
+    title: string;
+  }>;
+  tracking_revision: number;
+  state_status: string;
+  cancelled: boolean;
+}
+
 // AI生成请求类型
 export interface GenerateOutlineRequest {
   project_id: string;
@@ -1054,6 +1087,7 @@ export interface AnalysisTask {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'none';
   progress: number;
   error_message?: string | null;
+  task_origin?: 'chapter_analysis' | 'tracking_resync';
   auto_recovered?: boolean;
   created_at?: string | null;
   started_at?: string | null;

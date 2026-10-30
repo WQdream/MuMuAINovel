@@ -7,7 +7,7 @@ import json
 import asyncio
 import httpx
 import re
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 from datetime import datetime, timedelta
 import time
 from asyncio import Queue, Lock
@@ -31,7 +31,11 @@ from app.models.memory import PlotAnalysis, StoryMemory
 from app.models.batch_generation_task import BatchGenerationTask
 from app.models.regeneration_task import RegenerationTask
 from app.models.background_task import BackgroundTask
-from app.models.story_tracking import ChapterTrackingTransaction
+from app.models.story_tracking import ChapterTrackingTransaction, StoryTrackingState
+from app.services.background_task_service import (
+    TaskProgressTracker,
+    background_task_service,
+)
 from app.schemas.chapter import (
     ChapterCreate,
     ChapterUpdate,
@@ -70,6 +74,10 @@ from app.services.chapter_creation_service import (
     MAX_CREATION_INPUT_CHARS,
     ChapterCreationService,
 )
+from app.services.chapter_length_guard import (
+    ChapterLengthGuard,
+    iter_guarded_chunks,
+)
 from app.services.story_tracking_service import (
     acquire_generation_lease,
     build_tracking_card,
@@ -95,6 +103,8 @@ from app.schemas.tracking import (
     ChapterQualityReport,
     ChapterQualityStatus,
     TrackingProjectResponse,
+    TrackingResyncRequest,
+    TrackingResyncResponse,
 )
 
 router = APIRouter(prefix="/chapters", tags=["章节管理"])
@@ -112,6 +122,8 @@ active_chapter_generation_task_ids: dict[str, str] = {}
 
 ANALYSIS_TASK_TIMEOUT_SECONDS = 600
 ANALYSIS_TASK_STALE_SECONDS = 720
+TRACKING_RESYNC_TASK_TYPE = "tracking_resync"
+TRACKING_RESYNC_MAX_ATTEMPTS = 2
 
 
 def _schedule_analysis_background(coroutine) -> asyncio.Task:
@@ -122,44 +134,554 @@ def _schedule_analysis_background(coroutine) -> asyncio.Task:
     return task
 
 
-async def queue_chapter_tracking_resync(
+def _split_tracking_resync_scope(
+    chapters: list[Chapter],
+    start_chapter: int,
+    end_chapter: int,
+) -> tuple[list[Chapter], list[Chapter]]:
+    """按章节号拆分本次分析范围和后续待重建范围，空正文不参与。"""
+    selected: list[Chapter] = []
+    downstream: list[Chapter] = []
+    for chapter in sorted(chapters, key=lambda item: item.chapter_number):
+        if not (chapter.content or "").strip():
+            continue
+        if chapter.chapter_number < start_chapter:
+            continue
+        if chapter.chapter_number <= end_chapter:
+            selected.append(chapter)
+        else:
+            downstream.append(chapter)
+    return selected, downstream
+
+
+def _tracking_resync_result(
+    *,
+    start_chapter: int,
+    end_chapter: int,
+    total_chapters: int,
+    processed_chapters: int,
+    retried_chapters: list[int],
+    failed_chapters: list[dict[str, Any]],
+    downstream_stale_chapters: int,
+    remaining_stale_chapters: list[dict[str, Any]],
+    tracking_revision: int,
+    state_status: str,
+    cancelled: bool = False,
+) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "start_chapter": start_chapter,
+        "end_chapter": end_chapter,
+        "total_chapters": total_chapters,
+        "processed_chapters": processed_chapters,
+        "retried_chapters": retried_chapters,
+        "failed_chapters": failed_chapters,
+        "downstream_stale_chapters": downstream_stale_chapters,
+        "remaining_stale_chapters": remaining_stale_chapters,
+        "tracking_revision": tracking_revision,
+        "state_status": state_status,
+        "cancelled": cancelled,
+    }
+
+
+async def _active_tracking_resync_task(
     db: AsyncSession,
     *,
-    chapter: Chapter,
+    project_id: str,
     user_id: str,
-) -> str:
-    """排队一次章节重分析；同一章节已有运行任务时复用。"""
-    existing = (
+) -> Optional[BackgroundTask]:
+    result = await db.execute(
+        select(BackgroundTask)
+        .where(
+            BackgroundTask.project_id == project_id,
+            BackgroundTask.user_id == user_id,
+            BackgroundTask.task_type == TRACKING_RESYNC_TASK_TYPE,
+            BackgroundTask.status.in_(("pending", "running")),
+        )
+        .order_by(BackgroundTask.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _load_tracking_runtime_state(
+    db: AsyncSession,
+    project_id: str,
+) -> tuple[int, str, list[dict[str, Any]]]:
+    state = (
         await db.execute(
-            select(AnalysisTask)
-            .where(AnalysisTask.chapter_id == chapter.id)
-            .where(AnalysisTask.status.in_(("pending", "running")))
-            .order_by(AnalysisTask.created_at.desc())
+            select(StoryTrackingState).where(
+                StoryTrackingState.project_id == project_id
+            )
+        )
+    ).scalar_one_or_none()
+    stale = await list_stale_chapters(db, project_id)
+    return (
+        state.state_revision if state else 0,
+        state.state_status if state else "needs_review",
+        stale,
+    )
+
+
+async def _write_cancelled_tracking_resync_result(
+    *,
+    task_id: str,
+    user_id: str,
+    task_result: dict[str, Any],
+    message: str,
+) -> None:
+    """写入章间取消终态和摘要；绕过进度追踪器对 cancel_requested 的跳过。"""
+    engine = await get_engine(user_id)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with session_factory() as session:
+        await session.execute(
+            update(BackgroundTask)
+            .where(BackgroundTask.id == task_id)
+            .values(
+                status="cancelled",
+                cancel_requested=True,
+                task_result=task_result,
+                status_message=message,
+                progress_details={
+                    "stage": "cancelled",
+                    "message": message,
+                },
+                completed_at=datetime.now(),
+                updated_at=datetime.now(),
+            )
+        )
+        await session.commit()
+
+
+async def _run_tracking_resync_task(
+    task_id: str,
+    user_id: str,
+    start_chapter: int,
+    end_chapter: int,
+) -> None:
+    """按范围逐章重建连续性追踪；单章技术失败自动重试一次。"""
+    tracker = TaskProgressTracker(task_id, user_id, "连续性追踪")
+    engine = await get_engine(user_id)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with session_factory() as db_session:
+        try:
+            task = (
+                await db_session.execute(
+                    select(BackgroundTask).where(BackgroundTask.id == task_id)
+                )
+            ).scalar_one_or_none()
+            if not task:
+                return
+
+            chapters = list(
+                (
+                    await db_session.execute(
+                        select(Chapter)
+                        .where(Chapter.project_id == task.project_id)
+                        .order_by(Chapter.chapter_number)
+                    )
+                ).scalars().all()
+            )
+            selected, downstream = _split_tracking_resync_scope(
+                chapters,
+                start_chapter,
+                end_chapter,
+            )
+            total_chapters = len(selected)
+            if total_chapters == 0:
+                await tracker.set_result(
+                    _tracking_resync_result(
+                        start_chapter=start_chapter,
+                        end_chapter=end_chapter,
+                        total_chapters=0,
+                        processed_chapters=0,
+                        retried_chapters=[],
+                        failed_chapters=[],
+                        downstream_stale_chapters=len(downstream),
+                        remaining_stale_chapters=[],
+                        tracking_revision=0,
+                        state_status="needs_review",
+                    )
+                )
+                await tracker.error("所选范围内没有可重分析的正文章节")
+                return
+
+            await tracker.start(
+                f"准备重分析第{start_chapter}章至第{end_chapter}章，共 {total_chapters} 章"
+            )
+            await tracker.set_result(
+                _tracking_resync_result(
+                    start_chapter=start_chapter,
+                    end_chapter=end_chapter,
+                    total_chapters=total_chapters,
+                    processed_chapters=0,
+                    retried_chapters=[],
+                    failed_chapters=[],
+                    downstream_stale_chapters=len(downstream),
+                    remaining_stale_chapters=[
+                        {
+                            "chapter_number": chapter.chapter_number,
+                            "title": chapter.title,
+                        }
+                        for chapter in selected + downstream
+                    ],
+                    tracking_revision=0,
+                    state_status="needs_review",
+                )
+            )
+
+            processed_chapters = 0
+            retried_chapters: list[int] = []
+            failed_chapters: list[dict[str, Any]] = []
+
+            for index, chapter in enumerate(selected):
+                if await tracker.check_cancelled():
+                    revision, state_status, stale = await _load_tracking_runtime_state(
+                        db_session, task.project_id
+                    )
+                    result = _tracking_resync_result(
+                        start_chapter=start_chapter,
+                        end_chapter=end_chapter,
+                        total_chapters=total_chapters,
+                        processed_chapters=processed_chapters,
+                        retried_chapters=retried_chapters,
+                        failed_chapters=failed_chapters,
+                        downstream_stale_chapters=len(downstream),
+                        remaining_stale_chapters=stale,
+                        tracking_revision=revision,
+                        state_status=state_status,
+                        cancelled=True,
+                    )
+                    await _write_cancelled_tracking_resync_result(
+                        task_id=task_id,
+                        user_id=user_id,
+                        task_result=result,
+                        message=f"重分析已取消，剩余 {len(stale)} 章仍待重建",
+                    )
+                    return
+
+                success = False
+                quality_pause_message: Optional[str] = None
+
+                for attempt in range(1, TRACKING_RESYNC_MAX_ATTEMPTS + 1):
+                    overall_progress = int(index / total_chapters * 100)
+                    attempt_suffix = f"（第 {attempt}/2 次尝试）" if attempt > 1 else ""
+                    await tracker.stage(
+                        "tracking_resync",
+                        (
+                            f"正在重分析第{chapter.chapter_number}章"
+                            f"（{index + 1}/{total_chapters}）{attempt_suffix}"
+                        ),
+                        overall_progress,
+                        {
+                            "chapter_id": chapter.id,
+                            "chapter_number": chapter.chapter_number,
+                            "chapter_title": chapter.title,
+                            "completed": processed_chapters,
+                            "total": total_chapters,
+                            "attempt": attempt,
+                        },
+                    )
+
+                    child_task = AnalysisTask(
+                        chapter_id=chapter.id,
+                        user_id=user_id,
+                        project_id=task.project_id,
+                        background_task_id=task_id,
+                        status="pending",
+                        progress=0,
+                    )
+                    db_session.add(child_task)
+                    await db_session.commit()
+                    await db_session.refresh(child_task)
+
+                    async def report_chapter_progress(child_progress: int) -> None:
+                        mapped = int(
+                            (
+                                index
+                                + max(0, min(int(child_progress), 100)) / 100
+                            )
+                            / total_chapters
+                            * 100
+                        )
+                        await tracker.stage(
+                            "tracking_resync",
+                            (
+                                f"正在重分析第{chapter.chapter_number}章"
+                                f"（{index + 1}/{total_chapters}）"
+                            ),
+                            min(mapped, 99),
+                            {
+                                "chapter_id": chapter.id,
+                                "chapter_number": chapter.chapter_number,
+                                "chapter_title": chapter.title,
+                                "completed": processed_chapters,
+                                "total": total_chapters,
+                                "attempt": attempt,
+                                "analysis_progress": child_progress,
+                            },
+                        )
+
+                    analysis_ok = await analyze_chapter_background(
+                        chapter_id=chapter.id,
+                        user_id=user_id,
+                        project_id=task.project_id,
+                        task_id=child_task.id,
+                        progress_callback=report_chapter_progress,
+                    )
+                    await db_session.refresh(chapter)
+
+                    if (
+                        analysis_ok
+                        and chapter.quality_status == "ready"
+                        and chapter.tracking_status == "current"
+                    ):
+                        success = True
+                        break
+
+                    if analysis_ok:
+                        quality_pause_message = (
+                            f"第{chapter.chapter_number}章分析完成，但质量门禁状态为"
+                            f" {chapter.quality_status}，需要人工处理后才能继续"
+                        )
+                        break
+
+                    if attempt < TRACKING_RESYNC_MAX_ATTEMPTS:
+                        if await tracker.check_cancelled():
+                            break
+                        retried_chapters.append(chapter.chapter_number)
+                        await tracker.retry(
+                            retry_count=attempt,
+                            max_retries=1,
+                            reason=f"第{chapter.chapter_number}章分析失败",
+                        )
+
+                # 取消只在章节之间生效；若当前章已成功完成，摘要应计入这一章。
+                if success:
+                    processed_chapters += 1
+
+                if await tracker.check_cancelled():
+                    revision, state_status, stale = await _load_tracking_runtime_state(
+                        db_session, task.project_id
+                    )
+                    result = _tracking_resync_result(
+                        start_chapter=start_chapter,
+                        end_chapter=end_chapter,
+                        total_chapters=total_chapters,
+                        processed_chapters=processed_chapters,
+                        retried_chapters=retried_chapters,
+                        failed_chapters=failed_chapters,
+                        downstream_stale_chapters=len(downstream),
+                        remaining_stale_chapters=stale,
+                        tracking_revision=revision,
+                        state_status=state_status,
+                        cancelled=True,
+                    )
+                    await _write_cancelled_tracking_resync_result(
+                        task_id=task_id,
+                        user_id=user_id,
+                        task_result=result,
+                        message=f"重分析已取消，剩余 {len(stale)} 章仍待重建",
+                    )
+                    return
+
+                if not success:
+                    child_error = (
+                        await db_session.execute(
+                            select(AnalysisTask.error_message)
+                            .where(AnalysisTask.chapter_id == chapter.id)
+                            .where(AnalysisTask.background_task_id == task_id)
+                            .order_by(AnalysisTask.created_at.desc())
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    error_message = (
+                        quality_pause_message
+                        or child_error
+                        or "章节分析未完成，且没有返回具体错误"
+                    )
+                    failed_chapters.append(
+                        {
+                            "chapter_number": chapter.chapter_number,
+                            "title": chapter.title,
+                            "error": error_message,
+                        }
+                    )
+                    revision, state_status, stale = await _load_tracking_runtime_state(
+                        db_session, task.project_id
+                    )
+                    await tracker.set_result(
+                        _tracking_resync_result(
+                            start_chapter=start_chapter,
+                            end_chapter=end_chapter,
+                            total_chapters=total_chapters,
+                            processed_chapters=processed_chapters,
+                            retried_chapters=retried_chapters,
+                            failed_chapters=failed_chapters,
+                            downstream_stale_chapters=len(downstream),
+                            remaining_stale_chapters=stale,
+                            tracking_revision=revision,
+                            state_status=state_status,
+                        )
+                    )
+                    await tracker.error(
+                        f"第{chapter.chapter_number}章重分析失败，已停止：{error_message}"
+                    )
+                    return
+
+                completed_progress = int(
+                    processed_chapters / total_chapters * 100
+                )
+                await tracker.stage(
+                    "tracking_resync",
+                    (
+                        f"已完成第{chapter.chapter_number}章"
+                        f"（{processed_chapters}/{total_chapters}）"
+                    ),
+                    min(completed_progress, 99),
+                    {
+                        "completed": processed_chapters,
+                        "total": total_chapters,
+                        "chapter_number": chapter.chapter_number,
+                    },
+                )
+
+            revision, state_status, stale = await _load_tracking_runtime_state(
+                db_session, task.project_id
+            )
+            result = _tracking_resync_result(
+                start_chapter=start_chapter,
+                end_chapter=end_chapter,
+                total_chapters=total_chapters,
+                processed_chapters=processed_chapters,
+                retried_chapters=retried_chapters,
+                failed_chapters=[],
+                downstream_stale_chapters=len(downstream),
+                remaining_stale_chapters=stale,
+                tracking_revision=revision,
+                state_status=state_status,
+            )
+            await tracker.set_result(result)
+            if stale:
+                await tracker.complete(
+                    f"范围重分析完成：已处理 {processed_chapters} 章，"
+                    f"仍有 {len(stale)} 章待后续重建"
+                )
+            else:
+                await tracker.complete(
+                    f"连续性追踪已重建完成：共处理 {processed_chapters} 章，"
+                    f"追踪版本 {revision}"
+                )
+        except Exception as exc:
+            logger.error(f"❌ 连续性追踪重分析失败: {task_id}, {exc}", exc_info=True)
+            await tracker.error(str(exc))
+
+
+async def create_tracking_resync_task(
+    db: AsyncSession,
+    *,
+    project_id: str,
+    user_id: str,
+    start_chapter: int,
+    end_chapter: int,
+) -> dict[str, Any]:
+    """创建项目级连续性追踪重分析任务。"""
+    active_task = await _active_tracking_resync_task(
+        db,
+        project_id=project_id,
+        user_id=user_id,
+    )
+    if active_task:
+        raise HTTPException(
+            status_code=409,
+            detail="当前项目已有连续性追踪重分析任务正在运行，请等待完成或取消后再试",
+        )
+
+    chapters_result = await db.execute(
+        select(Chapter)
+        .where(Chapter.project_id == project_id)
+        .order_by(Chapter.chapter_number)
+    )
+    chapters = list(chapters_result.scalars().all())
+    selected, downstream = _split_tracking_resync_scope(
+        chapters,
+        start_chapter,
+        end_chapter,
+    )
+    if not selected:
+        raise HTTPException(status_code=400, detail="所选范围内没有可重分析的正文章节")
+
+    running_analysis = (
+        await db.execute(
+            select(AnalysisTask.chapter_id)
+            .where(
+                AnalysisTask.chapter_id.in_([chapter.id for chapter in selected]),
+                AnalysisTask.status.in_(("pending", "running")),
+            )
             .limit(1)
         )
     ).scalar_one_or_none()
-    if existing:
-        return existing.id
-
-    task = AnalysisTask(
-        chapter_id=chapter.id,
-        user_id=user_id,
-        project_id=chapter.project_id,
-        status="pending",
-        progress=0,
-    )
-    db.add(task)
-    await db.commit()
-    await db.refresh(task)
-    _schedule_analysis_background(
-        analyze_chapter_background(
-            chapter_id=chapter.id,
-            user_id=user_id,
-            project_id=chapter.project_id,
-            task_id=task.id,
+    if running_analysis:
+        raise HTTPException(
+            status_code=409,
+            detail="所选范围内已有章节正在分析，请等待完成后再试",
         )
+
+    for chapter in selected + downstream:
+        chapter.quality_status = "stale"
+        chapter.tracking_status = "stale"
+        chapter.status = "draft"
+
+    state = (
+        await db.execute(
+            select(StoryTrackingState).where(
+                StoryTrackingState.project_id == project_id
+            )
+        )
+    ).scalar_one_or_none()
+    if state:
+        state.state_status = "needs_review"
+
+    task = await background_task_service.create_task(
+        user_id=user_id,
+        project_id=project_id,
+        task_type=TRACKING_RESYNC_TASK_TYPE,
+        task_input={
+            "start_chapter": start_chapter,
+            "end_chapter": end_chapter,
+            "selected_chapter_ids": [chapter.id for chapter in selected],
+            "downstream_chapter_ids": [chapter.id for chapter in downstream],
+        },
+        db=db,
     )
-    return task.id
+
+    try:
+        await background_task_service.spawn_background_task(
+            task.id,
+            user_id,
+            _run_tracking_resync_task,
+            start_chapter,
+            end_chapter,
+        )
+    except Exception as exc:
+        task.status = "failed"
+        task.error_message = f"重分析任务调度失败: {exc}"
+        task.status_message = "任务调度失败"
+        task.completed_at = datetime.now()
+        await db.commit()
+        raise HTTPException(status_code=500, detail="重分析任务调度失败") from exc
+
+    return {
+        "task_id": task.id,
+        "task_type": TRACKING_RESYNC_TASK_TYPE,
+        "status": "pending",
+        "start_chapter": start_chapter,
+        "end_chapter": end_chapter,
+        "selected_chapters": len(selected),
+        "downstream_stale_chapters": len(downstream),
+        "message": "连续性追踪重分析任务已创建",
+    }
 
 
 def _build_lightweight_chapter_summary(content: str, max_length: int = 300) -> str:
@@ -461,6 +983,30 @@ async def get_project_tracking(
     )
 
 
+@router.post(
+    "/project/{project_id}/tracking/resync",
+    response_model=TrackingResyncResponse,
+    summary="按章节范围重分析连续性追踪",
+)
+async def resync_project_tracking(
+    project_id: str,
+    payload: TrackingResyncRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """创建项目级连续性追踪重分析总任务。"""
+    user_id = getattr(request.state, "user_id", None)
+    await verify_project_access(project_id, user_id, db)
+    result = await create_tracking_resync_task(
+        db,
+        project_id=project_id,
+        user_id=user_id,
+        start_chapter=payload.start_chapter,
+        end_chapter=payload.end_chapter,
+    )
+    return TrackingResyncResponse(**result)
+
+
 @router.get("/{chapter_id}", response_model=ChapterResponse, summary="获取章节详情")
 async def get_chapter(
     chapter_id: str,
@@ -656,9 +1202,6 @@ async def update_chapter(
                 
                 logger.info(f"🗑️ 章节 {chapter_id[:8]} 内容已清空，已清理分析、记忆和伏笔数据")
     
-    await db.commit()
-    await db.refresh(chapter)
-
     if "content" in update_data:
         if not (chapter.content or "").strip():
             await rebuild_authority_from_committed_transactions(
@@ -666,13 +1209,12 @@ async def update_chapter(
                 chapter.project_id,
                 through_chapter=max(0, chapter.chapter_number - 1),
             )
-        await mark_chapter_stale(db, chapter, cascade=True)
-        if (chapter.content or "").strip():
-            await queue_chapter_tracking_resync(
-                db,
-                chapter=chapter,
-                user_id=user_id,
-            )
+        await mark_chapter_stale(db, chapter, cascade=True, commit=False)
+
+    # 单次提交可避免 updated_at 在第二次 UPDATE 后进入待加载状态；
+    # refresh 确保响应装配阶段不再发生同步 ORM IO。
+    await db.commit()
+    await db.refresh(chapter)
     
     chapter_dict = {
         "id": chapter.id,
@@ -774,11 +1316,6 @@ async def restore_polish_snapshot(
     await db.commit()
     await db.refresh(chapter)
     await mark_chapter_stale(db, chapter, cascade=True)
-    await queue_chapter_tracking_resync(
-        db,
-        chapter=chapter,
-        user_id=user_id,
-    )
     logger.info(f"↩️ 已恢复章节 {chapter_id[:8]} 自动去味前的原文")
 
     return {
@@ -1349,13 +1886,26 @@ async def decide_chapter_quality(
     await verify_project_access(chapter.project_id, user_id, db)
 
     if decision.action == "resync_tracking":
-        await mark_chapter_stale(db, chapter, cascade=True)
-        task_id = await queue_chapter_tracking_resync(
+        result = await create_tracking_resync_task(
             db,
-            chapter=chapter,
+            project_id=chapter.project_id,
             user_id=user_id,
+            start_chapter=chapter.chapter_number,
+            end_chapter=max(
+                (
+                    await db.execute(
+                        select(func.max(Chapter.chapter_number)).where(
+                            Chapter.project_id == chapter.project_id,
+                            Chapter.content.is_not(None),
+                            func.trim(Chapter.content) != "",
+                        )
+                    )
+                ).scalar_one_or_none()
+                or chapter.chapter_number,
+                chapter.chapter_number,
+            ),
         )
-        return {"queued": True, "analysis_task_id": task_id}
+        return {"queued": True, **result}
 
     if decision.action == "rewrite":
         chapter.quality_status = "blocked"
@@ -2026,35 +2576,6 @@ async def _analyze_chapter_background_impl(
         update_success = await _set_analysis_task_terminal_state(
             user_id, task_id, "completed"
         )
-        if (
-            quality_report.status == ChapterQualityStatus.ready
-            and transaction_row
-            and transaction_row.status == "committed"
-        ):
-            next_stale = (
-                await db_session.execute(
-                    select(Chapter)
-                    .where(Chapter.project_id == project_id)
-                    .where(Chapter.chapter_number > chapter.chapter_number)
-                    .where(Chapter.tracking_status == "stale")
-                    .where(Chapter.content.is_not(None))
-                    .where(Chapter.content != "")
-                    .order_by(Chapter.chapter_number)
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if next_stale:
-                await queue_chapter_tracking_resync(
-                    db_session,
-                    chapter=next_stale,
-                    user_id=user_id,
-                )
-                analysis_monitor.emit(
-                    task_id,
-                    "info",
-                    f"已按顺序排队重同步第{next_stale.chapter_number}章",
-                    99,
-                )
         if update_success:
             await report_progress(100)
             logger.info(
@@ -2278,6 +2799,7 @@ async def generate_chapter_content_stream(
                 # === 生成阶段 ===
                 full_content = ""
                 chunk_count = 0
+                length_guard = ChapterLengthGuard(target_word_count)
                 
                 yield await tracker.stage("writing", "上下文已就绪，开始生成正文", 20)
                 yield await tracker.generating(
@@ -2285,7 +2807,8 @@ async def generate_chapter_content_stream(
                     estimated_total=target_word_count
                 )
                 
-                async for chunk in user_ai_service.generate_text_stream(**generate_kwargs):
+                source = user_ai_service.generate_text_stream(**generate_kwargs)
+                async for chunk in iter_guarded_chunks(source, length_guard):
                     full_content += chunk
                     chunk_count += 1
                     
@@ -2295,9 +2818,9 @@ async def generate_chapter_content_stream(
                     # 每5个chunk发送一次进度更新
                     if chunk_count % 5 == 0:
                         yield await tracker.generating(
-                            current_chars=len(full_content),
+                            current_chars=visible_char_count(full_content),
                             estimated_total=target_word_count,
-                            message=f'正在创作中... 已生成 {len(full_content)} 字'
+                            message=f'正在创作中... 已生成 {visible_char_count(full_content)} 字'
                         )
                     
                     # 每20个chunk发送心跳
@@ -2305,6 +2828,28 @@ async def generate_chapter_content_stream(
                         yield await tracker.heartbeat()
                     
                     await asyncio.sleep(0)  # 让出控制权
+
+                length_result = length_guard.finish()
+                full_content = length_result.content
+                logger.info(
+                    "章节流式长度保护: chapter=%s target=%s observed=%s output=%s "
+                    "truncated=%s cutoff=%s",
+                    current_chapter.chapter_number,
+                    target_word_count,
+                    length_result.observed_chars,
+                    length_result.content_chars,
+                    length_result.truncated,
+                    length_result.cutoff_kind or "none",
+                )
+                if length_result.truncated:
+                    yield await tracker.stage(
+                        "writing",
+                        (
+                            f"已达到目标字数安全上限，正文按完整段落收尾，"
+                            f"共 {length_result.content_chars} 字"
+                        ),
+                        84,
+                    )
 
                 generation_error = _chapter_generation_error(
                     full_content, target_word_count
@@ -2374,12 +2919,13 @@ async def generate_chapter_content_stream(
                 await db_session.refresh(current_chapter)
                 
                 logger.info(
-                    "成功创作章节 %s，共 %s 字，质量=%s，修复=%s，压缩=%s",
+                    "成功创作章节 %s，共 %s 字，质量=%s，修复=%s，压缩=%s，扩写=%s",
                     chapter_id,
                     new_word_count,
                     generated.quality_report.status.value,
                     generated.repaired,
                     generated.compressed,
+                    generated.expanded,
                 )
                 
                 # 🔮 章节生成后自动标记计划在本章埋入的伏笔
@@ -2629,6 +3175,7 @@ def _build_analysis_task_status_payload(
             "progress": 0,
             "error_message": None,
             "auto_recovered": False,
+            "task_origin": "chapter_analysis",
             "task_id": None,
             "created_at": None,
             "started_at": None,
@@ -2643,6 +3190,11 @@ def _build_analysis_task_status_payload(
         "progress": task.progress,
         "error_message": task.error_message,
         "auto_recovered": auto_recovered,
+        "task_origin": (
+            "tracking_resync"
+            if task.background_task_id
+            else "chapter_analysis"
+        ),
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "completed_at": task.completed_at.isoformat() if task.completed_at else None
@@ -2816,13 +3368,15 @@ async def _run_chapter_generation_bg(
     # === 生成阶段 ===
     full_content = ""
     chunk_count = 0
+    length_guard = ChapterLengthGuard(target_word_count)
 
     await tracker.generating(
         current_chars=0,
         estimated_total=target_word_count
     )
 
-    async for chunk in ai_service.generate_text_stream(**generate_kwargs):
+    source = ai_service.generate_text_stream(**generate_kwargs)
+    async for chunk in iter_guarded_chunks(source, length_guard):
         # 检查是否被取消
         if chunk_count % 10 == 0 and await tracker.check_cancelled():
             logger.info(f"🚫 后台章节生成被取消: {chapter_id}")
@@ -2834,12 +3388,34 @@ async def _run_chapter_generation_bg(
         # 每10个chunk更新一次进度
         if chunk_count % 10 == 0:
             await tracker.generating(
-                current_chars=len(full_content),
+                current_chars=visible_char_count(full_content),
                 estimated_total=target_word_count,
-                message=f'正在创作中... 已生成 {len(full_content)} 字'
+                message=f'正在创作中... 已生成 {visible_char_count(full_content)} 字'
             )
 
         await asyncio.sleep(0)
+
+    length_result = length_guard.finish()
+    full_content = length_result.content
+    logger.info(
+        "后台章节长度保护: chapter=%s target=%s observed=%s output=%s "
+        "truncated=%s cutoff=%s",
+        current_chapter.chapter_number,
+        target_word_count,
+        length_result.observed_chars,
+        length_result.content_chars,
+        length_result.truncated,
+        length_result.cutoff_kind or "none",
+    )
+    if length_result.truncated:
+        await tracker.stage(
+            "writing",
+            (
+                f"已达到目标字数安全上限，正文按完整段落收尾，"
+                f"共 {length_result.content_chars} 字"
+            ),
+            86,
+        )
 
     # === 生成后自动去味（可选）===
     if auto_polish:
@@ -2903,7 +3479,15 @@ async def _run_chapter_generation_bg(
             label=f"创作章节: 第{current_chapter.chapter_number}章 {current_chapter.title}",
         )
 
-    logger.info(f"✅ 后台创作章节 {chapter_id} 完成，共 {new_word_count} 字")
+    logger.info(
+        "✅ 后台创作章节 %s 完成，共 %s 字，质量=%s，修复=%s，压缩=%s，扩写=%s",
+        chapter_id,
+        new_word_count,
+        generated.quality_report.status.value,
+        generated.repaired,
+        generated.compressed,
+        generated.expanded,
+    )
 
     # 🔮 自动标记伏笔
     try:
@@ -2970,6 +3554,7 @@ def _build_analysis_task_status_payload(
             "progress": 0,
             "error_message": None,
             "auto_recovered": False,
+            "task_origin": "chapter_analysis",
             "task_id": None,
             "created_at": None,
             "started_at": None,
@@ -2984,6 +3569,11 @@ def _build_analysis_task_status_payload(
         "progress": task.progress,
         "error_message": task.error_message,
         "auto_recovered": auto_recovered,
+        "task_origin": (
+            "tracking_resync"
+            if task.background_task_id
+            else "chapter_analysis"
+        ),
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "completed_at": task.completed_at.isoformat() if task.completed_at else None
@@ -3191,6 +3781,17 @@ async def batch_analyze_unanalyzed_chapters(
 
     # 验证项目权限
     await verify_project_access(project_id, user_id, db)
+
+    active_resync = await _active_tracking_resync_task(
+        db,
+        project_id=project_id,
+        user_id=user_id,
+    )
+    if active_resync:
+        raise HTTPException(
+            status_code=409,
+            detail="当前项目正在重分析连续性追踪，请等待任务完成后再批量分析章节",
+        )
 
     # 查询目标章节（可选限制 chapter_ids）
     chapter_query = select(Chapter).where(Chapter.project_id == project_id).order_by(Chapter.chapter_number)
@@ -3551,6 +4152,17 @@ async def trigger_chapter_analysis(
     
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
+
+    active_resync = await _active_tracking_resync_task(
+        db,
+        project_id=project.id,
+        user_id=user_id,
+    )
+    if active_resync:
+        raise HTTPException(
+            status_code=409,
+            detail="当前项目正在重分析连续性追踪，请等待任务完成后再手动分析章节",
+        )
 
     # 避免重复点击或状态轮询误判后创建并发分析任务。
     existing_task_result = await db.execute(
@@ -4310,12 +4922,27 @@ async def generate_single_chapter_for_batch(
 
     # 批量生成中的流式生成（非SSE，不需要修改进度显示）
     chunk_count = 0
-    async for chunk in ai_service.generate_text_stream(**generate_kwargs):
+    length_guard = ChapterLengthGuard(target_word_count)
+    source = ai_service.generate_text_stream(**generate_kwargs)
+    async for chunk in iter_guarded_chunks(source, length_guard):
         if chunk_count % 10 == 0 and await _is_batch_cancelled():
             logger.info(f"🛑 批量生成单章流式生成被取消: batch={batch_id}, chapter={chapter.id}")
             raise Exception("批量生成任务已取消")
         full_content += chunk
         chunk_count += 1
+
+    length_result = length_guard.finish()
+    full_content = length_result.content
+    logger.info(
+        "批量章节长度保护: chapter=%s target=%s observed=%s output=%s "
+        "truncated=%s cutoff=%s",
+        chapter.chapter_number,
+        target_word_count,
+        length_result.observed_chars,
+        length_result.content_chars,
+        length_result.truncated,
+        length_result.cutoff_kind or "none",
+    )
 
     if await _is_batch_cancelled():
         logger.info(f"🛑 批量生成保存前被取消: batch={batch_id}, chapter={chapter.id}")
@@ -4356,7 +4983,15 @@ async def generate_single_chapter_for_batch(
         )
         await db_session.refresh(chapter)
     
-    logger.info(f"✅ 单章节生成完成: 第{chapter.chapter_number}章，共 {new_word_count} 字")
+    logger.info(
+        "✅ 单章节生成完成: 第%s章，共%s字，质量=%s，修复=%s，压缩=%s，扩写=%s",
+        chapter.chapter_number,
+        new_word_count,
+        generated.quality_report.status.value,
+        generated.repaired,
+        generated.compressed,
+        generated.expanded,
+    )
     
     # 生成简短摘要返回
     summary_preview = _build_lightweight_chapter_summary(full_content)
@@ -4735,7 +5370,11 @@ async def regenerate_chapter_stream(
                                 select(Outline).where(Outline.id == chapter.outline_id)
                             )
                         ).scalar_one_or_none() if chapter.outline_id else None
-                        await mark_chapter_stale(db_session, chapter, cascade=True)
+                        quality_stage_events: list[tuple[str, str]] = []
+
+                        async def _regen_quality_progress(stage: str, message: str) -> None:
+                            quality_stage_events.append((stage, message))
+
                         generated = await ChapterCreationService(
                             db_session
                         ).finalize_generated(
@@ -4746,8 +5385,17 @@ async def regenerate_chapter_stream(
                             content=full_content,
                             ai_service=user_ai_service,
                             model=None,
+                            progress=_regen_quality_progress,
                         )
+                        for stage, message in quality_stage_events:
+                            yield await tracker.stage(stage, message, 92)
                         full_content = generated.content
+                        await mark_chapter_stale(
+                            db_session,
+                            chapter,
+                            cascade=True,
+                            commit=False,
+                        )
                         await ChapterCreationService(db_session).save_generated(
                             chapter=chapter,
                             project=project_obj,
@@ -4755,6 +5403,16 @@ async def regenerate_chapter_stream(
                             label=f"整章重生成: 第{chapter.chapter_number}章 {chapter.title}",
                         )
                         applied_quality_status = generated.quality_report.status.value
+                        logger.info(
+                            "整章重生成完成: chapter=%s words=%s quality=%s "
+                            "repaired=%s compressed=%s expanded=%s",
+                            chapter.chapter_number,
+                            visible_char_count(full_content),
+                            applied_quality_status,
+                            generated.repaired,
+                            generated.compressed,
+                            generated.expanded,
+                        )
                         analysis_task = AnalysisTask(
                             chapter_id=chapter_id,
                             user_id=user_id,
@@ -4823,6 +5481,8 @@ async def regenerate_chapter_stream(
             # 更新任务状态为失败
             if db_session and not db_committed:
                 try:
+                    # finalize/compress 失败时，先撤销正文和追踪状态的未提交改动。
+                    await db_session.rollback()
                     task_result = await db_session.execute(
                         select(RegenerationTask).where(RegenerationTask.chapter_id == chapter_id)
                         .order_by(RegenerationTask.created_at.desc()).limit(1)
@@ -5332,11 +5992,6 @@ async def apply_partial_regenerate(
     await db.commit()
     await db.refresh(chapter)
     await mark_chapter_stale(db, chapter, cascade=True)
-    await queue_chapter_tracking_resync(
-        db,
-        chapter=chapter,
-        user_id=user_id,
-    )
     
     logger.info(f"✅ 局部重写已应用: 章节{chapter_id}, {old_word_count}字 -> {new_word_count}字")
     

@@ -32,7 +32,10 @@ def _background_task_data(task: BackgroundTask) -> dict:
         "retry_count": task.retry_count or 0,
         "cancel_requested": bool(task.cancel_requested),
         "affected_resources": affected_resources_for_task(task.task_type),
-        "can_cancel": task.status in ("pending", "running"),
+        "can_cancel": (
+            task.status in ("pending", "running")
+            and not bool(task.cancel_requested)
+        ),
         "can_delete": task.status in ("completed", "failed", "cancelled"),
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "started_at": task.started_at.isoformat() if task.started_at else None,
@@ -106,6 +109,11 @@ def _analysis_task_data(
     return {
         "id": task.id,
         "task_type": "chapter_analysis",
+        "task_origin": (
+            "tracking_resync"
+            if task.background_task_id
+            else "chapter_analysis"
+        ),
         "project_id": task.project_id,
         "status": task.status,
         "progress": task.progress or 0,
@@ -221,6 +229,7 @@ async def get_tasks(
                 AnalysisTask.project_id == project_id,
                 AnalysisTask.user_id == user_id,
                 AnalysisTask.archived_at.is_(None),
+                AnalysisTask.background_task_id.is_(None),
             )
             .order_by(
                 case(

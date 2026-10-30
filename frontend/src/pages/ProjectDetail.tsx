@@ -59,7 +59,6 @@ export default function ProjectDetail() {
     ));
   }, []);
   const { token } = theme.useToken();
-  const alphaColor = (color: string, alpha: number) => `color-mix(in srgb, ${color} ${(alpha * 100).toFixed(0)}%, transparent)`;
   const { mode, resolvedMode, setMode } = useThemeMode();
   const cycleThemeMode = () => {
     const nextMode = mode === 'light' ? 'dark' : mode === 'dark' ? 'system' : 'light';
@@ -237,7 +236,7 @@ export default function ProjectDetail() {
         {
           key: 'polish',
           icon: <ClearOutlined />,
-          label: <Link to={`/project/${projectId}/polish`}>精修台</Link>,
+          label: <Link to={`/project/${projectId}/polish`}>去AI味</Link>,
         },
         {
           key: 'skill-manage',
@@ -317,7 +316,7 @@ export default function ProjectDetail() {
     {
       key: 'polish',
       icon: <ClearOutlined />,
-      label: <Link to={`/project/${projectId}/polish`}>精修台</Link>,
+      label: <Link to={`/project/${projectId}/polish`}>去AI味</Link>,
     },
     {
       key: 'skill-manage',
@@ -658,11 +657,11 @@ export default function ProjectDetail() {
             className="editorial-canvas"
           >
             <div style={{
-              background: token.colorBgContainer,
+              background: 'var(--editorial-card-bg)',
               padding: 0,
-              border: `1px solid ${token.colorBorderSecondary}`,
-              borderRadius: 2,
-              boxShadow: `0 1px 2px ${alphaColor(token.colorText, 0.03)}, 0 30px 60px -36px ${alphaColor(token.colorText, 0.22)}`,
+              border: '1px solid var(--editorial-rule)',
+              borderRadius: 14,
+              boxShadow: 'var(--editorial-card-shadow)',
               height: '100%',
               overflow: 'hidden',
               display: 'flex',

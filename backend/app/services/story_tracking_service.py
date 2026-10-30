@@ -26,6 +26,7 @@ from app.schemas.tracking import (
     TrackingContextCard,
 )
 from app.services.deslop_check_service import check_text, scripts_available
+from app.services.chapter_length_guard import chapter_length_limits
 
 logger = get_logger(__name__)
 
@@ -863,14 +864,16 @@ async def evaluate_chapter_quality(
             available_actions=["rewrite"],
         )
 
-    lower = max(500, int(target * 0.85))
-    upper = int(target * 1.15)
+    lower, upper = chapter_length_limits(target)
     if actual < lower:
         findings.append(
             QualityFinding(
                 severity="blocking",
                 code="length.under",
-                message=f"正文 {actual} 字，低于目标区间 {lower}-{upper}；系统不会自动补戏",
+                message=(
+                    f"正文 {actual} 字，低于目标区间 {lower}-{upper}；"
+                    "生成流程会自动扩写一次，仍不足时需作者确认"
+                ),
             )
         )
     elif actual > upper:
@@ -922,17 +925,23 @@ async def evaluate_chapter_quality(
             )
         ]
 
+    # Missing checker tooling is an environment degradation, not a defect in
+    # the chapter. Keep the finding for auditability but classify it through
+    # the dedicated tool_unavailable branch.
+    chapter_blocking = [
+        item for item in blocking if item.code != "checker.unavailable"
+    ]
     accepted_unchecked = (
         override_applied
         and override.get("kind") == "accept_unchecked"
     )
-    if not checker_available and not blocking and not accepted_unchecked:
+    if not checker_available and not chapter_blocking and not accepted_unchecked:
         status = ChapterQualityStatus.tool_unavailable
         actions = ["accept_unchecked", "rewrite"]
-    elif blocking:
+    elif chapter_blocking:
         status = (
             ChapterQualityStatus.needs_decision
-            if all(item.code.startswith("length.") for item in blocking)
+            if all(item.code.startswith("length.") for item in chapter_blocking)
             else ChapterQualityStatus.blocked
         )
         actions = (
@@ -1384,6 +1393,7 @@ async def mark_chapter_stale(
     chapter: Chapter,
     *,
     cascade: bool = True,
+    commit: bool = True,
 ) -> int:
     chapter.tracking_status = "stale"
     chapter.quality_status = "stale"
@@ -1409,7 +1419,8 @@ async def mark_chapter_stale(
     ).scalar_one_or_none()
     if state_row:
         state_row.state_status = "needs_review"
-    await db.commit()
+    if commit:
+        await db.commit()
     return affected
 
 

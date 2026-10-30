@@ -80,6 +80,7 @@ class AnalysisTaskStatusResponse(BaseModel):
     progress: int = 0
     error_message: Optional[str] = None
     auto_recovered: bool = False
+    task_origin: str = "chapter_analysis"
     created_at: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None

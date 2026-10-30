@@ -32,6 +32,7 @@ import type {
   ChapterCanGenerateResponse,
   ChapterQualityResponse,
   ProjectTrackingResponse,
+  TrackingResyncResponse,
   GenerateOutlineRequest,
   GenerateOutlineDirectionsRequest,
   OutlineDirectionSuggestion,
@@ -855,8 +856,12 @@ export const chapterApi = {
 
   createChapter: (data: ChapterCreate) => api.post<unknown, Chapter>('/chapters', data),
 
-  updateChapter: (id: string, data: ChapterUpdate) =>
-    api.put<unknown, Chapter>(`/chapters/${id}`, data),
+  updateChapter: (
+    id: string,
+    data: ChapterUpdate,
+    options?: { skipErrorToast?: boolean }
+  ) =>
+    api.put<unknown, Chapter>(`/chapters/${id}`, data, options),
 
   deleteChapter: (id: string) => api.delete(`/chapters/${id}`),
 
@@ -872,6 +877,12 @@ export const chapterApi = {
   getProjectTracking: (projectId: string) =>
     api.get<unknown, ProjectTrackingResponse>(`/chapters/project/${projectId}/tracking`),
 
+  resyncTracking: (projectId: string, startChapter: number, endChapter: number) =>
+    api.post<unknown, TrackingResyncResponse>(`/chapters/project/${projectId}/tracking/resync`, {
+      start_chapter: startChapter,
+      end_chapter: endChapter,
+    }),
+
   getChapterQuality: (chapterId: string) =>
     api.get<unknown, ChapterQualityResponse>(`/chapters/${chapterId}/quality`),
 
@@ -884,6 +895,12 @@ export const chapterApi = {
       queued?: boolean;
       accepted?: boolean;
       analysis_task_id?: string;
+      task_id?: string;
+      task_type?: string;
+      start_chapter?: number;
+      end_chapter?: number;
+      selected_chapters?: number;
+      downstream_stale_chapters?: number;
       quality_status?: ChapterQualityResponse['quality_status'];
       tracking_status?: ChapterQualityResponse['tracking_status'];
       tracking_revision?: number;

@@ -616,13 +616,15 @@ class AIService:
         response_parts: List[str] = []
         latest_usage = TokenUsage()
         finish_reason = "stop"
+        provider_stream = None
+        provider_stream_completed = False
         
         try:
             await self._consume_quota()
             # 流式生成（Provider 层处理工具调用）
             prov = self._get_provider(provider)
             logger.debug(f"🔧 开始流式生成，provider={provider or self.api_provider}, tools_count={len(tools_to_use) if tools_to_use else 0}")
-            async for chunk in prov.generate_stream(
+            provider_stream = prov.generate_stream(
                 prompt=prompt,
                 model=self.resolve_model_name(model),
                 temperature=temperature or self.default_temperature,
@@ -631,19 +633,28 @@ class AIService:
                 tools=tools_to_use,
                 tool_choice=tool_choice,
                 user_id=self.user_id,
-            ):
-                if isinstance(chunk, dict):
-                    if chunk.get("usage"):
-                        latest_usage = TokenUsage.from_response({"usage": chunk.get("usage")})
-                    if chunk.get("finish_reason"):
-                        finish_reason = chunk.get("finish_reason") or finish_reason
-                    continue
+            )
+            try:
+                async for chunk in provider_stream:
+                    if isinstance(chunk, dict):
+                        if chunk.get("usage"):
+                            latest_usage = TokenUsage.from_response({"usage": chunk.get("usage")})
+                        if chunk.get("finish_reason"):
+                            finish_reason = chunk.get("finish_reason") or finish_reason
+                        continue
 
-                if chunk:
-                    metrics.mark_first_chunk()
-                    metrics.chunk_count += 1
-                    response_parts.append(chunk)
-                yield chunk
+                    if chunk:
+                        metrics.mark_first_chunk()
+                        metrics.chunk_count += 1
+                        response_parts.append(chunk)
+                    yield chunk
+                provider_stream_completed = True
+            finally:
+                # 调用方达到章节上限时会主动关闭本生成器，必须继续关闭底层 HTTP 流。
+                if not provider_stream_completed:
+                    close = getattr(provider_stream, "aclose", None)
+                    if close is not None:
+                        await close()
 
             metrics.finish(
                 success=True,
@@ -653,6 +664,16 @@ class AIService:
             )
             self._quota_consumed = False
             self._log_call_metrics(metrics)
+        except GeneratorExit:
+            metrics.finish(
+                success=True,
+                response_length=len("".join(response_parts)),
+                finish_reason="consumer_closed",
+                usage=latest_usage,
+            )
+            self._quota_consumed = False
+            self._log_call_metrics(metrics, "AI调用提前结束")
+            raise
         except Exception as e:
             await self._refund_quota()
             metrics.finish(

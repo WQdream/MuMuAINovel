@@ -207,7 +207,7 @@ export default function BookImport() {
   ];
   const currentStepText = stepItems[currentStep]?.title || '上传文件';
 
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--bi-page-bg': token.colorBgLayout,
     '--bi-text': token.colorText,

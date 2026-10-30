@@ -179,6 +179,15 @@
   font-size: 12px;
   font-weight: 550;
   letter-spacing: 0.04em;
+  text-align: center !important;
+}
+
+.adm-table .ant-table-column-sorters {
+  justify-content: center;
+}
+
+.adm-table .ant-table-column-title {
+  flex: none;
 }
 
 .adm-table .ant-table-thead > tr > th::before {
@@ -242,6 +251,30 @@
   padding: 16px;
   border-bottom: 1px solid color-mix(in srgb, var(--adm-text) 6%, transparent);
   color: var(--adm-text);
+  vertical-align: middle;
+  text-align: center !important;
+}
+
+.adm-table .ant-table-thead > tr > th:first-child,
+.adm-table .ant-table-tbody > tr > td:first-child {
+  padding-left: 24px;
+}
+
+.adm-table .ant-table-thead > tr > th:last-child,
+.adm-table .ant-table-tbody > tr > td:last-child {
+  padding-right: 24px;
+}
+
+.adm-table .ant-table-tbody > tr > td:last-child {
+  white-space: nowrap;
+}
+
+.adm-table .ant-table-tbody > tr > td:last-child .ant-space {
+  justify-content: center;
+}
+
+.adm-table .ant-table-tbody > tr > td > .invite-code-cell {
+  justify-content: center;
 }
 
 .adm-table .ant-table-tbody > tr:last-child > td {
@@ -266,6 +299,8 @@
 .adm-cell-stack {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 2px;
   min-width: 0;
 }
@@ -273,23 +308,9 @@
 .adm-cell-inline {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   min-width: 0;
-}
-
-/* 页面底部的说明条 */
-.adm-note {
-  margin-top: 14px;
-  border-radius: 2px;
-}
-
-.adm-note .ant-alert-message {
-  font-size: 12px;
-}
-
-.adm-note .ant-alert-description {
-  font-size: 11.5px;
-  line-height: 1.65;
 }
 
 .adm-cell-strong {

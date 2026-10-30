@@ -208,7 +208,6 @@ export default function BookshelfPage({
       <div className="book-object book-object--new">
         <span className="book-backboard book-backboard--new" aria-hidden="true" />
         <span className="book-pages book-pages--right" aria-hidden="true" />
-        <span className="book-pages book-pages--bottom" aria-hidden="true" />
         <div className="book-board book-board--new">
           <div className="book-spine book-spine--new" aria-hidden="true" />
           <div className="book-cover book-cover--new">
@@ -288,7 +287,6 @@ export default function BookshelfPage({
         <div className="book-object">
           <span className="book-backboard" aria-hidden="true" />
           <span className="book-pages book-pages--right" aria-hidden="true" />
-          <span className="book-pages book-pages--bottom" aria-hidden="true" />
           <div
             className={`book-board ${hasCoverImage ? 'book-board--image' : 'book-board--placeholder'}`}
             style={{ background: palette.bg }}

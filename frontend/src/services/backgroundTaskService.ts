@@ -38,8 +38,12 @@ export interface TaskStatus {
     chapter_id?: string;
     chapter_number?: number | null;
     chapter_title?: string | null;
+    start_chapter?: number;
+    end_chapter?: number;
     completed?: number;
     total?: number;
+    attempt?: number;
+    analysis_progress?: number;
     current_chapter_number?: number | null;
   } | null;
   error_message: string | null;
@@ -58,6 +62,28 @@ export interface TaskStatus {
 
 export interface TaskListResponse {
   items: TaskStatus[];
+}
+
+export interface TrackingResyncTaskResult {
+  version: number;
+  start_chapter: number;
+  end_chapter: number;
+  total_chapters: number;
+  processed_chapters: number;
+  retried_chapters: number[];
+  failed_chapters: Array<{
+    chapter_number: number;
+    title: string;
+    error: string;
+  }>;
+  downstream_stale_chapters: number;
+  remaining_stale_chapters: Array<{
+    chapter_number: number;
+    title: string;
+  }>;
+  tracking_revision: number;
+  state_status: string;
+  cancelled: boolean;
 }
 
 /**

@@ -29,7 +29,6 @@ import {
   SearchOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
-import { useThemeMode } from '../theme/useThemeMode';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import './SkillManage.css';
 
@@ -116,8 +115,7 @@ const readErrorMessage = async (response: Response, fallback: string) => {
 
 export default function SkillManage() {
   const { token } = theme.useToken();
-  const { resolvedMode } = useThemeMode();
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--sm-text': token.colorText,
     '--sm-secondary': token.colorTextSecondary,

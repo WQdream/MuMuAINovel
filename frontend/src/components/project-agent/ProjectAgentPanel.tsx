@@ -56,7 +56,7 @@ const AUTO_APPROVE_KEY = 'project-agent-auto-approve';
 function AssistantLogo({ size }: { size: number }) {
   return (
     <img
-      src="/logo.svg"
+      src="/logo.png"
       alt="小新创作助手"
       draggable={false}
       style={{ width: size, height: size, display: 'block', objectFit: 'contain' }}

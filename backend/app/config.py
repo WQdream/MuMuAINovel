@@ -16,7 +16,7 @@ config_logger = logging.getLogger(__name__)
 
 # 数据库配置：PostgreSQL
 # 从环境变量获取数据库URL
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://mumuai:password@localhost:5432/mumuai_novel")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://xiaoxin:password@localhost:5432/xiaoxin_workshop")
 
 config_logger.debug(f"数据库类型: PostgreSQL")
 config_logger.debug(f"数据库URL: {DATABASE_URL}")

@@ -20,6 +20,10 @@ from app.services.chapter_context_service import (
     OneToOneContext,
     OneToOneContextBuilder,
 )
+from app.services.chapter_length_guard import (
+    chapter_length_error,
+    chapter_length_limits,
+)
 from app.services.deslop_check_service import normalize_punctuation
 from app.services.foreshadow_service import foreshadow_service
 from app.services.memory_service import memory_service
@@ -60,6 +64,7 @@ class GeneratedChapterResult:
     quality_report: ChapterQualityReport
     repaired: bool = False
     compressed: bool = False
+    expanded: bool = False
     punctuation_fixed: int = 0
 
 
@@ -113,6 +118,8 @@ class ChapterCreationService:
             "chapter_title": chapter.title,
             "chapter_outline": context.chapter_outline,
             "target_word_count": target_word_count,
+            "min_word_count": int(target_word_count * 0.9),
+            "max_word_count": int(target_word_count * 1.1),
             "genre": project.genre or "未设定",
             "narrative_perspective": narrative_perspective,
             "characters_info": context.chapter_characters or "暂无角色信息",
@@ -349,10 +356,10 @@ class ChapterCreationService:
         ai_service: Any,
         model: Optional[str],
     ) -> str:
-        upper = int(report.target_word_count * 1.15)
+        lower, upper = chapter_length_limits(report.target_word_count)
         prompt = (
             "请只删除冗余、重复、解释性总结和无功能修饰，把下面正文压缩到"
-            f"不超过 {upper} 个可见字符。不得新增剧情、对话、动作或设定，"
+            f"{lower}-{upper} 个可见字符。不得新增剧情、对话、动作或设定，"
             "不得改变事件顺序、伏笔、人物动机和章节结尾。只输出完整正文。\n\n"
             f"【待压缩正文】\n{content}"
         )
@@ -371,7 +378,66 @@ class ChapterCreationService:
         if detect_policy_refusal(candidate):
             return content
         candidate_count = visible_char_count(candidate)
-        if not candidate or candidate_count >= visible_char_count(content):
+        if (
+            not candidate
+            or candidate_count < lower
+            or candidate_count > upper
+            or candidate_count >= visible_char_count(content)
+        ):
+            logger.warning(
+                "超长章节压缩结果不在安全区间，保留原文: candidate=%s range=%s-%s",
+                candidate_count,
+                lower,
+                upper,
+            )
+            return content
+        return candidate
+
+    async def _expand_once(
+        self,
+        *,
+        content: str,
+        report: ChapterQualityReport,
+        prepared: CreationInput,
+        chapter: Chapter,
+        ai_service: Any,
+        model: Optional[str],
+    ) -> str:
+        target = int(report.target_word_count or prepared.contract.target_word_count)
+        actual = visible_char_count(content)
+        lower = int(target * 0.9)
+        upper = int(target * 1.1)
+        prompt = (
+            "请扩写下面这一章的完整正文。当前正文明显短于目标，"
+            f"当前 {actual} 字，目标约 {target} 字；扩写后必须至少达到 "
+            f"{lower} 字，建议控制在 {lower}-{upper} 字。\n\n"
+            "必须保留原稿中的全部既有剧情、人物、对话、伏笔、事件顺序和"
+            "结尾落点。只通过补足有效场景、动作衔接、对话、人物心理与必要"
+            "过渡来扩写；禁止复述已有句段、注水总结、堆砌形容、新增支线或"
+            "关键设定，禁止改变人物动机和已发生事件。\n\n"
+            f"【章节】第{chapter.chapter_number}章《{chapter.title}》\n"
+            f"【细纲契约】\n{render_plan_contract(prepared.contract)}\n\n"
+            "只输出扩写后的完整正文，不要解释，也不要只输出新增片段。\n\n"
+            f"【待扩写正文】\n{content}"
+        )
+        try:
+            response = await ai_service.generate_text(
+                prompt=prompt,
+                system_prompt=prepared.system_prompt,
+                model=model,
+                temperature=0.35,
+                max_tokens=max(4000, min(20000, target * 3 + 2048)),
+                auto_mcp=False,
+            )
+        except Exception as exc:
+            logger.warning("短章节自动扩写失败，保留原文: %s", exc)
+            return content
+        candidate = _extract_ai_content(response)
+        refusal = detect_policy_refusal(candidate)
+        if refusal:
+            logger.warning("短章节自动扩写被服务商拒绝: %s", policy_refusal_error(refusal))
+            return content
+        if not candidate or visible_char_count(candidate) <= actual:
             return content
         return candidate
 
@@ -385,6 +451,8 @@ class ChapterCreationService:
         ai_service: Any,
         model: Optional[str],
     ) -> str:
+        target = int(prepared.contract.target_word_count)
+        lower, upper = chapter_length_limits(target)
         findings = "\n".join(
             f"- [{item.severity}] {item.code}: {item.message}"
             + (f"；证据：{item.evidence}" if item.evidence else "")
@@ -394,7 +462,8 @@ class ChapterCreationService:
         prompt = (
             "带诊断重写本章一次。必须修复下列确定性检查问题，同时严格保留"
             "细纲契约、角色已知边界、伏笔状态和本章既有核心事件。不得提前释放"
-            "禁止信息。只输出完整正文，不解释。\n\n"
+            f"禁止信息。重写后的完整正文必须保持在 {lower}-{upper} 个可见字符，"
+            "不得用总结代替场景。只输出完整正文，不解释。\n\n"
             f"【章节】第{chapter.chapter_number}章《{chapter.title}》\n"
             f"【细纲契约】\n{render_plan_contract(prepared.contract)}\n\n"
             f"【阻断问题】\n{findings}\n\n"
@@ -434,71 +503,112 @@ class ChapterCreationService:
         model: Optional[str],
         progress: Optional[ProgressCallback] = None,
     ) -> GeneratedChapterResult:
-        normalized = await normalize_punctuation(content)
-        current = normalized.get("normalized") or content
-        punctuation_fixed = int(normalized.get("count") or 0)
+        original_chapter_content = chapter.content
+        try:
+            normalized = await normalize_punctuation(content)
+            current = normalized.get("normalized") or content
+            punctuation_fixed = int(normalized.get("count") or 0)
 
-        chapter.content = current
-        report = await evaluate_chapter_quality(
-            chapter,
-            outline=outline,
-            target_word_count=prepared.contract.target_word_count,
-        )
-        compressed = False
-        repaired = False
-        if any(
-            finding.code == "length.over" and finding.severity == "blocking"
-            for finding in report.findings
-        ):
-            if progress:
-                await progress("repairing", "正文超长，正在执行一次净删压缩")
-            compressed_content = await self._compress_once(
-                content=current,
-                report=report,
-                ai_service=ai_service,
-                model=model,
-            )
-            compressed = compressed_content != current
-            current = compressed_content
             chapter.content = current
             report = await evaluate_chapter_quality(
                 chapter,
                 outline=outline,
                 target_word_count=prepared.contract.target_word_count,
             )
+            compressed = False
+            expanded = False
+            repaired = False
+            if any(
+                finding.code == "length.under" and finding.severity == "blocking"
+                for finding in report.findings
+            ):
+                if progress:
+                    await progress("repairing", "正文过短，正在自动扩写一次")
+                expanded_content = await self._expand_once(
+                    content=current,
+                    report=report,
+                    prepared=prepared,
+                    chapter=chapter,
+                    ai_service=ai_service,
+                    model=model,
+                )
+                expanded = expanded_content != current
+                current = expanded_content
+                if expanded:
+                    normalized = await normalize_punctuation(current)
+                    current = normalized.get("normalized") or current
+                    punctuation_fixed += int(normalized.get("count") or 0)
+                chapter.content = current
+                report = await evaluate_chapter_quality(
+                    chapter,
+                    outline=outline,
+                    target_word_count=prepared.contract.target_word_count,
+                )
 
-        if self._repairable(report):
+            if any(
+                finding.code == "length.over" and finding.severity == "blocking"
+                for finding in report.findings
+            ):
+                if progress:
+                    await progress("repairing", "正文超长，正在执行一次净删压缩")
+                compressed_content = await self._compress_once(
+                    content=current,
+                    report=report,
+                    ai_service=ai_service,
+                    model=model,
+                )
+                compressed = compressed_content != current
+                current = compressed_content
+                chapter.content = current
+                report = await evaluate_chapter_quality(
+                    chapter,
+                    outline=outline,
+                    target_word_count=prepared.contract.target_word_count,
+                )
+
+            if self._repairable(report):
+                if progress:
+                    await progress("repairing", "质量门禁未通过，正在带诊断自动重生一次")
+                repaired_content = await self._repair_once(
+                    content=current,
+                    report=report,
+                    prepared=prepared,
+                    chapter=chapter,
+                    ai_service=ai_service,
+                    model=model,
+                )
+                repaired = repaired_content != current
+                current = repaired_content
+                normalized = await normalize_punctuation(current)
+                current = normalized.get("normalized") or current
+                punctuation_fixed += int(normalized.get("count") or 0)
+                chapter.content = current
+                report = await evaluate_chapter_quality(
+                    chapter,
+                    outline=outline,
+                    target_word_count=prepared.contract.target_word_count,
+                )
+
+            actual = visible_char_count(current)
+            _, upper = chapter_length_limits(prepared.contract.target_word_count)
+            if actual > upper:
+                raise chapter_length_error(
+                    actual=actual,
+                    target_word_count=prepared.contract.target_word_count,
+                )
+
             if progress:
-                await progress("repairing", "质量门禁未通过，正在带诊断自动重生一次")
-            repaired_content = await self._repair_once(
+                await progress("tracking", f"正文检查完成：{report.status.value}")
+            return GeneratedChapterResult(
                 content=current,
-                report=report,
-                prepared=prepared,
-                chapter=chapter,
-                ai_service=ai_service,
-                model=model,
+                quality_report=report,
+                repaired=repaired,
+                compressed=compressed,
+                expanded=expanded,
+                punctuation_fixed=punctuation_fixed,
             )
-            repaired = repaired_content != current
-            current = repaired_content
-            normalized = await normalize_punctuation(current)
-            current = normalized.get("normalized") or current
-            punctuation_fixed += int(normalized.get("count") or 0)
-            chapter.content = current
-            report = await evaluate_chapter_quality(
-                chapter,
-                outline=outline,
-                target_word_count=prepared.contract.target_word_count,
-            )
-
-        if progress:
-            await progress("tracking", f"正文检查完成：{report.status.value}")
-        return GeneratedChapterResult(
-            content=current,
-            quality_report=report,
-            repaired=repaired,
-            compressed=compressed,
-            punctuation_fixed=punctuation_fixed,
-        )
+        finally:
+            chapter.content = original_chapter_content
 
     async def save_generated(
         self,
@@ -508,9 +618,15 @@ class ChapterCreationService:
         result: GeneratedChapterResult,
         label: str,
     ) -> int:
+        actual = visible_char_count(result.content)
+        target = result.quality_report.target_word_count
+        _, upper = chapter_length_limits(target)
+        if actual > upper:
+            raise chapter_length_error(actual=actual, target_word_count=target)
+
         old_word_count = chapter.word_count or 0
         chapter.content = result.content
-        chapter.word_count = visible_char_count(result.content)
+        chapter.word_count = actual
         chapter.status = "writing"
         chapter.quality_status = result.quality_report.status.value
         chapter.tracking_status = "pending"

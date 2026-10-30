@@ -169,6 +169,28 @@ class ChapterQualityDecisionRequest(BaseModel):
     reason: Optional[str] = Field(None, max_length=1000)
 
 
+class TrackingResyncRequest(BaseModel):
+    start_chapter: int = Field(..., ge=1, description="起始章节序号（包含）")
+    end_chapter: int = Field(..., ge=1, description="结束章节序号（包含）")
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.end_chapter < self.start_chapter:
+            raise ValueError("结束章节不能早于起始章节")
+        return self
+
+
+class TrackingResyncResponse(BaseModel):
+    task_id: str
+    task_type: Literal["tracking_resync"] = "tracking_resync"
+    status: Literal["pending"] = "pending"
+    start_chapter: int
+    end_chapter: int
+    selected_chapters: int
+    downstream_stale_chapters: int
+    message: str
+
+
 class TrackingProjectResponse(BaseModel):
     project_id: str
     state_revision: int

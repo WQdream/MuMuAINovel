@@ -119,13 +119,19 @@ class TaskProgressTracker:
             }
         )
 
-    async def stage(self, stage: str, message: str, progress: int):
+    async def stage(
+        self,
+        stage: str,
+        message: str,
+        progress: int,
+        details: Optional[Dict[str, Any]] = None,
+    ):
         """写入统一创作阶段，供后台任务面板展示。"""
         self.current_progress = max(0, min(int(progress), 100))
         await self._update_task(
             progress=self.current_progress,
             status_message=message,
-            progress_details={"stage": stage, "message": message},
+            progress_details={"stage": stage, "message": message, **(details or {})},
         )
 
     async def set_result(self, task_result: Dict[str, Any]):
@@ -352,9 +358,13 @@ class BackgroundTaskService:
         if task.status not in ("pending", "running"):
             return False
         task.cancel_requested = True
-        task.status = "cancelled"
-        task.status_message = "任务已取消"
-        task.completed_at = datetime.now()
+        if task.task_type == "tracking_resync" and task.status == "running":
+            # 追踪重分析只在章节之间停止，当前 AI 请求完成后由任务执行器写入终态和摘要。
+            task.status_message = "取消请求已提交，将在当前章节完成后停止"
+        else:
+            task.status = "cancelled"
+            task.status_message = "任务已取消"
+            task.completed_at = datetime.now()
         await db.commit()
         logger.info(f"🚫 取消任务: {task_id[:8]}")
         return True

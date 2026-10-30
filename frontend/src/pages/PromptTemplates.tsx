@@ -66,7 +66,7 @@ export default function PromptTemplates() {
   const [saving, setSaving] = useState(false);
 
   const isMobile = window.innerWidth <= 768;
-  const accentColor = resolvedMode === 'dark' ? '#EDEDE7' : token.colorPrimary;
+  const accentColor = token.colorPrimary;
   const themeVars = {
     '--pt-page-bg': token.colorBgLayout,
     '--pt-text': token.colorText,

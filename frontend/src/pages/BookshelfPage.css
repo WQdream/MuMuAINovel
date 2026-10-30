@@ -2,7 +2,6 @@
 .book-card {
   --book-spine-width: 7px;
   --book-depth: 11px;
-  --book-bottom-depth: 8px;
   --book-cover-lip: 2px;
   --book-perspective: 720px;
   --book-rotate-y: -4deg;
@@ -47,7 +46,7 @@
 .book-backboard {
   top: 1px;
   right: calc(-1 * var(--book-depth) - var(--book-cover-lip));
-  bottom: calc(-1 * var(--book-bottom-depth) - 1px);
+  bottom: 1px;
   z-index: 0;
   width: 4px;
   border-radius: 0 2px 2px 0;
@@ -70,37 +69,10 @@
   pointer-events: none;
 }
 
-.book-pages--bottom {
-  left: calc(var(--book-spine-width) + 1px);
-  right: calc(-1 * var(--book-depth));
-  bottom: calc(-1 * var(--book-bottom-depth));
-  height: var(--book-bottom-depth);
-  border-radius: 0 0 3px 1px;
-  clip-path: polygon(
-    0 0,
-    calc(100% - var(--book-depth) + 1px) 0,
-    100% 100%,
-    6px 100%
-  );
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent 32%),
-    repeating-linear-gradient(
-      0deg,
-      var(--book-page-line) 0,
-      var(--book-page-line) 0.4px,
-      transparent 0.4px,
-      transparent 1.35px
-    ),
-    var(--book-page-paper);
-  box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.42),
-    0 5px 10px -5px rgba(24, 19, 13, 0.3);
-}
-
 .book-pages--right {
   top: calc(var(--book-cover-lip) + 2px);
   right: calc(-1 * var(--book-depth));
-  bottom: calc(-1 * var(--book-bottom-depth));
+  bottom: calc(var(--book-cover-lip) + 2px);
   width: var(--book-depth);
   border-radius: 0 3px 3px 0;
   clip-path: polygon(0 0, 100% 3px, 100% calc(100% - 3px), 0 100%);
@@ -567,7 +539,6 @@
   .book-card {
     --book-spine-width: 5px;
     --book-depth: 8px;
-    --book-bottom-depth: 6px;
     --book-rotate-y: -3.4deg;
   }
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Button,
   Empty,
   Input,
@@ -492,16 +491,6 @@ export default function AdminReview() {
             )}
           </section>
         </div>
-      )}
-
-      {activeUser && (
-        <Alert
-          type="info"
-          showIcon
-        className="adm-note"
-          message="审阅范围说明"
-          description="仅可查看项目信息、章节标题与正文；大纲、角色、关系、伏笔与分析结果不对管理员开放，且本页不提供任何修改操作。"
-        />
       )}
     </div>
   );
