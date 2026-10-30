@@ -20,11 +20,8 @@ RUN if [ "$USE_CN_MIRROR" = "true" ]; then \
         npm config set registry https://registry.npmmirror.com; \
     fi
 
-# 删除 package-lock.json 以避免因镜像源不一致导致的 404 错误
-RUN rm -f package-lock.json
-
-# 安装依赖
-RUN npm install
+# 使用锁文件安装依赖，保证 esbuild 等平台二进制版本一致
+RUN npm ci --no-audit --no-fund
 
 # 复制前端源代码
 COPY frontend/ ./
